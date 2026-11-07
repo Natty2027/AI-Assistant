@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Before you connect</title>
+<link rel="stylesheet" href="fonts.css" />
+<link rel="stylesheet" href="theme.css" />
+<style>
+  body { width: 380px; min-height: 100vh; }
+  .section { padding: 16px; border-bottom: 1px solid var(--edge); }
+  h1 { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
+  p { margin: 0; }
+  .heading-row { display: flex; align-items: center; gap: 12px; }
+  .actions { padding: 14px 16px; display: grid; gap: 9px; border-top: 1px solid var(--edge); }
+</style>
+</head>
+<body>
+  <div class="gradient-backdrop" aria-hidden="true"></div>
+
+  <div class="scroll">
+    <section class="section">
+      <div class="heading-row">
+        <span class="monogram" id="monogram" aria-hidden="true">C</span>
+        <div>
+          <h1 id="heading">Before connecting</h1>
+          <p class="text-sm text-muted">Here's exactly what this can and can't do with it.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="factList"></section>
+
+    <section class="section">
+      <label class="check">
+        <input type="checkbox" id="ack" />
+        <span class="text-sm" id="ackText"></span>
+      </label>
+    </section>
+
+    <section class="section">
+      <p class="text-xs text-faint">
+        You can disconnect any calendar at any time in settings. Disconnecting removes the
+        stored access immediately.
+      </p>
+    </section>
+  </div>
+
+  <div class="actions">
+    <button type="button" class="btn btn-primary" id="continue" disabled>Continue</button>
+    <button type="button" class="btn btn-ghost" id="cancel">Not now</button>
+  </div>
+
+<script type="module" src="disclosure.js"></script>
+</body>
+</html>

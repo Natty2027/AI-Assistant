@@ -1,0 +1,31 @@
+/* Self-hosted Hanken Grotesk, latin subset only. Files copied from @fontsource at build time
+   (see build.ts) — nothing here fetches off-origin, which MV3's CSP requires. */
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/hanken-grotesk-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/hanken-grotesk-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/hanken-grotesk-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/hanken-grotesk-latin-700-normal.woff2") format("woff2");
+}

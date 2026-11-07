@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ambient Cyber Companion</title>
+<link rel="stylesheet" href="fonts.css" />
+<link rel="stylesheet" href="theme.css" />
+<style>
+  body { width: 380px; min-height: 100vh; }
+  .header-row { display: flex; align-items: center; gap: 10px; }
+  .header-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+  .quiet-pill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: 8px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--raised); border: 1px solid var(--edge); cursor: pointer;
+  }
+  a.icon-btn { text-decoration: none; border-bottom: none; }
+  .icon-btn:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
+  .held-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .held-item button {
+    background: transparent; border: none; color: var(--faint); cursor: pointer; font-size: 12px; flex: none;
+  }
+  .held-item button:hover, .held-item button:focus-visible { color: var(--bone); outline: none; }
+  .section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .toast {
+    position: fixed; left: 16px; right: 16px; bottom: 72px; padding: 10px 12px; border-radius: 10px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    border: 1px solid var(--edge); backdrop-filter: blur(16px); font-size: 12px;
+  }
+  .toast[hidden] { display: none; }
+  .suggest-card { display: grid; gap: 6px; }
+  .suggest-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* An author `display` rule beats the browser's own [hidden] rule, so without this the
+     calendar-choice buttons would show on every card all the time. */
+  .suggest-actions[hidden], .app-confirm[hidden] { display: none; }
+  .suggest-card label { display: grid; gap: 2px; }
+  .suggest-card input[type="datetime-local"] {
+    font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 6px;
+    background: var(--raised); color: inherit; border: 1px solid var(--edge);
+  }
+  .suggest-note { margin: 0; min-height: 1em; }
+  #appsInput {
+    font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 8px;
+    background: var(--raised); color: inherit; border: 1px solid var(--edge);
+  }
+  #appsForm { margin-bottom: 6px; }
+  .app-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .app-row .app-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+  .app-dot[data-running="true"] { background: var(--sage); }
+  .app-confirm { flex-basis: 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+</style>
+</head>
+
+<body data-state="idle">
+  <div class="gradient-backdrop" aria-hidden="true"></div>
+
+  <header class="glass panel-section header-row">
+    <span class="presence" aria-hidden="true">
+      <span class="presence-halo"></span>
+      <span class="presence-dot"></span>
+    </span>
+    <div class="header-main">
+      <span class="text-sm font-medium" id="stateLabel" role="status">Listening</span>
+      <span class="text-xs text-muted quiet-pill" id="quietReason"></span>
+    </div>
+    <div class="popover-wrap">
+      <button type="button" class="icon-btn" id="snoozeBtn" aria-haspopup="true" aria-expanded="false" aria-label="Snooze">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+        </svg>
+      </button>
+      <div class="popover" id="snoozePopover" hidden role="menu">
+        <button type="button" data-mute="30" role="menuitem">Mute 30 minutes</button>
+        <button type="button" data-mute="60" role="menuitem">Mute 1 hour</button>
+        <button type="button" data-mute="tomorrow" role="menuitem">Mute until tomorrow</button>
+        <button type="button" data-mute="clear" role="menuitem" id="unmuteOption" hidden>Unmute</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="scroll">
+
+    <div class="day-header">
+      <h1 id="dayHeading">Today</h1>
+      <p class="text-sm text-muted sub" id="daySummary"></p>
+    </div>
+
+    <section class="panel-section" id="timelineSection">
+      <div class="gutter" id="timelineGutter"></div>
+    </section>
+
+    <!-- Things the assistant read from a photo or selection. Nothing here is on a calendar until
+         the user taps Add; the footer's "verify critical events" applies doubly to these. -->
+    <section class="panel-section" id="suggestSection" hidden>
+      <div class="section-title">
+        <span class="text-sm font-medium">Suggested events</span>
+      </div>
+      <div style="display:grid;gap:8px" id="suggestList"></div>
+    </section>
+
+    <!-- Only present when the user has turned on app control AND allowed at least one app. -->
+    <section class="panel-section" id="appsSection" hidden>
+      <div class="section-title">
+        <span class="text-sm font-medium">Quick actions</span>
+      </div>
+      <form id="appsForm" style="display:flex;gap:6px" autocomplete="off">
+        <input id="appsInput" type="text" spellcheck="false" maxlength="100" placeholder='Try "open Zoom"'
+               aria-label="Open or close an app" style="flex:1;min-width:0" />
+        <button type="submit" class="btn btn-sm">Go</button>
+      </form>
+      <p class="text-xs text-sand suggest-note" id="appsNote" role="status"></p>
+      <div style="display:grid;gap:6px" id="appsRows"></div>
+    </section>
+
+    <section class="panel-section" id="prepSection"></section>
+
+    <section class="panel-section" id="heldSection">
+      <div class="section-title">
+        <span class="text-sm font-medium">Held while you're busy</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="flushBtn" hidden>Play now</button>
+      </div>
+      <div style="display:grid;gap:8px" id="heldList"></div>
+    </section>
+
+    <section class="panel-section">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="flex:1">
+          <div class="text-sm font-medium">Adaptive automation</div>
+          <div class="text-xs text-muted">Learns your timing patterns to suggest blocks</div>
+        </div>
+        <button type="button" class="switch" role="switch" aria-checked="false" aria-label="Adaptive automation" id="automationToggle"></button>
+      </div>
+      <p class="text-xs text-sand" style="margin:10px 0 0" id="syncNote"></p>
+      <p class="text-xs" style="margin:6px 0 0">
+        <a href="options.html#privacy" id="observedLink">See what's being observed</a>
+      </p>
+    </section>
+
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <!-- Permanent. Not dismissible, not collapsed behind an info icon. -->
+  <footer class="glass" style="padding:11px 16px;border-bottom:none;border-top:1px solid var(--edge);display:flex;align-items:center;gap:10px">
+    <p class="text-xs text-muted" style="margin:0;flex:1">
+      Ambient Cyber Companion is an AI assistant. AI models can make errors or misread
+      schedules. Please verify critical events.
+    </p>
+    <a href="options.html" class="icon-btn" aria-label="Settings">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    </a>
+  </footer>
+
+<script type="module" src="panel.js"></script>
+</body>
+</html>
