@@ -23,3 +23,9 @@ data/
 .DS_Store
 *.log
 *.tmp
+
+# Xcode per-user state and local builds.
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
