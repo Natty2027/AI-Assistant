@@ -50,7 +50,8 @@ Never put the Supabase service-role key, `MASTER_KEY` or any other server variab
 2. Make sure `TEST_ACCESS_TOKEN`, `TEST_USER_ID` and `DEV_USER_ID` are not set on Railway.
 3. Confirm Railway's client-IP header handling for rate limits.
 4. Run `npm run smoke:models` once with the real key.
-5. Bump `CURRENT_PROJECT_VERSION` for every upload. Archive with Product → Archive.
+5. Bump `CURRENT_PROJECT_VERSION` for every upload. Archive with `npm run app:archive` (iPhone and
+   Mac; see XCODE-TESTING.md → TestFlight), then upload from Xcode's Organizer.
 
 ## App Store Connect
 

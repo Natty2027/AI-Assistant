@@ -17,7 +17,11 @@ struct SettingsView: View {
                 if model.isConfigured { aiSection }
                 if HeraVoice.isAvailable { voiceSection }
                 legal
+                // Server addresses and the staging token are for development only. Release builds
+                // (TestFlight, App Store) connect through AppConfig and sign in with Apple.
+                #if DEBUG
                 advanced
+                #endif
             }
             .formStyle(.grouped)
             .auroraBackground()

@@ -57,3 +57,21 @@ npm run app:build         # app: builds for iOS Simulator and macOS
 ```
 
 In Xcode, ⌘U runs the app's Swift Testing suite (`app/CyberCompanionTests`).
+
+## TestFlight
+
+```bash
+npm run app:archive       # archives iPhone/iPad and Mac into Xcode's Organizer
+```
+
+Then in Xcode: **Window → Organizer → Archives**, select each new "Hera" archive, **Distribute
+App → App Store Connect → Distribute**. After processing (about 10–30 minutes) the build appears
+under the app's **TestFlight** tab in App Store Connect.
+
+- The Mac archive is Apple silicon only and must come from the script: Product → Archive for
+  "Any Mac" fails, because the voice package can't compile for Intel and Xcode doesn't pass the
+  architecture setting on to packages. The iPhone archive can also be made with Product → Archive.
+- Raise **Build** (Target → General → Identity) before every upload; App Store Connect refuses a
+  build number it has already seen. Raise **Version** for each release.
+- Release builds hide Settings → Advanced (server addresses, developer token); they connect through
+  `AppConfig.swift` and Sign in with Apple only.
