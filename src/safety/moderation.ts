@@ -121,7 +121,6 @@ async function classify(text: string): Promise<{
     const res = await anthropic.messages.create({
       model: CLASSIFIER_MODEL,
       max_tokens: 150,
-      temperature: 0,
       system: CLASSIFIER_PROMPT,
       messages: [{ role: "user", content: `<message>${text.slice(0, 4000)}</message>` }],
     });

@@ -306,6 +306,19 @@ chrome.alarms.onAlarm.addListener(async (a: any) => {
  *  disclosure). A content script runs inside a web page and carries that page's URL, so a
  *  hostile page that manages to drive it cannot, say, turn automation on or start OAuth. */
 const PAGE_MESSAGES = new Set(["page:signals"]);
+
+/** Every assistant route the Create page may call. Anything else is refused before any request. */
+const ID = "[A-Za-z0-9-]{1,64}";
+const AGENT_ROUTES: Array<[string, RegExp]> = [
+  ["GET", /^\/agent\/connections$/],
+  ["POST", /^\/agent\/connections\/netlify$/],
+  ["DELETE", new RegExp(`^/agent/connections/${ID}$`)],
+  ["POST", /^\/agent\/run$/],
+  ["GET", /^\/agent\/proposals$/],
+  ["POST", new RegExp(`^/agent/proposals/${ID}/(approve|execute|reject)$`)],
+  ["GET", /^\/agent\/site$/],
+  ["GET", /^\/agent\/site\/file\?path=[^#]{1,300}$/],
+];
 function fromExtensionPage(sender: any): boolean {
   return typeof sender?.url === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
 }
@@ -459,6 +472,16 @@ chrome.runtime.onMessage.addListener((msg: any, sender: any, respond: any) => {
         automationEnabled = false;
         await chrome.storage.local.clear();
         return respond({ ok: true });
+      }
+
+      case "agent:call": {
+        // The Create page reaches the assistant's routes through here, so the sign-in token
+        // never enters a page. Only the routes in AGENT_ROUTES can be reached.
+        const method = String(msg.method ?? "GET").toUpperCase();
+        const path = String(msg.path ?? "");
+        if (!AGENT_ROUTES.some(([m, re]) => m === method && re.test(path))) return respond({ ok: false, error: "not allowed" });
+        const out = await api(path, method === "GET" ? { method } : { method, body: JSON.stringify(msg.body ?? {}) });
+        return respond({ ok: true, data: out });
       }
 
       case "disclosure:cancel":

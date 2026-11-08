@@ -16,6 +16,9 @@ deck/preview/
 # Office lock file that exists while the deck is open in PowerPoint or Keynote.
 deck/~$*
 
+# Users' website files, written by the assistant at runtime. Never commit people's content.
+data/
+
 # Local noise.
 .DS_Store
 *.log

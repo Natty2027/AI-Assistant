@@ -68,6 +68,10 @@ export const config = {
 
   anthropicApiKey: opt("ANTHROPIC_API_KEY"),
 
+  /** Where the assistant keeps each person's website files until they publish them. On a host
+   *  with an ephemeral disk (Railway's default), point this at a mounted volume. */
+  sitesDir: opt("AGENT_SITES_DIR") ?? "data/sites",
+
   /** Where moderation.ts posts content-free safety events. Points back at this server. */
   internalApi: opt("INTERNAL_API") ?? `http://localhost:${Number(opt("PORT") ?? 4000)}`,
 

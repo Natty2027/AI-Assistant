@@ -17,9 +17,41 @@ import { createLimiter } from "./rateLimit.ts";
 import { saveConnection } from "./connections.ts";
 import { assertUuid, confirmProposal, listPending, rejectProposal } from "./proposals.ts";
 import { syncUser } from "./sync.ts";
+import Anthropic from "@anthropic-ai/sdk";
+import { ProviderError } from "./calendar.ts";
+import { AgentService } from "./agent/service.ts";
+import { ActionError } from "./agent/approvals.ts";
+import { SandboxError } from "./agent/sandbox.ts";
 
 const aiLimiter = createLimiter({ windowMs: 60_000, max: 20 });
 const writeLimiter = createLimiter({ windowMs: 60_000, max: 20 });
+// Each assistant run can be many model calls, so it gets a much tighter budget than capture.
+const agentRunLimiter = createLimiter({ windowMs: 3_600_000, max: 10 });
+
+let agentService: AgentService | null = null;
+/** One per process: it owns the in-memory proposal store (see approvals.ts on persistence). */
+function agent(): AgentService {
+  if (!dbConfigured()) throw new HttpError(503, "The assistant needs the database, which isn't connected yet.");
+  agentService ??= new AgentService({
+    run: (sql, params) => query(sql, params ?? []) as Promise<{ rows: any[] }>,
+    fetch: (url, init) => fetch(url, init),
+    sitesDir: config.sitesDir,
+    client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey }) : null,
+  });
+  return agentService;
+}
+
+/** Turns the agent's typed failures into HTTP answers a person can read. */
+function agentFailure(e: unknown): never {
+  if (e instanceof ActionError) {
+    const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, ai_unavailable: 503, provider_unavailable: 502 };
+    throw new HttpError(status[e.code] ?? 409, e.message, true, e.code);
+  }
+  if (e instanceof SandboxError) throw new HttpError(400, e.message, true, `site_${e.code}`);
+  if (e instanceof ProviderError) throw new HttpError(502, "The service could not complete that. Try again shortly.", true, "provider_unavailable");
+  throw e;
+}
+const guarded = <T>(fn: () => Promise<T> | T): Promise<T> => Promise.resolve().then(fn).catch(agentFailure);
 const syncLimiter = createLimiter({ windowMs: 60_000, max: 6 });
 
 /** What the calendar modules need: the database, the network, and the provider credentials. */
@@ -85,7 +117,7 @@ async function requireAiConsent(userId: string): Promise<void> {
 /** Every table that holds a row for the user, in deletion order. user_settings goes last. */
 const USER_DATA_TABLES = [
   "safety_events", "habit_observations", "habit_profiles", "proposed_events",
-  "events_cache", "connection_disclosures", "oauth_connections", "user_settings",
+  "events_cache", "connection_disclosures", "oauth_connections", "action_connections", "user_settings",
 ] as const;
 
 /** Postgres exceptions raised by our own triggers start with "pcc:" and are safe to show. */
@@ -555,6 +587,76 @@ export function buildRouter(): Router {
     const userId = requireAuth(ctx);
     if (!syncLimiter.hit(userId)) throw new HttpError(429, "Synced a moment ago. Try again shortly.");
     return { ok: true, ...(await syncUser(calendarDeps(), userId)) };
+  });
+
+  /* ---- the assistant: build a site, draft promotion, propose; the person approves ---- */
+
+  r.get("/agent/connections", async (ctx) => {
+    const userId = requireAuth(ctx);
+    return { connections: await guarded(() => agent().connections(userId)) };
+  });
+
+  r.post("/agent/connections/netlify", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    await ensureSettings(userId);
+    return { ok: true, connection: await guarded(() => agent().connectNetlify(userId, ctx.body.token)) };
+  });
+
+  r.delete("/agent/connections/:id", async (ctx) => {
+    const userId = requireAuth(ctx);
+    assertUuid(ctx.params.id);
+    await guarded(() => agent().disconnect(userId, ctx.params.id));
+    return { ok: true };
+  });
+
+  r.post("/agent/run", async (ctx) => {
+    const userId = requireAuth(ctx);
+    const request = typeof ctx.body.request === "string" ? ctx.body.request.trim() : "";
+    if (!request || request.length > 4000) throw new HttpError(400, "Describe what you'd like, in up to 4000 characters.");
+    if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
+    await ensureSettings(userId);
+    // What the person writes is sent to the model provider, so the AI consent switch applies.
+    await requireAiConsent(userId);
+    const out = await guarded(() => agent().run(userId, request, { allowWebSearch: ctx.body.allow_web_search === true }));
+    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, tainted: out.tainted };
+  });
+
+  r.get("/agent/proposals", async (ctx) => {
+    const userId = requireAuth(ctx);
+    return { proposals: await guarded(() => agent().list(userId)) };
+  });
+
+  r.post("/agent/proposals/:id/approve", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    const out = await guarded(() => agent().approve(userId, ctx.params.id, {
+      payloadHash: ctx.body.payload_hash, attestations: ctx.body.attestations,
+      acknowledgeTaint: ctx.body.acknowledge_taint, typedAmount: ctx.body.typed_amount,
+    }));
+    return { ok: true, token: out.token, expires_at: out.expiresAt.toISOString() };
+  });
+
+  r.post("/agent/proposals/:id/execute", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    return { ok: true, proposal: await guarded(() => agent().execute(userId, ctx.params.id, ctx.body.token)) };
+  });
+
+  r.post("/agent/proposals/:id/reject", async (ctx) => {
+    const userId = requireAuth(ctx);
+    await guarded(() => agent().reject(userId, ctx.params.id));
+    return { ok: true };
+  });
+
+  r.get("/agent/site", async (ctx) => {
+    const userId = requireAuth(ctx);
+    return await guarded(() => agent().site(userId));
+  });
+
+  r.get("/agent/site/file", async (ctx) => {
+    const userId = requireAuth(ctx);
+    return { contents: await guarded(() => agent().siteFile(userId, ctx.url.searchParams.get("path"))) };
   });
 
   /* ---- content-free safety log, called by moderation.ts over loopback only ---- */

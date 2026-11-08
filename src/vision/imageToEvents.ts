@@ -148,7 +148,6 @@ export async function extractEventsFromImage(input: {
   const res = await anthropic.messages.create({
     model: VISION_MODEL,
     max_tokens: 2000,
-    temperature: 0,
     system: buildExtractionPrompt(referenceDateISO, userTimezone),
     messages: [
       {
@@ -178,7 +177,6 @@ export async function extractEventsFromText(input: {
   const res = await anthropic.messages.create({
     model: VISION_MODEL,
     max_tokens: 2000,
-    temperature: 0,
     system: buildExtractionPrompt(referenceDateISO, input.userTimezone),
     messages: [
       {

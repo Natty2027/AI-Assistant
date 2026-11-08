@@ -23,13 +23,14 @@
     "deck:preview": "node deck/preview.mjs",
     "deck:screens": "API_BASE=http://127.0.0.1:4471 tsx build.ts chrome && node deck/capture-screens.mjs; s=$?; tsx build.ts chrome; exit $s",
     "e2e:signals": "tsx build.ts chrome && node scripts/e2e-signals.mjs",
-    "e2e:panel": "API_BASE=http://127.0.0.1:4470 tsx build.ts chrome && node scripts/e2e-panel.mjs; s=$?; tsx build.ts chrome; exit $s"
+    "e2e:panel": "API_BASE=http://127.0.0.1:4470 tsx build.ts chrome && node scripts/e2e-panel.mjs; s=$?; tsx build.ts chrome; exit $s",
+    "e2e:create": "API_BASE=http://127.0.0.1:4470 tsx build.ts chrome && node scripts/e2e-create.mjs; s=$?; tsx build.ts chrome; exit $s"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.30.0",
+    "@anthropic-ai/sdk": "^1.6.0",
     "pg": "^8.11.0",
     "tsx": "^4.19.0",
     "zod": "^4.6.7"

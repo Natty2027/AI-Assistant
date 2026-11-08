@@ -30,6 +30,7 @@ for (const t of targets) {
       "ui/panel": "src/ui/panel.ts",
       "ui/disclosure": "src/ui/disclosure.ts",
       "ui/options": "src/ui/options.ts",
+      "ui/create": "src/ui/create.ts",
     },
     bundle: true,
     format: "esm",

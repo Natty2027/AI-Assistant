@@ -89,6 +89,30 @@ create table oauth_connections (
 revoke all on oauth_connections from anon, authenticated;
 
 -- ============================================================
+-- Accounts the assistant may publish to (hosting today; social later)
+-- ============================================================
+
+-- Separate from oauth_connections: those are calendars the app reads and writes on the user's
+-- behalf; these are places the assistant's work can be published, each action approved
+-- individually. Same rule for both: the token is ciphertext, and no client role can read it.
+create table action_connections (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users(id) on delete cascade,
+  kind          text not null check (kind in ('hosting','social','email','sms','ads','registrar')),
+  provider      text not null check (provider in ('netlify')),
+  label         text not null,
+  token_ct      bytea not null,
+  data_key_id   text not null,
+  -- e.g. the Netlify site this connection publishes to, so the address stays the same
+  target_ref    text,
+  created_at    timestamptz not null default now(),
+  revoked_at    timestamptz
+);
+create index on action_connections (user_id) where revoked_at is null;
+revoke all on action_connections from anon, authenticated;
+alter table action_connections enable row level security;
+
+-- ============================================================
 -- Disclosure acknowledgement — enforced, not decorative
 -- ============================================================
 

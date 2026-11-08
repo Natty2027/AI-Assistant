@@ -135,7 +135,6 @@ export async function auditEvent(ev: EventInput): Promise<Audit> {
   const res = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 1200,
-    temperature: 0.2,
     system: SYSTEM,
     messages: [{ role: "user", content: `<event>${JSON.stringify(payload)}</event>` }],
   });

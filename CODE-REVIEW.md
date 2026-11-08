@@ -203,6 +203,31 @@ was invisible. Found only by looking at a screenshot taken for the partner deck.
 test now asserts the buttons are hidden until asked for and visible afterwards (it fails without the fix).
 The panel suite is now 19 checks.
 
+## Seventh pass — an assistant that acts (websites and promotion)
+
+**25. Safe-action core.** `server/agent/` adds an assistant that builds static websites and drafts
+promotion, and a single path for anything it does in the world: propose -> approve the exact
+content -> execute once after every rule is re-checked. Design, research and sources are in
+`docs/SAFE-ACTIONS.md`. 65 tests; 12 deliberate sabotages of the core guarantees were each caught.
+No executors (X, Instagram, email, SMS, hosting) are built yet, so nothing can actually be
+published.
+
+**26. Anthropic SDK upgraded 0.30 -> 1.6.** Needed for typed adaptive thinking and server-side
+refusal fallbacks. The 1.x request types no longer accept `temperature` (current models dropped
+sampling parameters), so it was removed from the three existing calls in `moderation.ts`,
+`imageToEvents.ts` and `requirementAudit.ts`. Those calls were pinned to deterministic output and
+no longer are; their outputs are still schema-validated, and the crisis check's literal pass is
+unaffected. Those three still use older model ids (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`);
+moving them to current models is a separate, deliberate migration.
+
+**27. Websites can be published.** The first executor: `site.deploy` to the person's own Netlify
+account, through `/agent/*` routes and a new Create page in the extension. Approval now covers a
+fingerprint of the site's files. Before this, a site edited between approval and publish would
+have gone out unseen. Tokens live in the new `action_connections` table, which the client role
+cannot read; it is included in account deletion. Site files are written under `AGENT_SITES_DIR`
+(default `data/sites`, git-ignored). Tested with real SQL, a fake Netlify and a real browser;
+never run against Netlify or the live model.
+
 ## Still unverified or open
 
 - **`db/schema.sql` has run only on PGlite, not on Supabase.** PGlite is faithful for roles, column

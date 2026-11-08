@@ -173,6 +173,12 @@ test("a disclosure for one provider does not cover another", () =>
   mustFail(connect(D, "microsoft"), /no current disclosure/i));
 test("the client role cannot read OAuth tokens at all", () =>
   mustFail(`select * from oauth_connections`, /permission denied/i, D));
+test("the client role cannot read or write publishing tokens", async () => {
+  await mustFail(`select * from action_connections`, /permission denied/i, D);
+  await mustFail(`insert into action_connections (user_id, kind, provider, label, token_ct, data_key_id)
+                  values ('${D}','hosting','netlify','x','\\x00','k')`, /permission denied/i, D);
+});
+
 test("a user's disclosure survives a delete attempt", async () => {
   await asUser(D, async () => { await db.query(`delete from connection_disclosures where user_id='${D}'`); });
   assert.equal(await count(`select count(*)::int n from connection_disclosures where user_id='${D}'`), 1);
@@ -193,7 +199,7 @@ test("a user's data can be removed table by table, as the account-deletion route
   // Mirrors USER_DATA_TABLES in server/routes.ts. If a table gains a user_id column and is not
   // added there, this fails to leave the user with zero rows and the gap is caught here.
   const tables = ["safety_events", "habit_observations", "habit_profiles", "proposed_events",
-    "events_cache", "connection_disclosures", "oauth_connections", "user_settings"];
+    "events_cache", "connection_disclosures", "oauth_connections", "action_connections", "user_settings"];
   for (const t of tables) await db.query(`delete from ${t} where user_id = $1`, [D]);
   let remaining = 0;
   const { rows } = await db.query<{ table_name: string }>(
