@@ -17,7 +17,7 @@ function layout(title: string, body: string): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>${escape(title)} · Cyber Companion</title>
+<title>${escape(title)} · Hera</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 720px; margin: 0 auto; padding: 48px 24px; line-height: 1.6; color: #1e293b; background: #f8fafc; }
@@ -40,8 +40,8 @@ ${body}
 export function supportPage(email: string): string {
   const mail = escape(email);
   return layout("Support", `
-<h1>Cyber Companion</h1>
-<p>Speak or type what you'd like, and Cyber Companion builds a website and writes social posts for it. You review the exact content, and nothing is published until you approve it.</p>
+<h1>Hera</h1>
+<p>Speak or type what you'd like, and Hera builds a website and writes social posts for it. You review the exact content, and nothing is published until you approve it.</p>
 <h2>Get help</h2>
 <p>Email <a href="mailto:${mail}">${mail}</a>. If something went wrong, include the request ID the app showed you, if any.</p>
 <h2>Common questions</h2>
@@ -55,7 +55,7 @@ export function privacyPage(email: string): string {
   return layout("Privacy Policy", `
 <h1>Privacy Policy</h1>
 <p class="muted">Last updated: ${UPDATED}</p>
-<p>This policy explains what Cyber Companion ("we") collects, why, and the choices you have.</p>
+<p>This policy explains what Hera ("we") collects, why, and the choices you have.</p>
 
 <h2>What we collect</h2>
 <p><strong>Account.</strong> When you sign in with Apple we receive an account identifier and, if you choose to share it, your email address (which may be an Apple private relay address). Sign-in is handled by Supabase.</p>
@@ -76,7 +76,7 @@ export function privacyPage(email: string): string {
 <p>We keep your data while your account is active. Delete your account in the app (Settings, then Delete account) and we delete your data and your sign-in account. A minimal record of safety events, which contains no content, may be kept where needed to prevent abuse.</p>
 
 <h2>Children</h2>
-<p>Cyber Companion is not intended for children under 13, and we do not knowingly collect their data.</p>
+<p>Hera is not intended for children under 13, and we do not knowingly collect their data.</p>
 
 <h2>Contact</h2>
 <p><a href="mailto:${mail}">${mail}</a></p>`);
@@ -87,7 +87,7 @@ export function termsPage(email: string): string {
   return layout("Terms of Use", `
 <h1>Terms of Use</h1>
 <p class="muted">Last updated: ${UPDATED}</p>
-<p>By using Cyber Companion you agree to these terms.</p>
+<p>By using Hera you agree to these terms.</p>
 <h2>Your content</h2>
 <p>You own what you create. You're responsible for what you approve and publish, including that it's accurate and that you have the right to publish it. The assistant can make mistakes; review everything before approving.</p>
 <h2>What's not allowed</h2>

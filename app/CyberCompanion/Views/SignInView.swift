@@ -13,7 +13,7 @@ struct SignInView: View {
             Spacer()
             IconTile(systemImage: "sparkles", size: 84)
             VStack(spacing: 10) {
-                Text("Cyber Companion")
+                Text("Hera")
                     .font(Theme.heading())
                     .foregroundStyle(Theme.spectrumGradient)
                 Text("Speak an idea. Get a website and posts for it.\nNothing is published until you approve it.")
