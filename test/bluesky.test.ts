@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseCredential, publishPost } from "../server/agent/bluesky.ts";
 import { postContentChecks } from "../server/agent/policy.ts";
-import type { FetchLike } from "../server/calendar.ts";
+import type { FetchLike } from "../server/shared.ts";
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
 

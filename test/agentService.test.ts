@@ -4,7 +4,7 @@
  */
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { access, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -12,7 +12,7 @@ process.env.MASTER_KEY = Buffer.alloc(32, 11).toString("base64");
 const { makeDb, addUser } = await import("./helpers/db.ts");
 const { AgentService } = await import("../server/agent/service.ts");
 const { AGENT_MODEL } = await import("../server/agent/loop.ts");
-import type { FetchLike } from "../server/calendar.ts";
+import type { FetchLike } from "../server/shared.ts";
 
 const U = "00000000-0000-0000-0000-0000000000a1";
 const OTHER = "00000000-0000-0000-0000-0000000000b2";
@@ -290,4 +290,25 @@ test("each person gets their own site folder", async () => {
   const svc = service(netlify().f);
   assert.notEqual(svc.siteIdFor(U), svc.siteIdFor(OTHER));
   assert.match(svc.siteIdFor(U), /^u-[a-f0-9]{24}$/);
+});
+
+test("deleting an account removes that person's site files and proposals, and no one else's", async () => {
+  const svc = service(netlify().f);
+  const post = { connectionId: "x1", text: "hi", link: null, sponsored: false, mediaRefs: [] };
+  for (const who of [U, OTHER]) {
+    await (await svc.sandbox(who)).write("index.html", "<h1>Mine</h1>");
+    svc.store.propose({ userId: who, kind: "social.post", payload: post, summary: "post", tainted: false, ctx: await svc.context(who) });
+  }
+  const mine = svc.store.list(U)[0];
+
+  await svc.forget(U);
+
+  await assert.rejects(access(path.join(sitesDir, svc.siteIdFor(U))), { code: "ENOENT" });
+  assert.equal(svc.list(U).length, 0);
+  assert.throws(() => svc.store.get(mine.id, U), { code: "not_found" });
+  // The other person keeps everything.
+  await access(path.join(sitesDir, svc.siteIdFor(OTHER), "index.html"));
+  assert.equal(svc.list(OTHER).length, 1);
+  // Forgetting twice is harmless (a retried deletion).
+  await svc.forget(U);
 });

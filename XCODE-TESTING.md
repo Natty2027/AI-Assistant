@@ -36,13 +36,18 @@ For a database created before Bluesky publishing existed, run
 
 ## Voice
 
-Tap **Speak** on the Create tab. Speech is recognized on the device by Apple's `SpeechAnalyzer`;
-the audio never leaves it, and only the finished text is sent when you tap Send. The first use
-downloads the speech model for your language (shared with other apps, kept up to date by the
-system). Devices without the newer model fall back to `DictationTranscriber`.
+Tap the orb on the Create tab to speak. Speech is recognized on the device by Apple's
+`SpeechAnalyzer`; the audio never leaves it, and only the finished text is sent when you tap
+Create. The first use downloads the speech model for your language (shared with other apps,
+kept up to date by the system). Devices without the newer model fall back to
+`DictationTranscriber`.
 
-**The Simulator can't test voice**: Apple's speech models don't run there. Use a Mac or a
+**The Simulator can't test voice input**: Apple's speech models don't run there. Use a Mac or a
 physical iPhone.
+
+Hera's replies are spoken by Kokoro-82M (voice `af_heart`), bundled in
+`app/CyberCompanion/Voice/HeraVoice.bundle` and run with Core ML. It works in the Simulator too
+(on the CPU there), and can be turned off in Settings → Voice.
 
 ## Tests
 

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { publish, verifyToken, encodeFilePath } from "../server/agent/netlify.ts";
-import { ProviderError, type FetchLike } from "../server/calendar.ts";
+import { ProviderError, type FetchLike } from "../server/shared.ts";
 
 const sha1 = (s: string) => createHash("sha1").update(s, "utf8").digest("hex");
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

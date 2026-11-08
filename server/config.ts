@@ -19,34 +19,25 @@ function bool(name: string, dflt = false): boolean {
   return v === "1" || v.toLowerCase() === "true";
 }
 
-export interface ProviderOAuthConfig {
-  clientId: string;
-  clientSecret: string;
-  authUrl: string;
-  tokenUrl: string;
-  scopes: string[];
-}
-
 export const config = {
   port: Number(opt("PORT") ?? 4000),
 
-  /** Origins allowed to call this API with credentials. Extension origins look like
-   *  chrome-extension://<id>. Comma-separated. "*" is honored only when ALLOW_ANY_ORIGIN=1. */
+  /** Browser origins allowed to call this API with credentials, comma-separated. The native app
+   *  doesn't use CORS, so this is normally empty. "*" is honored only when ALLOW_ANY_ORIGIN=1. */
   allowedOrigins: (opt("ALLOWED_ORIGINS") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-  // Off by default. The extension's service worker reaches the API through host_permissions,
-  // which bypasses CORS, so nothing legitimate needs this on.
+  // Off by default: nothing legitimate needs it.
   allowAnyOrigin: bool("ALLOW_ANY_ORIGIN", false),
 
   /** Postgres / Supabase connection string. When absent, the server boots in NO-DB mode:
-   *  routes that need persistence return 503 instead of crashing, so OAuth wiring and the
-   *  health check can still be exercised before a database exists. */
+   *  routes that need persistence return 503 instead of crashing, so a first deploy and the
+   *  health check can be verified before a database exists. */
   databaseUrl: opt("DATABASE_URL"),
 
   /** PEM of the CA that signed the database certificate. Set it to enable verification. */
   databaseCa: opt("DATABASE_CA")?.replace(/\\n/g, "\n"),
 
-  /** Supabase JWT secret (Project Settings -> API -> JWT Secret). Used to verify the access
-   *  token the client presents. When absent, DEV_USER_ID below is used instead. */
+  /** Legacy Supabase JWT secret, for projects that still sign HS256 tokens. Optional: current
+   *  projects sign with asymmetric keys, verified through supabaseUrl below. */
   supabaseJwtSecret: opt("SUPABASE_JWT_SECRET"),
 
   /** The Supabase project URL, e.g. https://abcd.supabase.co. Lets the server verify tokens
@@ -63,15 +54,12 @@ export const config = {
   /** Dev-only escape hatch: treat every request as this user id. Never set in production. */
   devUserId: opt("DEV_USER_ID"),
 
-  /** Staging/testing: a long random secret the extension sends as `Authorization: Bearer`,
-   *  mapped to TEST_USER_ID (a row that must already exist in auth.users). Unlike DEV_USER_ID
-   *  this is safe on a public URL, because nothing is accepted without the secret. Remove it
-   *  once real sign-in exists. */
+  /** Staging/testing: a long random secret sent as `Authorization: Bearer` (the app's developer
+   *  token), mapped to TEST_USER_ID (a row that must already exist in auth.users). Unlike
+   *  DEV_USER_ID this is safe on a public URL, because nothing is accepted without the secret.
+   *  Leave it unset in production. */
   testAccessToken: opt("TEST_ACCESS_TOKEN"),
   testUserId: opt("TEST_USER_ID"),
-
-  /** Public https origin of this server, used to build nothing secret — only for logs. */
-  publicUrl: opt("PUBLIC_URL"),
 
   /** 32-byte base64 master key that wraps per-connection data keys (envelope encryption).
    *  In production this is a KMS key id instead; see server/crypto/envelope.ts. */
@@ -82,44 +70,4 @@ export const config = {
   /** Where the assistant keeps each person's website files until they publish them. On a host
    *  with an ephemeral disk (Railway's default), point this at a mounted volume. */
   sitesDir: opt("AGENT_SITES_DIR") ?? "data/sites",
-
-  /** Where moderation.ts posts content-free safety events. Points back at this server. */
-  internalApi: opt("INTERNAL_API") ?? `http://localhost:${Number(opt("PORT") ?? 4000)}`,
-
-  google: providerConfig("GOOGLE", {
-    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-    tokenUrl: "https://oauth2.googleapis.com/token",
-    scopes: [
-      "https://www.googleapis.com/auth/calendar.events",
-      "https://www.googleapis.com/auth/userinfo.email",
-      "openid",
-    ],
-  }),
-
-  microsoft: providerConfig("MICROSOFT", {
-    authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-    tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    scopes: ["Calendars.ReadWrite", "offline_access", "openid", "email"],
-  }),
-
-  /** VAPID keys for Web Push reminders. Optional until Milestone 4. */
-  vapid: {
-    publicKey: opt("VAPID_PUBLIC_KEY"),
-    privateKey: opt("VAPID_PRIVATE_KEY"),
-    subject: opt("VAPID_SUBJECT") ?? "mailto:admin@example.com",
-  },
 } as const;
-
-function providerConfig(
-  prefix: string,
-  fixed: { authUrl: string; tokenUrl: string; scopes: string[] }
-): ProviderOAuthConfig | undefined {
-  const clientId = opt(`${prefix}_CLIENT_ID`);
-  const clientSecret = opt(`${prefix}_CLIENT_SECRET`);
-  if (!clientId || !clientSecret) return undefined;
-  return { clientId, clientSecret, ...fixed };
-}
-
-export function hasDb(): boolean {
-  return Boolean(config.databaseUrl);
-}

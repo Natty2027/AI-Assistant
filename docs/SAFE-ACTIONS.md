@@ -116,21 +116,23 @@ action type, so they cannot be proposed, approved or executed.
 
 - **Websites publish to the person's own Netlify** (`server/agent/netlify.ts`, `service.ts`). They
   paste a personal access token; it is checked with Netlify, encrypted with the same envelope
-  scheme as calendar tokens, stored in `action_connections` (no client access), and deleted on
-  disconnect. Approval is bound to a fingerprint of every file (`contentHash`), so a site edited
-  after approval is refused at publish time. Republishing reuses the same Netlify site, so the
-  address stays the same. A token Netlify revokes marks the connection for reconnection.
-- **The Create page** (`ext/ui/create.html`, `src/ui/create.ts`, opened from the panel footer)
-  connects the account, takes the request, previews the site in a frame with scripts and forms
-  off, and shows each proposal's exact content, checks and confirmations. It reaches the server
-  only through a service-worker bridge limited to the `/agent/` routes.
-- Tests: `test/netlify.test.ts` and `test/agentService.test.ts` (22, against real SQL and a fake
-  Netlify), `scripts/e2e-create.mjs` (18 checks in a real browser, `npm run e2e:create`).
+  scheme as every stored credential (`server/crypto/envelope.ts`), stored in `action_connections`
+  (no client access), and deleted on disconnect. Approval is bound to a fingerprint of every file
+  (`contentHash`), so a site edited after approval is refused at publish time. Republishing reuses
+  the same Netlify site, so the address stays the same. A token Netlify revokes marks the
+  connection for reconnection.
+- **Posts publish to the person's own Bluesky** (`server/agent/bluesky.ts`) with an app password,
+  checked with Bluesky and stored the same way.
+- **The app's Create and Review screens** (`app/CyberCompanion/Views/AssistantView.swift`,
+  `ReviewView.swift`) take the request, preview the site with scripts and forms off, and show each
+  proposal's exact content, checks and confirmations before anything is approved.
+- Tests: `test/netlify.test.ts`, `test/bluesky.test.ts` and `test/agentService.test.ts` (against
+  real SQL and fake providers).
 
 ## What is not built yet
-- **Only websites can be carried out.** Nothing is wired to X, Instagram, an email or SMS
-  provider or an ad platform. Posts can be drafted and shown, but the page says to post them by
-  hand, and the server refuses to approve them (`not_connected`). Each platform needs its own
+- **Only websites and Bluesky posts can be carried out.** Nothing is wired to X, Instagram, an
+  email or SMS provider or an ad platform. Posts for those can be drafted and shared by hand from
+  the app, and the server refuses to approve them (`not_connected`). Each platform needs its own
   developer app registration, review and OAuth.
 - **Netlify has never been called for real.** The connector follows Netlify's documented API and
   is tested against a fake that behaves the same way, not against Netlify itself.

@@ -13,7 +13,7 @@
  * Static sites only. There is no server-side code here to run, which removes a whole class of
  * risk (and of hosting cost) from what the assistant can produce.
  */
-import { mkdir, readFile, readdir, realpath, stat, writeFile, lstat } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile, lstat } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { Check } from "./policy.ts";
@@ -28,15 +28,24 @@ export class SandboxError extends Error {
   constructor(readonly code: "path" | "type" | "size" | "count" | "missing", message: string) { super(message); }
 }
 
+/** Site ids are server-derived (see AgentService.siteIdFor); this shape can't name a parent folder. */
+const SITE_ID = /^[a-z0-9-]{1,64}$/;
+
 export class SiteSandbox {
   private constructor(readonly siteId: string, private readonly root: string) {}
 
   /** `baseDir` holds one folder per site. `siteId` is server-generated, never model-supplied. */
   static async open(baseDir: string, siteId: string): Promise<SiteSandbox> {
-    if (!/^[a-z0-9-]{1,64}$/.test(siteId)) throw new SandboxError("path", "bad site id");
+    if (!SITE_ID.test(siteId)) throw new SandboxError("path", "bad site id");
     const dir = path.join(baseDir, siteId);
     await mkdir(dir, { recursive: true });
     return new SiteSandbox(siteId, await realpath(dir));
+  }
+
+  /** Deletes a site's folder and everything in it (account deletion). Missing is fine. */
+  static async remove(baseDir: string, siteId: string): Promise<void> {
+    if (!SITE_ID.test(siteId)) throw new SandboxError("path", "bad site id");
+    await rm(path.join(baseDir, siteId), { recursive: true, force: true });
   }
 
   /** Resolve a model-supplied relative path, refusing anything that leaves the site folder. */

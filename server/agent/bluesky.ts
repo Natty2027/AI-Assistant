@@ -9,7 +9,7 @@
  * one is a nuisance rather than a takeover. The credential is decrypted for the length of one
  * call and never logged. Errors carry a status and a kind, never a response body.
  */
-import { ProviderError, type FetchLike } from "../calendar.ts";
+import { ProviderError, type FetchLike } from "../shared.ts";
 import { composedPostText } from "./policy.ts";
 
 const ENTRYWAY = "https://bsky.social/xrpc";

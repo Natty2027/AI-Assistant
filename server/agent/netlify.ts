@@ -12,7 +12,7 @@
  * Errors carry a status and a kind, never a response body, which can echo request data.
  */
 import { createHash } from "node:crypto";
-import { ProviderError, type FetchLike } from "../calendar.ts";
+import { ProviderError, type FetchLike } from "../shared.ts";
 
 const API = "https://api.netlify.com/api/v1";
 const TIMEOUT_MS = 25_000; // Netlify ends requests that run longer than 30 seconds

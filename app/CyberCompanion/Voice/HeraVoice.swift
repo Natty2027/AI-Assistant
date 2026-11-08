@@ -131,12 +131,15 @@ final class HeraVoice {
     }
 
     private func tearDownAudio() {
-        player?.stop()
-        audio?.stop()
-        player = nil
-        audio = nil
         pendingBuffers = 0
         synthesisFinished = false
+        // Only release audio Hera started: the session is shared with voice input, and stop() is
+        // also called when she isn't speaking (e.g. just before the mic starts).
+        guard let audio else { return }
+        player?.stop()
+        audio.stop()
+        player = nil
+        self.audio = nil
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif

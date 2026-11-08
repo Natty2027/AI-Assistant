@@ -137,6 +137,16 @@ export class ActionStore {
     return [...this.proposals.values()].filter((p) => p.userId === userId).map((p) => this.get(p.id, userId));
   }
 
+  /** Account deletion: drops the person's proposals (their content) and any live approval tokens.
+   *  The audit trail is kept, like audit_log in the database: it holds ids and hashes, no content. */
+  forget(userId: string): void {
+    for (const [id, p] of this.proposals) {
+      if (p.userId !== userId) continue;
+      this.proposals.delete(id);
+      this.tokens.delete(id);
+    }
+  }
+
   /** Returns a single-use token. Only the user's client holds it; it is never logged. */
   approve(args: {
     id: string; userId: string; payloadHash: string;

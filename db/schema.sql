@@ -130,8 +130,8 @@ create table connection_disclosures (
   unique (user_id, provider, disclosure_version)
 );
 
--- Keep in sync with DISCLOSURE_VERSION in src/providers/capabilities.ts.
--- Raising it invalidates prior acknowledgements, so users re-consent on next connect.
+-- The current calendar-disclosure version (the calendar features that used it have been
+-- removed from the server). Raising it invalidates prior acknowledgements.
 create or replace function pcc_current_disclosure_version() returns integer
   language sql immutable as $$ select 1 $$;
 

@@ -8,9 +8,9 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 
-// Keep this list in sync with the model constants in src/ (requirementAudit, imageToEvents,
-// safety/moderation). If you add a model anywhere, add it here.
-const MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"];
+// Keep this list in sync with AGENT_MODEL in server/agent/loop.ts. If you add a model anywhere,
+// add it here.
+const MODELS = ["claude-opus-5-5"];
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("Set ANTHROPIC_API_KEY first:  ANTHROPIC_API_KEY=sk-... npm run smoke:models");

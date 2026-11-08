@@ -10,9 +10,6 @@ import { closePool } from "./db.ts";
 import { buildRouter } from "./routes.ts";
 import { refreshSigningKeys } from "./auth.ts";
 
-// moderation.ts posts its content-free safety events to process.env.INTERNAL_API directly.
-process.env.INTERNAL_API ??= config.internalApi;
-
 if (config.devUserId && process.env.RAILWAY_ENVIRONMENT) {
   // DEV_USER_ID makes every request that user. Refuse to run that way on a public host.
   console.error("[boot] DEV_USER_ID is set on Railway; refusing to start. Use TEST_ACCESS_TOKEN + TEST_USER_ID.");

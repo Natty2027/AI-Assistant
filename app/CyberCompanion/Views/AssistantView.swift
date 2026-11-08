@@ -7,6 +7,7 @@ struct AssistantView: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var prompt = ""
     @State private var allowWebSearch = false
     @State private var voice = VoiceInput()
@@ -74,6 +75,8 @@ struct AssistantView: View {
         .onChange(of: voice.transcript) { _, spoken in
             prompt = [promptBeforeVoice, spoken].filter { !$0.isEmpty }.joined(separator: " ")
         }
+        // In the background the system pauses Hera's audio mid-sentence; stop cleanly instead.
+        .onChange(of: scenePhase) { _, phase in if phase == .background { model.speech.stop() } }
         .sensoryFeedback(.start, trigger: voice.isListening) { _, listening in listening }
         .sensoryFeedback(.success, trigger: model.lastRun)
     }

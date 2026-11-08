@@ -2,19 +2,15 @@
  * Request authentication → a Supabase user id (uuid), which every table keys on via
  * auth.uid() in db/schema.sql.
  *
- * Three sources, in order:
- *   1. Authorization: Bearer <supabase access token>   (preferred; extension should send this)
- *   2. Cookie: sb-access-token=<...>                     (credentials:"include" from the panel)
- *   3. DEV_USER_ID env                                   (local dev only, no token required)
+ * Only the Authorization header is read (a cookie fallback would let any website ride the
+ * person's session). In order:
+ *   1. Bearer TEST_ACCESS_TOKEN                          (staging only, maps to TEST_USER_ID)
+ *   2. Bearer <Supabase access token>                    (what the app sends after Sign in with Apple)
+ *   3. DEV_USER_ID env                                   (local dev only; refused on Railway)
  *
- * Supabase signs access tokens as HS256 JWTs with the project's JWT secret, so we can verify
- * them with node:crypto and no external dependency. If SUPABASE_JWT_SECRET is unset we fall
- * back to DEV_USER_ID so the server is usable before Supabase is wired up.
- *
- * NOTE (integration gap, documented in server/README.md): src/sw.ts currently calls the API
- * with credentials:"include" but does not attach an Authorization header. Until it does, set
- * DEV_USER_ID locally, or add the header in sw.ts. This is the one client change the backend
- * needs and it is intentionally called out rather than hidden.
+ * Supabase access tokens are verified with node:crypto and no external dependency: ES256/RS256
+ * against the project's published signing keys (from SUPABASE_URL), or HS256 against the legacy
+ * SUPABASE_JWT_SECRET for older projects.
  */
 import { createHmac, createPublicKey, timingSafeEqual, verify as verifySignature, type JsonWebKey, type KeyObject } from "node:crypto";
 import { config } from "./config.ts";
@@ -130,7 +126,7 @@ function verifyAsymmetricJwt(token: string, alg: string, kid: string | undefined
 function bearerFrom(ctx: Ctx): string | undefined {
   const h = ctx.req.headers["authorization"];
   // Bearer header only. A cookie fallback would let any website the user visits ride their
-  // session, which is exactly what the credentialed-CORS hole elsewhere would have enabled.
+  // session (cross-site request forgery); a header can't be added by another site.
   if (h && h.startsWith("Bearer ")) return h.slice(7).trim();
   return undefined;
 }
@@ -192,11 +188,4 @@ function resolveUser(ctx: Ctx): string {
     401,
     "Not signed in. Send a Supabase access token as 'Authorization: Bearer …', or set DEV_USER_ID for local testing."
   );
-}
-
-/** For internal endpoints (e.g. /safety-events) that trust the loopback origin only. */
-export function assertLoopback(ctx: Ctx): void {
-  const ra = ctx.req.socket.remoteAddress ?? "";
-  const isLocal = ra === "127.0.0.1" || ra === "::1" || ra === "::ffff:127.0.0.1";
-  if (!isLocal) throw new HttpError(403, "Internal endpoint");
 }

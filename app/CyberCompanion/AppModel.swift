@@ -48,9 +48,6 @@ final class AppModel {
 
     var pendingCount: Int { proposals.filter(\.isPending).count }
 
-    var socialConnections: [Connection] { connections.filter { $0.kind == "social" } }
-    var hostingConnections: [Connection] { connections.filter { $0.kind == "hosting" } }
-
     /// nil until there's a valid server address (https, or http on this machine) and a way to
     /// authenticate: a signed-in session, or a developer token.
     var client: APIClient? {

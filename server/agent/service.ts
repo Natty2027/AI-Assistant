@@ -13,9 +13,8 @@ import { SiteSandbox } from "./sandbox.ts";
 import { runAgent, type AgentDeps, type AgentResult } from "./loop.ts";
 import { publish, verifyToken } from "./netlify.ts";
 import { parseCredential, publishPost, verifyCredential, type BlueskyCredential } from "./bluesky.ts";
-import { ProviderError, type FetchLike } from "../calendar.ts";
+import { ProviderError, type FetchLike, type Run } from "../shared.ts";
 import { decryptToken, encryptToken, newDataKeyId } from "../crypto/envelope.ts";
-import type { Run } from "../connections.ts";
 
 /** What can actually be carried out today. Approving anything else is refused up front, so
  *  nobody approves something that has nowhere to go. A social post can only target a connected
@@ -67,6 +66,13 @@ export class AgentService {
 
   sandbox(userId: string): Promise<SiteSandbox> {
     return SiteSandbox.open(this.d.sitesDir, this.siteIdFor(userId));
+  }
+
+  /** Account deletion: the person's website files and their proposals. Connections live in the
+   *  database and are deleted with the rest of their rows. */
+  async forget(userId: string): Promise<void> {
+    this.store.forget(userId);
+    await SiteSandbox.remove(this.d.sitesDir, this.siteIdFor(userId));
   }
 
   /* ---------------- connections ---------------- */
