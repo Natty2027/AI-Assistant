@@ -70,16 +70,20 @@ struct ModelsTests {
         #expect(SiteSchemeHandler.mimeType(for: "logo.SVG") == "image/svg+xml")
     }
 
-    @Test @MainActor func onlySecureOrLocalServersAreAccepted() {
+    // The address rules are tested on ServerAddress directly: once AppConfig.serverURL is set for
+    // release, AppModel ignores whatever is typed into Settings, so it can't show them.
+    @Test func onlySecureOrLocalServersAreAccepted() {
+        #expect(ServerAddress.normalize("http://api.example.com") == nil)
+        #expect(ServerAddress.normalize("https://api.example.com") != nil)
+        #expect(ServerAddress.normalize("http://localhost:8787") != nil)
+    }
+
+    @Test @MainActor func noClientWithoutATokenOrSignIn() {
         let model = AppModel()
         let original = (model.serverURLString, model.accessToken)
         defer { model.saveSettings(serverURL: original.0, accessToken: original.1) }
 
-        model.saveSettings(serverURL: "http://api.example.com", accessToken: "t")
-        #expect(model.client == nil)
         model.saveSettings(serverURL: "https://api.example.com", accessToken: "t")
-        #expect(model.client != nil)
-        model.saveSettings(serverURL: "http://localhost:8787", accessToken: "t")
         #expect(model.client != nil)
         model.saveSettings(serverURL: "https://api.example.com", accessToken: "")
         #expect(model.client == nil)

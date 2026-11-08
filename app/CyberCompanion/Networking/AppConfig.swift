@@ -8,7 +8,7 @@ import Foundation
 /// service-role key must never appear here; it lives only on the server.
 enum AppConfig {
     /// e.g. URL(string: "https://api.cybercompanion.app")
-    static let serverURL: URL? = nil
+    static let serverURL: URL? = URL(string: "https://ai-assistant-production-e789.up.railway.app")
     /// e.g. URL(string: "https://abcd.supabase.co")
     static let supabaseURL: URL? = URL(string: "https://ozleskfpkntrfkzalczf.supabase.co")
     /// Supabase's public (publishable) key. Safe to ship in the app.
