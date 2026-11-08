@@ -6,9 +6,12 @@ struct AssistantView: View {
     var openReview: () -> Void
 
     @Environment(AppModel.self) private var model
+    @Environment(ConversationRequests.self) private var conversations
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var prompt = ""
+    /// Website or posts: one at a time, never both in the same run.
+    @State private var mode: CreateMode = .site
     @State private var allowWebSearch = false
     @State private var voice = VoiceInput()
     /// What was typed before the mic started, so dictation is added to it rather than replacing it.
@@ -16,10 +19,14 @@ struct AssistantView: View {
     @FocusState private var promptFocused: Bool
     @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
 
-    private let suggestions: [(String, String)] = [
-        ("globe", "Make a one-page website for my business"),
-        ("calendar.badge.plus", "Announce my next event on social media"),
-        ("sparkles", "Write a week of posts about what I do"),
+    /// Where the spoken "Talk to Hera" conversation is.
+    private enum Conversation { case none, choosing, describing }
+    @State private var conversation: Conversation = .none
+
+    private let suggestions: [(CreateMode, String, String)] = [
+        (.site, "globe", "Make a one-page website for my business"),
+        (.posts, "calendar.badge.plus", "Announce my next event on social media"),
+        (.posts, "sparkles", "Write a week of posts about what I do"),
     ]
 
     var body: some View {
@@ -73,8 +80,16 @@ struct AssistantView: View {
         }
         .auroraBackground()
         .onChange(of: voice.transcript) { _, spoken in
+            // The answer to "website or posts?" isn't part of the request.
+            guard conversation != .choosing else { return }
             prompt = [promptBeforeVoice, spoken].filter { !$0.isEmpty }.joined(separator: " ")
         }
+        // "Hey Siri, talk to Hera" (TalkToHeraIntent) lands here.
+        .onChange(of: conversations.isPending, initial: true) { _, pending in
+            if pending, conversations.take() { startConversation() }
+        }
+        // The first load on a device compiles the voice model; start it now, not at the first reply.
+        .task { if speakReplies { model.speech.prepare() } }
         // In the background the system pauses Hera's audio mid-sentence; stop cleanly instead.
         .onChange(of: scenePhase) { _, phase in if phase == .background { model.speech.stop() } }
         .sensoryFeedback(.start, trigger: voice.isListening) { _, listening in listening }
@@ -123,7 +138,16 @@ struct AssistantView: View {
     private var composer: some View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
         return VStack(alignment: .leading, spacing: 12) {
-            TextField("Describe what you'd like…", text: $prompt, axis: .vertical)
+            Picker("Create", selection: $mode) {
+                ForEach(CreateMode.allCases) { m in
+                    Label(m.title, systemImage: m.systemImage).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(model.isRunning)
+
+            TextField(mode == .site ? "Describe the website you'd like…" : "Describe the posts you'd like…",
+                      text: $prompt, axis: .vertical)
                 .lineLimit(3...10)
                 .font(.body)
                 .focused($promptFocused)
@@ -161,8 +185,9 @@ struct AssistantView: View {
     private var suggestionChips: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel("Try")
-            ForEach(suggestions, id: \.1) { icon, text in
+            ForEach(suggestions, id: \.2) { suggestionMode, icon, text in
                 Button {
+                    mode = suggestionMode
                     prompt = text
                     promptFocused = true
                 } label: {
@@ -179,7 +204,7 @@ struct AssistantView: View {
     private var working: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionLabel("Working", color: Theme.spectrum[2])
-            Text("Building your site and writing your posts. This can take a minute.")
+            Text(mode == .site ? "Building your website. This can take a minute." : "Writing your posts. This can take a minute.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             ThinkingBeam()
@@ -209,8 +234,70 @@ struct AssistantView: View {
 
     private func send() async {
         promptFocused = false
+        conversation = .none
         model.speech.stop()
-        await model.runAssistant(prompt: prompt, allowWebSearch: allowWebSearch)
+        await model.runAssistant(prompt: prompt, mode: mode, allowWebSearch: allowWebSearch)
+    }
+
+    /* ---------------- "Talk to Hera" ---------------- */
+
+    /// Hera asks website or posts, listens, then asks what it's about and starts on it. Each step
+    /// waits for her to finish speaking before the mic opens. Nothing is published: the run ends
+    /// in proposals the person approves, as always.
+    private func startConversation() {
+        model.speech.stop()
+        guard model.isConfigured else { return }  // the sign-in screen is showing instead
+        if model.aiConsent == false {
+            model.speech.speak("Hi, I'm Hera. First, tap Allow AI on this screen, then call me again.")
+            return
+        }
+        askWebsiteOrPosts(firstTime: true)
+    }
+
+    private func askWebsiteOrPosts(firstTime: Bool) {
+        conversation = .choosing
+        let question = firstTime
+            ? "Hi, I'm Hera. Would you like to create a website, or write some posts?"
+            : "Let's do one at a time. A website, or posts?"
+        model.speech.speak(question) {
+            Task { await hearWebsiteOrPosts(firstTime: firstTime) }
+        }
+    }
+
+    private func hearWebsiteOrPosts(firstTime: Bool) async {
+        let reply = await voice.listenUntilSilence()
+        guard conversation == .choosing else { return }
+        if let chosen = ConversationReply.mode(from: reply) {
+            mode = chosen
+            askWhatAbout()
+        } else if firstTime && !reply.isEmpty {
+            askWebsiteOrPosts(firstTime: false)
+        } else {
+            conversation = .none
+            model.speech.speak("No problem. Choose Website or Posts, then tell me what you'd like.")
+        }
+    }
+
+    private func askWhatAbout() {
+        conversation = .describing
+        prompt = ""
+        promptBeforeVoice = ""
+        let question = mode == .site ? "Great. What should the website be about?" : "Great. What would you like to post about?"
+        model.speech.speak(question) {
+            Task { await hearRequest() }
+        }
+    }
+
+    private func hearRequest() async {
+        let said = await voice.listenUntilSilence()
+        guard conversation == .describing else { return }
+        conversation = .none
+        guard !said.isEmpty else {
+            model.speech.speak("I didn't catch that. Tap the orb when you're ready.")
+            return
+        }
+        prompt = said
+        await send()
     }
 
     /* ---------------- notices ---------------- */
@@ -265,6 +352,16 @@ private struct RunResultView: View {
                         }
                         Text(run.text)
                             .textSelection(.enabled)
+                        if model.speech.phase == .preparing {
+                            Label("Getting Hera's voice ready…", systemImage: "waveform")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let problem = model.speech.problem {
+                            Text(problem)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         if run.needsAnswer {
                             Text("Answer above and tap Create again.")
                                 .font(.caption)
@@ -347,4 +444,5 @@ private struct RunResultView: View {
 #Preview {
     AssistantView(openSettings: {}, openReview: {})
         .environment(AppModel())
+        .environment(ConversationRequests())
 }

@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { ActionError, ActionStore, type ExecutionResult, type Proposal } from "./approvals.ts";
 import { ACTIONS, isPlatform, type ActionKind, type Context, type Platform } from "./policy.ts";
 import { SiteSandbox } from "./sandbox.ts";
-import { runAgent, type AgentDeps, type AgentResult } from "./loop.ts";
+import { runAgent, type AgentDeps, type AgentMode, type AgentResult } from "./loop.ts";
 import { publish, verifyToken } from "./netlify.ts";
 import { parseCredential, publishPost, verifyCredential, type BlueskyCredential } from "./bluesky.ts";
 import { ProviderError, type FetchLike, type Run } from "../shared.ts";
@@ -158,11 +158,11 @@ export class AgentService {
 
   /* ---------------- the assistant ---------------- */
 
-  async run(userId: string, request: string, opts: { allowWebSearch?: boolean } = {}): Promise<AgentResult & { proposals: ProposalView[] }> {
+  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean }): Promise<AgentResult & { proposals: ProposalView[] }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     const ctx = await this.context(userId);
     const sandbox = await this.sandbox(userId);
-    const out = await runAgent({ client: this.d.client, store: this.store, sandbox, userId, context: () => ctx, allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep }, request);
+    const out = await runAgent({ mode: opts.mode, client: this.d.client, store: this.store, sandbox, userId, context: () => ctx, allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep }, request);
     return { ...out, proposals: out.proposalIds.map((id) => viewOf(this.store.get(id, userId))) };
   }
 

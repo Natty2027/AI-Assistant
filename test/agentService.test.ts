@@ -110,7 +110,7 @@ test("build -> propose -> approve -> publish: the approved site goes live on the
   const conn = await service(fake.f).connectNetlify(U, TOKEN);
   const svc = service(fake.f, siteBuilder(conn.id));
 
-  const out = await svc.run(U, "Make a one-page site for my pottery studio, Clay Corner.");
+  const out = await svc.run(U, "Make a one-page site for my pottery studio, Clay Corner.", { mode: "site" });
   assert.equal(out.status, "done");
   const p = out.proposals[0];
   assert.equal(p.kind, "site.deploy");
@@ -134,7 +134,7 @@ test("if the site changes after approval, nothing is published", async () => {
   const fake = netlify();
   const conn = await service(fake.f).connectNetlify(U, TOKEN);
   const svc = service(fake.f, siteBuilder(conn.id, "<h1>Version one</h1>"));
-  const p = (await svc.run(U, "build it")).proposals[0];
+  const p = (await svc.run(U, "build it", { mode: "site" })).proposals[0];
   const { token } = svc.approve(U, p.id, { payloadHash: p.payloadHash });
 
   await (await svc.sandbox(U)).write("index.html", "<h1>Something the person never saw</h1>");
@@ -148,7 +148,7 @@ test("a site with a phishing-style password field cannot even be proposed for pu
   const fake = netlify();
   const conn = await service(fake.f).connectNetlify(U, TOKEN);
   const svc = service(fake.f, siteBuilder(conn.id, '<form><input type="password" name="pw"></form>'));
-  const p = (await svc.run(U, "build a login page")).proposals[0];
+  const p = (await svc.run(U, "build a login page", { mode: "site" })).proposals[0];
   assert.equal(p.status, "blocked");
   assert.ok(p.checks.some((c) => c.id === "password_field"));
   assert.throws(() => svc.approve(U, p.id, { payloadHash: p.payloadHash }), { code: "not_pending" });
@@ -159,7 +159,7 @@ test("publishing to a connection that is not the person's is blocked", async () 
   const fake = netlify();
   const theirs = await service(fake.f).connectNetlify(OTHER, TOKEN);
   const svc = service(fake.f, siteBuilder(theirs.id));
-  const p = (await svc.run(U, "publish to that account")).proposals[0];
+  const p = (await svc.run(U, "publish to that account", { mode: "site" })).proposals[0];
   assert.equal(p.status, "blocked");
   assert.ok(p.checks.some((c) => c.id === "unknown_destination"));
   await service(fake.f).disconnect(OTHER, theirs.id);
@@ -222,7 +222,7 @@ test("an approved post is published to Bluesky once, with the link made clickabl
   const fake = bluesky();
   const conn = await service(fake.f).connectBluesky(U, "claycorner.bsky.social", APP_PW);
   const svc = service(fake.f, (poster(conn.id, "Beginner pottery, Saturdays at 10. Sign up:", "https://claycorner.example/")));
-  const out = await svc.run(U, "announce my class on bluesky");
+  const out = await svc.run(U, "announce my class on bluesky", { mode: "posts" });
   const p = out.proposals[0];
   assert.equal(p.status, "pending");
   assert.equal(fake.posts.length, 0, "nothing is posted before approval");
@@ -240,7 +240,7 @@ test("an approved post is published to Bluesky once, with the link made clickabl
   // The same words again today, to the same account, are refused by the rules.
   const repeat = new AgentService({ run, fetch: fake.f, sitesDir, store: svc.store, sleep: async () => {},
     client: poster(conn.id, "Beginner pottery, Saturdays at 10. Sign up:", "https://claycorner.example/") });
-  const again = (await repeat.run(U, "again")).proposals[0];
+  const again = (await repeat.run(U, "again", { mode: "posts" })).proposals[0];
   assert.equal(again.status, "blocked");
   assert.ok(again.checks.some((c) => c.id === "repeat_post"));
   await run(`delete from action_connections where id = $1`, [conn.id]);
@@ -249,7 +249,7 @@ test("an approved post is published to Bluesky once, with the link made clickabl
 test("a Bluesky app password revoked since connecting marks the account as needing reconnection", async () => {
   const conn = await service(bluesky().f).connectBluesky(U, "claycorner.bsky.social", APP_PW);
   const svc = service(bluesky({ sessionStatus: 401 }).f, (poster(conn.id, "Open studio this Friday.")));
-  const p = (await svc.run(U, "post")).proposals[0];
+  const p = (await svc.run(U, "post", { mode: "posts" })).proposals[0];
   const { token } = svc.approve(U, p.id, { payloadHash: p.payloadHash });
   const out = await svc.execute(U, p.id, token);
   assert.equal(out.status, "failed");
@@ -271,7 +271,7 @@ test("a token Netlify has since revoked marks the connection as needing reconnec
   const fake = netlify({ deployStatus: 401 });
   const conn = await service(netlify().f).connectNetlify(U, TOKEN);
   const svc = service(fake.f, siteBuilder(conn.id));
-  const p = (await svc.run(U, "build")).proposals[0];
+  const p = (await svc.run(U, "build", { mode: "site" })).proposals[0];
   const { token } = svc.approve(U, p.id, { payloadHash: p.payloadHash });
   const out = await svc.execute(U, p.id, token);
   assert.equal(out.status, "failed");
@@ -282,7 +282,7 @@ test("a token Netlify has since revoked marks the connection as needing reconnec
 
 test("without an AI key the assistant says so; everything else still works", async () => {
   const svc = service(netlify().f, null);
-  await assert.rejects(() => svc.run(U, "build"), { code: "ai_unavailable" });
+  await assert.rejects(() => svc.run(U, "build", { mode: "site" }), { code: "ai_unavailable" });
   assert.ok(Array.isArray(await svc.connections(U)));
 });
 

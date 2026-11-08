@@ -47,7 +47,17 @@ physical iPhone.
 
 Hera's replies are spoken by Kokoro-82M (voice `af_heart`), bundled in
 `app/CyberCompanion/Voice/HeraVoice.bundle` and run with Core ML. It works in the Simulator too
-(on the CPU there), and can be turned off in Settings → Voice.
+(on the CPU there), and can be turned off in Settings → Voice. If her own voice can't load on a
+device she retries on the CPU, then falls back to the system's best voice and says so on screen.
+
+**Talk to Hera.** Say "Hey Siri, talk to Hera" (or "Hey Siri, Hey Hera", "Start Hera", "Create
+with Hera"), or run the "Talk to Hera" shortcut. The app opens on Create; Hera asks whether you'd
+like a website or posts, listens, asks what it's about, and starts on it. The mic stops on its own
+when you stop talking. Siri can take a few minutes after installing a new build to learn the
+phrases; Product → App Shortcuts Preview in Xcode shows how they match.
+
+**Website and posts are separate.** The Create tab's Website / Posts switch picks one per run;
+the server only gives the assistant that mode's tools (`AGENT_MODES` in `server/agent/loop.ts`).
 
 ## Tests
 

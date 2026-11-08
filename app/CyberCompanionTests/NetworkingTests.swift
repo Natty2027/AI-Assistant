@@ -77,7 +77,7 @@ struct NetworkingTests {
 
         calls = 0
         StubProtocol.handler = { _ in calls += 1; return (503, #"{"error":"busy"}"#) }
-        await #expect(throws: APIClient.APIError.self) { try await client.runAssistant(request: "hi", allowWebSearch: false) }
+        await #expect(throws: APIClient.APIError.self) { try await client.runAssistant(request: "hi", mode: .posts, allowWebSearch: false) }
         #expect(calls == 1, "a POST is never repeated automatically")
     }
 

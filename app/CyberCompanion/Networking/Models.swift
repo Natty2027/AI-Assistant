@@ -147,6 +147,17 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
     var isBlocked: Bool { status == "blocked" || checks.contains { $0.level == .block } }
 }
 
+/// What one assistant run is for. Building the website and writing posts are separate runs; the
+/// server enforces it, so a website run can't write posts and a posts run can't change the site.
+enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case site
+    case posts
+
+    var id: Self { self }
+    var title: String { self == .site ? "Website" : "Posts" }
+    var systemImage: String { self == .site ? "globe" : "text.bubble" }
+}
+
 struct AgentRunResponse: Codable, Hashable, Sendable {
     let status: String
     let text: String

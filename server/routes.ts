@@ -12,6 +12,7 @@ import { createLimiter } from "./rateLimit.ts";
 import { assertUuid, ProviderError } from "./shared.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentService } from "./agent/service.ts";
+import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
 import { ActionError } from "./agent/approvals.ts";
 import { SandboxError } from "./agent/sandbox.ts";
 
@@ -201,12 +202,16 @@ export function buildRouter(): Router {
     const userId = requireAuth(ctx);
     const request = typeof ctx.body.request === "string" ? ctx.body.request.trim() : "";
     if (!request || request.length > 4000) throw new HttpError(400, "Describe what you'd like, in up to 4000 characters.");
+    // Website and posts are separate runs. Builds from before the split send no mode; they get
+    // the website, which is what they were opened for most often.
+    const mode = ctx.body.mode ?? "site";
+    if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'site' or 'posts'.");
     await ensureSettings(userId);
     // What the person writes is sent to the model provider, so the AI consent switch applies.
     await requireAiConsent(userId);
     // Counted only once the run can actually happen, so refused requests don't use up the hour.
     if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
-    const out = await guarded(() => agent().run(userId, request, { allowWebSearch: ctx.body.allow_web_search === true }));
+    const out = await guarded(() => agent().run(userId, request, { mode: mode as AgentMode, allowWebSearch: ctx.body.allow_web_search === true }));
     return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, tainted: out.tainted };
   });
 

@@ -36,10 +36,10 @@ struct APIClient: Sendable {
 
     /* ---------------- the assistant ---------------- */
 
-    func runAssistant(request: String, allowWebSearch: Bool) async throws -> AgentRunResponse {
-        struct Body: Encodable { let request: String; let allowWebSearch: Bool }
+    func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool) async throws -> AgentRunResponse {
+        struct Body: Encodable { let request: String; let mode: CreateMode; let allowWebSearch: Bool }
         // A run can take several model turns, so it gets a much longer timeout than other calls.
-        return try await send("POST", "agent/run", body: Body(request: request, allowWebSearch: allowWebSearch), timeout: 300)
+        return try await send("POST", "agent/run", body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch), timeout: 300)
     }
 
     func proposals() async throws -> [Proposal] {

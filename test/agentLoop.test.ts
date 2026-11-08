@@ -38,40 +38,91 @@ function scripted(steps: Array<(params: any) => any>) {
 const lastResults = (params: any) => params.messages[params.messages.length - 1].content as any[];
 const draftIdFrom = (params: any) => JSON.parse(lastResults(params).find((r) => r.content.includes("draft_id")).content).draft_id;
 
-async function setup(opts: { allowWebSearch?: boolean } = {}) {
+async function setup(opts: { allowWebSearch?: boolean; mode?: "site" | "posts" } = {}) {
   const store = new ActionStore();
   const sandbox = await SiteSandbox.open(base, `s-${++n}`);
-  return { store, sandbox, deps: (client: any) => ({ client, store, sandbox, userId: "u1", context: () => makeCtx(), ...opts }) };
+  const { mode = "posts", ...rest } = opts;
+  return { store, sandbox, deps: (client: any) => ({ mode, client, store, sandbox, userId: "u1", context: () => makeCtx(), ...rest }) };
 }
 
-test("builds a site and a post, and ends with proposals the user must approve: nothing is published", async () => {
-  const { store, sandbox, deps } = await setup();
-  const { client, calls } = scripted([
-    () => msg([say("Building it."),
-      use("t1", "write_site_file", { path: "index.html", contents: "<h1>Clay Studio</h1><p>Classes on Saturdays.</p>" }),
-      use("t2", "draft_post", { connection_id: "x1", text: "New beginner pottery class this Saturday at 10am.", link: "https://example.com", sponsored: false })]),
-    (p) => msg([use("t3", "propose_post", { draft_id: draftIdFrom(p), summary: "Announce Saturday's class" }),
-      use("t4", "propose_site_deploy", { connection_id: "host", summary: "Publish the studio website" })]),
-    () => msg([say("Both are ready for you to review and approve in the app.")], "end_turn"),
-  ]);
-  const out = await runAgent(deps(client), "Make a site for my pottery studio and announce Saturday's class.");
-
-  assert.equal(out.status, "done");
-  assert.equal(out.proposalIds.length, 2);
-  for (const id of out.proposalIds) assert.equal(store.get(id, "u1").status, "pending", "proposed, not executed");
-  assert.match(await sandbox.read("index.html"), /Clay Studio/);
-  assert.ok(store.auditLog("u1").every((e) => e.event === "proposed"), "no approval or execution happened");
-
-  // The request itself: the right model, settings, and no tool that can publish.
-  const req = calls[0];
-  assert.equal(req.model, "claude-opus-5-5");
-  assert.deepEqual(req.thinking, { type: "adaptive" });
-  assert.equal(req.fallbacks, "default");
+/** No tool, in either mode, can act on its own: they can only propose. */
+function assertNoActingTools(req: any) {
   const names = req.tools.map((t: any) => t.name);
   assert.deepEqual(names.filter((x: string) => /publish|post_now|send|deploy_now|execute|approve|spend|buy/.test(x)), [], `no acting tools: ${names}`);
   assert.ok(!names.some((x: string) => /email|sms|ads|domain/.test(x)), "the agent cannot even propose email, texts, ads or purchases");
   assert.ok(req.tools.every((t: any) => t.strict === true), "every tool is strict");
+}
+
+test("a website run builds the site and ends with a proposal the user must approve: nothing is published", async () => {
+  const { store, sandbox, deps } = await setup({ mode: "site" });
+  const { client, calls } = scripted([
+    () => msg([say("Building it."),
+      use("t1", "write_site_file", { path: "index.html", contents: "<h1>Clay Studio</h1><p>Classes on Saturdays.</p>" })]),
+    () => msg([use("t2", "propose_site_deploy", { connection_id: "host", summary: "Publish the studio website" })]),
+    () => msg([say("It's ready for you to review and approve in the app.")], "end_turn"),
+  ]);
+  const out = await runAgent(deps(client), "Make a site for my pottery studio.");
+
+  assert.equal(out.status, "done");
+  assert.equal(out.proposalIds.length, 1);
+  assert.equal(store.get(out.proposalIds[0], "u1").status, "pending", "proposed, not executed");
+  assert.match(await sandbox.read("index.html"), /Clay Studio/);
+  assert.ok(store.auditLog("u1").every((e) => e.event === "proposed"), "no approval or execution happened");
+
+  // The request itself: the right model, settings, and only website tools.
+  const req = calls[0];
+  assert.equal(req.model, "claude-opus-5-5");
+  assert.deepEqual(req.thinking, { type: "adaptive" });
+  assert.equal(req.fallbacks, "default");
+  assertNoActingTools(req);
+  assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
+    ["ask_user", "check_site", "list_site_files", "propose_site_deploy", "read_site_file", "write_site_file"]);
+  assert.match(req.system, /only for the website/);
   assert.match(req.system, /Never write reviews, testimonials/);
+});
+
+test("a posts run writes and proposes posts and is offered no way to change the site", async () => {
+  const { store, sandbox, deps } = await setup({ mode: "posts" });
+  const { client, calls } = scripted([
+    () => msg([use("t1", "draft_post", { connection_id: "x1", text: "New beginner pottery class this Saturday at 10am.", link: "https://example.com", sponsored: false })]),
+    (p) => msg([use("t2", "propose_post", { draft_id: draftIdFrom(p), summary: "Announce Saturday's class" })]),
+    () => msg([say("Your post is ready to review.")], "end_turn"),
+  ]);
+  const out = await runAgent(deps(client), "Announce Saturday's class.");
+
+  assert.equal(out.status, "done");
+  assert.equal(store.get(out.proposalIds[0], "u1").status, "pending");
+  assert.deepEqual(await sandbox.files(), [], "the site was not touched");
+  const req = calls[0];
+  assertNoActingTools(req);
+  assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
+    ["ask_user", "draft_post", "list_site_files", "propose_post", "read_site_file", "write_post"]);
+  assert.match(req.system, /only for posts/);
+});
+
+test("a tool from the other mode is refused even if the model calls it", async () => {
+  // Website run: posting tools do nothing.
+  const site = await setup({ mode: "site" });
+  const s = scripted([
+    () => msg([use("t1", "draft_post", { connection_id: "x1", text: "hi", link: null, sponsored: false }),
+      use("t2", "write_post", { platform: "x", text: "hi", link: null, sponsored: false })]),
+    () => msg([say("ok")], "end_turn"),
+  ]);
+  const siteOut = await runAgent(site.deps(s.client), "x");
+  assert.equal(siteOut.drafts.length, 0);
+  assert.ok(lastResults(s.calls[1]).every((r) => r.is_error === true && /switch to Posts/.test(r.content)));
+
+  // Posts run: website tools do nothing.
+  const posts = await setup({ mode: "posts" });
+  const p = scripted([
+    () => msg([use("t1", "write_site_file", { path: "index.html", contents: "x" }),
+      use("t2", "propose_site_deploy", { connection_id: "host", summary: "x" })]),
+    () => msg([say("ok")], "end_turn"),
+  ]);
+  const postsOut = await runAgent(posts.deps(p.client), "x");
+  assert.deepEqual(await posts.sandbox.files(), []);
+  assert.equal(postsOut.proposalIds.length, 0);
+  assert.ok(lastResults(p.calls[1]).every((r) => r.is_error === true && /switch to Website/.test(r.content)));
 });
 
 test("content from the web taints the session: later proposals are flagged and need acknowledgement", async () => {
@@ -101,7 +152,7 @@ test("web search is off unless explicitly allowed", async () => {
 });
 
 test("a destination the user never connected is refused, whatever the model was told", async () => {
-  const { store, deps } = await setup();
+  const { store, deps } = await setup({ mode: "site" });
   const { client } = scripted([
     () => msg([use("t1", "draft_post", { connection_id: "attacker-account", text: "hello", link: null, sponsored: false }),
       use("t2", "propose_site_deploy", { connection_id: "attacker-host", summary: "x" })]),
@@ -114,7 +165,7 @@ test("a destination the user never connected is refused, whatever the model was 
 });
 
 test("a refusal stops the turn without running the tool it was cut off in", async () => {
-  const { sandbox, deps } = await setup();
+  const { sandbox, deps } = await setup({ mode: "site" });
   const { client } = scripted([() => msg([use("t1", "write_site_file", { path: "index.html", contents: "x" })], "refusal")]);
   const out = await runAgent(deps(client), "x");
   assert.equal(out.status, "refused");
@@ -122,7 +173,7 @@ test("a refusal stops the turn without running the tool it was cut off in", asyn
 });
 
 test("a tool call truncated by max_tokens is never run", async () => {
-  const { sandbox, deps } = await setup();
+  const { sandbox, deps } = await setup({ mode: "site" });
   const { client } = scripted([() => msg([use("t1", "write_site_file", { path: "index.html", contents: "<h1>Half a pa" })], "max_tokens")]);
   const out = await runAgent(deps(client), "x");
   assert.equal(out.status, "stopped");
@@ -130,7 +181,7 @@ test("a tool call truncated by max_tokens is never run", async () => {
 });
 
 test("malformed tool input is rejected with an error result, not executed", async () => {
-  const { sandbox, deps } = await setup();
+  const { sandbox, deps } = await setup({ mode: "site" });
   const { client, calls } = scripted([
     () => msg([use("t1", "write_site_file", { path: "index.html", contents: "x", mode: "0777" }),
       use("t2", "write_site_file", { path: 42, contents: "x" })]),
@@ -154,7 +205,7 @@ test("a tool the harness never offered does nothing", async () => {
 });
 
 test("a sandbox escape attempt comes back as an error and writes nothing outside", async () => {
-  const { deps } = await setup();
+  const { deps } = await setup({ mode: "site" });
   const { client, calls } = scripted([
     () => msg([use("t1", "write_site_file", { path: "../../../.ssh/authorized_keys.txt", contents: "attacker key" })]),
     () => msg([say("ok")], "end_turn"),

@@ -115,13 +115,13 @@ final class AppModel {
 
     /* ---------------- the assistant ---------------- */
 
-    func runAssistant(prompt: String, allowWebSearch: Bool) async {
+    func runAssistant(prompt: String, mode: CreateMode, allowWebSearch: Bool) async {
         let request = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !request.isEmpty else { return }
         isRunning = true
         defer { isRunning = false }
         await perform {
-            lastRun = try await client.runAssistant(request: request, allowWebSearch: allowWebSearch)
+            lastRun = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch)
             proposals = try await client.proposals()
         }
     }

@@ -28,6 +28,7 @@ final class VoiceInput {
     var isListening: Bool { state == .listening }
 
     private var engine: AVAudioEngine?
+    private var pipe: AudioPipe?
     private var analyzer: SpeechAnalyzer?
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var resultsTask: Task<Void, Never>?
@@ -65,6 +66,10 @@ final class VoiceInput {
         guard isListening else { return }
         state = .preparing("Finishing…")
         stopAudio()
+        // The converter holds back a few milliseconds of audio between buffers; without this the
+        // last word is often lost.
+        pipe?.flush()
+        pipe = nil
         inputContinuation?.finish()
         inputContinuation = nil
         try? await analyzer?.finalizeAndFinishThroughEndOfInput()
@@ -74,6 +79,29 @@ final class VoiceInput {
         resultsTask = nil
         analyzer = nil
         state = .idle
+    }
+
+    /// Hands-free listening for the spoken conversation: starts the mic, then stops on its own
+    /// once the person has said something and gone quiet for about a second and a half (or after
+    /// 8 seconds if they never start). Tapping the orb ends it early. Returns what was heard.
+    func listenUntilSilence() async -> String {
+        await start()
+        guard isListening else { return "" }
+        let began = ContinuousClock.now
+        var lastSound = began
+        var lastTranscript = transcript
+        while isListening {
+            try? await Task.sleep(for: .milliseconds(200))
+            let now = ContinuousClock.now
+            // New words or a voice-level signal both count as still talking.
+            if level > 0.3 || transcript != lastTranscript { lastSound = now }
+            lastTranscript = transcript
+            let heardWords = !transcript.trimmingCharacters(in: .whitespaces).isEmpty
+            if heardWords && now - lastSound > .milliseconds(1500) { break }
+            if !heardWords && now - began > .seconds(8) { break }
+        }
+        await stop()
+        return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var isUnavailable: Bool {
@@ -99,12 +127,19 @@ final class VoiceInput {
 
     /// SpeechTranscriber is the newer, more accurate model; older devices only have the dictation
     /// model, which Apple recommends as the fallback.
+    ///
+    /// Both are set up for accuracy over speed. The "progressive" SpeechTranscriber preset adds
+    /// fastResults, which Apple documents as "faster but also less accurate", so only volatile
+    /// results are kept (the live preview while speaking). Short dictation finalizes early and
+    /// less accurately; long dictation is what Apple's live-audio sample uses.
     private func makeTranscriber() async throws -> Transcriber {
         let transcriber: Transcriber
         if let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current) {
-            transcriber = .speech(SpeechTranscriber(locale: locale, preset: .progressiveTranscription))
+            transcriber = .speech(SpeechTranscriber(
+                locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: []
+            ))
         } else if let locale = await DictationTranscriber.supportedLocale(equivalentTo: .current) {
-            transcriber = .dictation(DictationTranscriber(locale: locale, preset: .progressiveShortDictation))
+            transcriber = .dictation(DictationTranscriber(locale: locale, preset: .progressiveLongDictation))
         } else {
             throw VoiceError(message: "Voice recognition isn't available for your language on this device yet. You can still type your request.")
         }
@@ -137,6 +172,8 @@ final class VoiceInput {
         resultsTask = Task { [weak self] in
             await self?.collectResults(from: transcriber)
         }
+        // Load the model now rather than on the first audio, so the opening words aren't delayed.
+        try await analyzer.prepareToAnalyze(in: analyzerFormat)
         try await analyzer.start(inputSequence: inputs)
 
         let engine = AVAudioEngine()
@@ -147,6 +184,7 @@ final class VoiceInput {
         engine.prepare()
         try engine.start()
         self.engine = engine
+        self.pipe = pipe
     }
 
     private func collectResults(from transcriber: Transcriber) async {
@@ -183,6 +221,7 @@ final class VoiceInput {
 
     private func tearDown() async {
         stopAudio()
+        pipe = nil
         inputContinuation?.finish()
         inputContinuation = nil
         await analyzer?.cancelAndFinishNow()
@@ -218,6 +257,23 @@ private final class AudioPipe: @unchecked Sendable {
             if let converted = convert(buffer) {
                 continuation.yield(AnalyzerInput(buffer: converted))
             }
+        }
+    }
+
+    /// Sends on whatever audio the converter is still holding (resampling keeps a little back
+    /// between buffers). Call once, after the tap is removed and the engine has stopped.
+    func flush() {
+        guard let converter else { return }
+        // A resampler holds back far less than this; 100 ms of room is plenty.
+        let capacity = AVAudioFrameCount(analyzerFormat.sampleRate / 10)
+        guard capacity > 0, let output = AVAudioPCMBuffer(pcmFormat: analyzerFormat, frameCapacity: capacity) else { return }
+        var error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, inputStatus in
+            inputStatus.pointee = .endOfStream
+            return nil
+        }
+        if status != .error, output.frameLength > 0 {
+            continuation.yield(AnalyzerInput(buffer: output))
         }
     }
 

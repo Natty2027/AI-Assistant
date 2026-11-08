@@ -7,6 +7,7 @@ struct RootView: View {
     }
 
     @Environment(AppModel.self) private var model
+    @Environment(ConversationRequests.self) private var conversations
     @State private var selection: Section = .create
 
     var body: some View {
@@ -17,6 +18,10 @@ struct RootView: View {
             tabs
                 .safeAreaInset(edge: .top) { offlineBanner }
                 .animation(.spring(duration: 0.4), value: model.connectivity.isOnline)
+                // "Talk to Hera" happens on the Create tab.
+                .onChange(of: conversations.isPending, initial: true) { _, pending in
+                    if pending { selection = .create }
+                }
         }
     }
 
@@ -60,4 +65,5 @@ struct RootView: View {
 #Preview {
     RootView()
         .environment(AppModel())
+        .environment(ConversationRequests())
 }

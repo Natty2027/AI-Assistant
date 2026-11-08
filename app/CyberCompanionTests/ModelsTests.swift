@@ -64,6 +64,13 @@ struct ModelsTests {
         #expect(platform.characterLimit == server[platform])
     }
 
+    /// The server accepts exactly these two (AGENT_MODES in server/agent/loop.ts).
+    @Test func createModesMatchTheServer() throws {
+        #expect(CreateMode.allCases.map(\.rawValue) == ["site", "posts"])
+        let body = try JSONEncoder().encode(["mode": CreateMode.posts])
+        #expect(String(decoding: body, as: UTF8.self) == #"{"mode":"posts"}"#)
+    }
+
     @Test func previewServesFilesWithTheRightTypes() {
         #expect(SiteSchemeHandler.mimeType(for: "index.html") == "text/html")
         #expect(SiteSchemeHandler.mimeType(for: "css/site.css") == "text/css")

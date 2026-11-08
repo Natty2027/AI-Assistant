@@ -23,6 +23,28 @@ struct VoiceTests {
         #expect(peak > 0.01, "the audio is silent")
     }
 
+    /// The whole spoken path, not just synthesis: Hera's own voice plays through the speaker,
+    /// finishes, and says so (the "call Hera" conversation waits on that before listening).
+    @Test(.timeLimit(.minutes(2))) @MainActor func heraSpeaksAloudAndFinishes() async {
+        let voice = HeraVoice()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            voice.speak("Hi, I'm Hera.") { done.resume() }
+        }
+        #expect(voice.phase == .idle)
+        #expect(voice.problem == nil, "her own voice was used, not the system fallback")
+    }
+
+    /// "Talk to Hera" asks "website or posts?": one at a time, so both or neither means ask again.
+    @Test func spokenAnswersPickWebsiteOrPosts() {
+        #expect(ConversationReply.mode(from: "Let's make a website") == .site)
+        #expect(ConversationReply.mode(from: "a landing page for my bakery") == .site)
+        #expect(ConversationReply.mode(from: "Posts please") == .posts)
+        #expect(ConversationReply.mode(from: "I want to announce my class on Instagram") == .posts)
+        #expect(ConversationReply.mode(from: "both a website and some posts") == nil)
+        #expect(ConversationReply.mode(from: "um, not sure") == nil)
+        #expect(ConversationReply.mode(from: "") == nil)
+    }
+
     @Test func repliesAreCleanedUpBeforeSpeaking() {
         #expect(HeraVoice.spokenText(from: "**Done!** See [your site](https://x.netlify.app).") == "Done! See your site.")
         #expect(HeraVoice.spokenText(from: "Live at https://x.netlify.app now") == "Live at the link now")
