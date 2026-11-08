@@ -4,7 +4,7 @@ import Security
 /// Keeps the access token in the Keychain rather than in preferences, so it isn't in backups in
 /// plain text and other apps can't read it.
 enum Keychain {
-    private static let service = "com.natty2027.cybercompanion"
+    private static let service = "com.natty2027.hera"
 
     static func read(_ account: String) -> String? {
         let query: [String: Any] = [
