@@ -205,3 +205,42 @@ test("a paused server-tool turn is continued, not treated as finished", async ()
   assert.equal(calls.length, 2);
   assert.equal(calls[1].messages.at(-1).role, "assistant", "the paused turn was sent back to continue");
 });
+
+test("a post for a platform with no connected account is written for sharing, checked, and cannot be proposed", async () => {
+  const { store, deps } = await setup();
+  const { client, calls } = scripted([
+    () => msg([use("t1", "write_post", { platform: "instagram", text: "Our spring pottery class is open! 🌱 #ad", link: null, sponsored: true })]),
+    (p) => msg([use("t2", "propose_post", { draft_id: draftIdFrom(p), summary: "x" })]),
+    () => msg([say("Here's an Instagram caption you can share.")], "end_turn"),
+  ]);
+  const out = await runAgent(deps(client), "write me an instagram post");
+  assert.equal(out.drafts.length, 1);
+  const d = out.drafts[0];
+  assert.equal(d.connectionId, null);
+  assert.equal(d.platform, "instagram");
+  assert.deepEqual(d.problems.find((c) => c.id === "needs_media")?.level, "warn", "a missing photo is a reminder: the person adds it when sharing");
+  assert.equal(out.proposalIds.length, 0);
+  assert.equal(store.list("u1").length, 0);
+  assert.match(lastResults(calls[2])[0].content, /share themselves/);
+});
+
+test("shared posts are held to the same content rules as published ones", async () => {
+  const { deps } = await setup();
+  const { client } = scripted([
+    () => msg([use("t1", "write_post", { platform: "x", text: "Spring sale, guaranteed results! #ad", link: null, sponsored: false })]),
+    () => msg([say("ok")], "end_turn"),
+  ]);
+  const out = await runAgent(deps(client), "x");
+  assert.ok(out.drafts[0].problems.some((c) => c.id === "claims" && c.level === "attest"));
+});
+
+test("write_post only accepts known platforms", async () => {
+  const { deps } = await setup();
+  const { client, calls } = scripted([
+    () => msg([use("t1", "write_post", { platform: "myspace", text: "hi", link: null, sponsored: false })]),
+    () => msg([say("ok")], "end_turn"),
+  ]);
+  const out = await runAgent(deps(client), "x");
+  assert.equal(out.drafts.length, 0);
+  assert.match(lastResults(calls[1])[0].content, /INVALID_INPUT/);
+});

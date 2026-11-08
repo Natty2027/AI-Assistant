@@ -165,12 +165,106 @@ test("publishing to a connection that is not the person's is blocked", async () 
   await service(fake.f).disconnect(OTHER, theirs.id);
 });
 
-test("a social post can be drafted but not approved: there is no connection to carry it out yet", async () => {
-  const svc = service(netlify().f);
+/* ---------------- social posts (Bluesky) ---------------- */
+
+const APP_PW = "abcd-efgh-ijkl-mnop";
+
+/** A fake Bluesky that records the posts it was sent. */
+function bluesky(opts: { sessionStatus?: number; postStatus?: number } = {}) {
+  const posts: any[] = [];
+  const f: FetchLike = async (url, init) => {
+    const method = new URL(String(url)).pathname.replace("/xrpc/", "");
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    if (method === "com.atproto.server.createSession") {
+      if (opts.sessionStatus) return json({ error: "AuthenticationRequired" }, opts.sessionStatus);
+      if (body.password !== APP_PW) return json({ error: "AuthenticationRequired" }, 401);
+      return json({ did: "did:plc:clay", handle: "claycorner.bsky.social", accessJwt: "jwt" });
+    }
+    if (method === "com.atproto.repo.createRecord") {
+      if (opts.postStatus) return json({}, opts.postStatus);
+      assert.equal((init!.headers as Record<string, string>).Authorization, "Bearer jwt");
+      posts.push(body);
+      return json({ uri: `at://did:plc:clay/app.bsky.feed.post/3k${posts.length}`, cid: "c" });
+    }
+    return json({}, 404);
+  };
+  return { f, posts };
+}
+
+/** A scripted model that drafts one post for `connectionId` and proposes it. */
+function poster(connectionId: string, text: string, link: string | null = null) {
+  let step = 0;
+  return { beta: { messages: { create: async (params: any) => {
+    step++;
+    if (step === 1) return msg([use("t1", "draft_post", { connection_id: connectionId, text, link, sponsored: false })]);
+    if (step === 2) {
+      const draftId = JSON.parse(params.messages.at(-1).content[0].content).draft_id;
+      return msg([use("t2", "propose_post", { draft_id: draftId, summary: "Announce the class" })]);
+    }
+    return msg([{ type: "text", text: "Your post is ready to review." }], "end_turn");
+  } } } };
+}
+
+test("connecting Bluesky refuses a main password and a wrong app password, and stores a good one encrypted", async () => {
+  const fake = bluesky();
+  const svc = service(fake.f);
+  await assert.rejects(() => svc.connectBluesky(U, "claycorner.bsky.social", "my-real-password"), { code: "bad_token" });
+  await assert.rejects(() => svc.connectBluesky(U, "claycorner.bsky.social", "zzzz-zzzz-zzzz-zzzz"), { code: "bad_token" });
+  const conn = await svc.connectBluesky(U, "@ClayCorner.bsky.social", APP_PW);
+  assert.equal(conn.platform, "bluesky");
+  assert.equal(conn.label, "Bluesky (@claycorner.bsky.social)");
+  const { rows } = await run(`select token_ct from action_connections where id = $1`, [conn.id]);
+  assert.ok(!Buffer.from(rows[0].token_ct).toString("utf8").includes(APP_PW), "the app password is never stored readable");
+  await svc.disconnect(U, conn.id);
+});
+
+test("an approved post is published to Bluesky once, with the link made clickable", async () => {
+  const fake = bluesky();
+  const conn = await service(fake.f).connectBluesky(U, "claycorner.bsky.social", APP_PW);
+  const svc = service(fake.f, (poster(conn.id, "Beginner pottery, Saturdays at 10. Sign up:", "https://claycorner.example/")));
+  const out = await svc.run(U, "announce my class on bluesky");
+  const p = out.proposals[0];
+  assert.equal(p.status, "pending");
+  assert.equal(fake.posts.length, 0, "nothing is posted before approval");
+
+  const { token } = svc.approve(U, p.id, { payloadHash: p.payloadHash });
+  const done = await svc.execute(U, p.id, token);
+  assert.equal(done.status, "executed");
+  assert.equal(done.result!.ref, "https://bsky.app/profile/claycorner.bsky.social/post/3k1");
+  assert.equal(fake.posts.length, 1);
+  const record = fake.posts[0].record;
+  assert.equal(record.text, "Beginner pottery, Saturdays at 10. Sign up:\n\nhttps://claycorner.example/");
+  const facet = record.facets[0];
+  assert.equal(Buffer.from(record.text).subarray(facet.index.byteStart, facet.index.byteEnd).toString(), "https://claycorner.example/");
+
+  // The same words again today, to the same account, are refused by the rules.
+  const repeat = new AgentService({ run, fetch: fake.f, sitesDir, store: svc.store, sleep: async () => {},
+    client: poster(conn.id, "Beginner pottery, Saturdays at 10. Sign up:", "https://claycorner.example/") });
+  const again = (await repeat.run(U, "again")).proposals[0];
+  assert.equal(again.status, "blocked");
+  assert.ok(again.checks.some((c) => c.id === "repeat_post"));
+  await run(`delete from action_connections where id = $1`, [conn.id]);
+});
+
+test("a Bluesky app password revoked since connecting marks the account as needing reconnection", async () => {
+  const conn = await service(bluesky().f).connectBluesky(U, "claycorner.bsky.social", APP_PW);
+  const svc = service(bluesky({ sessionStatus: 401 }).f, (poster(conn.id, "Open studio this Friday.")));
+  const p = (await svc.run(U, "post")).proposals[0];
+  const { token } = svc.approve(U, p.id, { payloadHash: p.payloadHash });
+  const out = await svc.execute(U, p.id, token);
+  assert.equal(out.status, "failed");
+  assert.match(out.result!.detail, /Reconnect/);
+  assert.equal((await svc.connections(U)).length, 0);
+  await run(`delete from action_connections where id = $1`, [conn.id]);
+});
+
+test("a post aimed at an account that is not connected cannot be carried out", async () => {
+  const svc = service(bluesky().f);
   const ctx = await svc.context(U);
   const p = svc.store.propose({ userId: U, kind: "social.post", payload: { connectionId: "x1", text: "hi", link: null, sponsored: false, mediaRefs: [] },
     summary: "post", tainted: false, ctx: { ...ctx, connections: [{ id: "x1", kind: "social", platform: "x", label: "X" }] } });
-  assert.throws(() => svc.approve(U, p.id, { payloadHash: p.payloadHash }), { code: "not_connected" });
+  const { token } = svc.approve(U, p.id, { payloadHash: p.payloadHash });
+  await assert.rejects(() => svc.execute(U, p.id, token), { code: "blocked_at_execution" });
 });
 
 test("a token Netlify has since revoked marks the connection as needing reconnection", async () => {

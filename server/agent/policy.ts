@@ -65,11 +65,33 @@ const https = z.string().max(2048).refine((u) => {
   try { return new URL(u).protocol === "https:"; } catch { return false; }
 }, "must be an https:// address");
 
-export const PLATFORMS = ["x", "instagram", "linkedin", "facebook"] as const;
+export const PLATFORMS = ["x", "instagram", "linkedin", "facebook", "bluesky"] as const;
 export type Platform = (typeof PLATFORMS)[number];
 
+export function isPlatform(p: unknown): p is Platform {
+  return typeof p === "string" && (PLATFORMS as readonly string[]).includes(p);
+}
+
 /** Character limits per platform. Kept conservative; the platform has the final say. */
-export const TEXT_LIMITS: Record<Platform, number> = { x: 280, instagram: 2200, linkedin: 3000, facebook: 5000 };
+export const TEXT_LIMITS: Record<Platform, number> = { x: 280, instagram: 2200, linkedin: 3000, facebook: 5000, bluesky: 300 };
+
+/**
+ * The text exactly as it will appear. Bluesky has no separate link field, so a link the text
+ * does not already contain is appended, and it counts toward the limit.
+ */
+export function composedPostText(platform: Platform, text: string, link: string | null): string {
+  if (platform !== "bluesky" || !link || text.includes(link)) return text;
+  return `${text}\n\n${link}`;
+}
+
+/** Bluesky counts graphemes (an emoji is one); the others are measured in UTF-16 units here,
+ *  which never undercounts. */
+function measured(platform: Platform, text: string): number {
+  if (platform !== "bluesky") return text.length;
+  let n = 0;
+  for (const _ of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) n++;
+  return n;
+}
 
 export const PAYLOADS = {
   // contentHash fingerprints every file of the site, so an approval covers the content the
@@ -176,6 +198,34 @@ function withinQuietHours(sendAt: string, timeZone: string): boolean | null {
 }
 
 /**
+ * The rules that depend only on what a post says, not on where it goes. Used for proposals and
+ * for posts written for the person to share themselves, so both are held to the same standard.
+ */
+export function postContentChecks(platform: Platform, text: string, link: string | null, sponsored: boolean, mediaCount = 0): Check[] {
+  const out: Check[] = [];
+  const full = composedPostText(platform, text, link);
+  const length = measured(platform, full);
+  if (length > TEXT_LIMITS[platform]) {
+    out.push({ id: "too_long", level: "block", message: `Too long for ${platform} (${length}/${TEXT_LIMITS[platform]} characters).` });
+  }
+  if (platform === "instagram" && mediaCount === 0) {
+    out.push({ id: "needs_media", level: "block", message: "Instagram posts need an image or video." });
+  }
+  if (sponsored && !DISCLOSURE.test(text)) {
+    out.push({ id: "disclosure", level: "block", message: "Sponsored content must say so clearly, for example #ad or 'Paid partnership'." });
+  }
+  const mentions = (text.match(/(^|\s)@\w{1,30}/g) ?? []).length;
+  if (mentions > 2) {
+    out.push({ id: "mass_mentions", level: "block", message: "Mentioning many accounts in an automated post is treated as spam." });
+  } else if (mentions > 0) {
+    out.push({ id: "mentions", level: "warn", message: "This post mentions other accounts. Make sure they would welcome it." });
+  }
+  contentChecks(text, out);
+  linkChecks(link, out);
+  return out;
+}
+
+/**
  * Every rule for one proposed action. Pure: same inputs, same answer. `now` is passed in so the
  * time-based rules are testable and so execution-time re-checks see the real clock.
  */
@@ -205,23 +255,7 @@ export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, no
     case "social.post": {
       const platform = conn.platform;
       if (!platform) { out.push({ id: "unknown_platform", level: "block", message: "This account's platform is not known." }); break; }
-      if (p.text.length > TEXT_LIMITS[platform]) {
-        out.push({ id: "too_long", level: "block", message: `Too long for ${platform} (${p.text.length}/${TEXT_LIMITS[platform]} characters).` });
-      }
-      if (platform === "instagram" && p.mediaRefs.length === 0) {
-        out.push({ id: "needs_media", level: "block", message: "Instagram posts need an image or video." });
-      }
-      if (p.sponsored && !DISCLOSURE.test(p.text)) {
-        out.push({ id: "disclosure", level: "block", message: "Sponsored content must say so clearly, for example #ad or 'Paid partnership'." });
-      }
-      const mentions = (p.text.match(/(^|\s)@\w{1,30}/g) ?? []).length;
-      if (mentions > 2) {
-        out.push({ id: "mass_mentions", level: "block", message: "Mentioning many accounts in an automated post is treated as spam." });
-      } else if (mentions > 0) {
-        out.push({ id: "mentions", level: "warn", message: "This post mentions other accounts. Make sure they would welcome it." });
-      }
-      contentChecks(p.text, out);
-      linkChecks(p.link, out);
+      out.push(...postContentChecks(platform, p.text, p.link, p.sponsored, p.mediaRefs.length));
       const norm = normalize(p.text);
       for (const r of ctx.recentPosts) {
         if (normalize(r.text) !== norm) continue;

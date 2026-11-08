@@ -21,7 +21,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { ActionError, type ActionStore } from "./approvals.ts";
-import { evaluate, NEVER_AUTOMATED, TEXT_LIMITS, type Context } from "./policy.ts";
+import { evaluate, NEVER_AUTOMATED, PLATFORMS, postContentChecks, TEXT_LIMITS, type Context, type Platform } from "./policy.ts";
 import { SandboxError, type SiteSandbox } from "./sandbox.ts";
 
 type MessageParam = Anthropic.Beta.Messages.BetaMessageParam;
@@ -32,7 +32,15 @@ export const AGENT_MODEL = "claude-opus-5-5";
 const MAX_TURNS = 20;
 const MAX_TOTAL_TOKENS = 600_000;
 
-export interface Draft { id: string; connectionId: string; text: string; link: string | null; sponsored: boolean }
+/**
+ * A post the assistant wrote. With a connectionId it can be proposed for publishing; without
+ * one it is content for the person to share themselves (the app hands it to the share sheet).
+ */
+export interface Draft {
+  id: string; connectionId: string | null; platform: Platform | null;
+  text: string; link: string | null; sponsored: boolean;
+  problems: Array<{ id: string; level: string; message: string }>;
+}
 
 export interface AgentDeps {
   /** Only the beta messages surface is used; tests pass a scripted fake. */
@@ -75,6 +83,13 @@ const TOOLS = [
       link: { type: ["string", "null"], description: "An https link, or null" },
       sponsored: { type: "boolean", description: "True if this is paid or sponsored promotion" },
     }) },
+  { name: "write_post", description: "Write a social post for the person to share themselves on a platform where no account is connected. Nothing is posted; the app lets them copy or share it. Returns a draft id and any problems found.", strict: true,
+    input_schema: obj({
+      platform: { type: "string", enum: [...PLATFORMS] },
+      text: { type: "string" },
+      link: { type: ["string", "null"], description: "An https link, or null" },
+      sponsored: { type: "boolean", description: "True if this is paid or sponsored promotion" },
+    }) },
   { name: "propose_post", description: "Ask the person to review and approve a drafted post. This does not post anything.", strict: true,
     input_schema: obj({ draft_id: { type: "string" }, summary: { type: "string", description: "One sentence the person will see" } }) },
   { name: "propose_site_deploy", description: "Ask the person to review and approve publishing the website to one of their connected hosting accounts. This does not publish anything.", strict: true,
@@ -89,6 +104,7 @@ const INPUTS = {
   write_site_file: z.object({ path: z.string(), contents: z.string() }).strict(),
   check_site: z.object({}).strict(),
   draft_post: z.object({ connection_id: z.string(), text: z.string(), link: z.string().nullable(), sponsored: z.boolean() }).strict(),
+  write_post: z.object({ platform: z.enum(PLATFORMS), text: z.string().min(1).max(5000), link: z.string().nullable(), sponsored: z.boolean() }).strict(),
   propose_post: z.object({ draft_id: z.string(), summary: z.string() }).strict(),
   propose_site_deploy: z.object({ connection_id: z.string(), summary: z.string() }).strict(),
   ask_user: z.object({ question: z.string() }).strict(),
@@ -101,12 +117,13 @@ function systemPrompt(ctx: Context): string {
     .join("\n") || "- (none connected yet)";
   return `You help one person make a simple website and promote their own activities.
 
-You can create and edit the files of a static website, check it, and write draft social posts. You cannot publish, post, send, or spend anything. When something is ready, propose it: the person reviews the exact content and approves it in the app, and only their approval makes it happen. Say this plainly when you hand something over.
+You can create and edit the files of a static website, check it, and write social posts. You cannot publish, post, send, or spend anything. When something is ready, propose it: the person reviews the exact content and approves it in the app, and only their approval makes it happen. Say this plainly when you hand something over.
 
 The person's connected accounts:
 ${accounts}
 
 How to work:
+- For a post to a connected account, use draft_post and then propose_post. For any other platform, use write_post: the person shares that one themselves. Fit each post to its platform's length and style.
 - Use only facts the person gave you about their activity: names, dates, prices, places, credentials. If you need a fact you don't have, ask rather than inventing one.
 - Never write reviews, testimonials, star ratings, or quotes attributed to customers. Never claim results you can't back up (guaranteed, risk-free, cures).
 - If a post is paid or sponsored, set sponsored to true and say so in the text, for example #ad.
@@ -205,15 +222,25 @@ async function runTool(
       case "draft_post": {
         const conn = ctx.connections.find((c) => c.id === input.connection_id && c.kind === "social");
         if (!conn) return { content: "That is not one of the person's connected social accounts.", error: true };
-        const draft: Draft = { id: `d_${randomBytes(6).toString("hex")}`, connectionId: conn.id, text: input.text, link: input.link, sponsored: input.sponsored };
+        const draft: Draft = { id: `d_${randomBytes(6).toString("hex")}`, connectionId: conn.id, platform: conn.platform ?? null, text: input.text, link: input.link, sponsored: input.sponsored, problems: [] };
+        draft.problems = evaluate("social.post", toPostPayload({ ...draft, connectionId: conn.id }), ctx);
         state.drafts.set(draft.id, draft);
-        const checks = evaluate("social.post", toPostPayload(draft), ctx);
-        return { content: JSON.stringify({ draft_id: draft.id, problems: checks }) };
+        return { content: JSON.stringify({ draft_id: draft.id, problems: draft.problems }) };
+      }
+      case "write_post": {
+        const draft: Draft = { id: `d_${randomBytes(6).toString("hex")}`, connectionId: null, platform: input.platform, text: input.text, link: input.link, sponsored: input.sponsored, problems: [] };
+        // The person attaches photos when they share it themselves, so a missing image is a
+        // reminder here rather than a reason to refuse the post.
+        draft.problems = postContentChecks(input.platform, input.text, input.link, input.sponsored).map((c) =>
+          c.id === "needs_media" ? { ...c, level: "warn" as const, message: "Add an image or video when you post this on Instagram." } : c);
+        state.drafts.set(draft.id, draft);
+        return { content: JSON.stringify({ draft_id: draft.id, problems: draft.problems }) };
       }
       case "propose_post": {
         const draft = state.drafts.get(input.draft_id);
         if (!draft) return { content: "No draft with that id.", error: true };
-        const p = deps.store.propose({ userId: deps.userId, kind: "social.post", payload: toPostPayload(draft), summary: input.summary, tainted: state.tainted, ctx });
+        if (!draft.connectionId) return { content: "That post is for the person to share themselves; only posts for a connected account can be proposed.", error: true };
+        const p = deps.store.propose({ userId: deps.userId, kind: "social.post", payload: toPostPayload({ ...draft, connectionId: draft.connectionId }), summary: input.summary, tainted: state.tainted, ctx });
         state.proposalIds.push(p.id);
         return { content: proposalMessage(p.status, p.checks) };
       }
@@ -239,7 +266,7 @@ async function runTool(
   return { content: "Unhandled tool.", error: true };
 }
 
-function toPostPayload(d: Draft) {
+function toPostPayload(d: Draft & { connectionId: string }) {
   return { connectionId: d.connectionId, text: d.text, link: d.link, sponsored: d.sponsored, mediaRefs: [] as string[] };
 }
 

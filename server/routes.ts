@@ -603,6 +603,13 @@ export function buildRouter(): Router {
     return { ok: true, connection: await guarded(() => agent().connectNetlify(userId, ctx.body.token)) };
   });
 
+  r.post("/agent/connections/bluesky", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    await ensureSettings(userId);
+    return { ok: true, connection: await guarded(() => agent().connectBluesky(userId, ctx.body.identifier, ctx.body.app_password)) };
+  });
+
   r.delete("/agent/connections/:id", async (ctx) => {
     const userId = requireAuth(ctx);
     assertUuid(ctx.params.id);

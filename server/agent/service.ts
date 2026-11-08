@@ -1,24 +1,29 @@
 /**
  * Ties the assistant to a real person: their publishing connections, their website folder,
- * their proposals, and the one executor that can carry an approved action out today
- * (publishing a site to Netlify).
+ * their proposals, and the executors that can carry an approved action out today
+ * (publishing a site to Netlify, publishing a post to Bluesky).
  *
  * The database access and network are passed in, so the same code runs against Postgres and
  * Netlify in production and against PGlite and a fake Netlify in tests.
  */
 import { createHash } from "node:crypto";
 import { ActionError, ActionStore, type ExecutionResult, type Proposal } from "./approvals.ts";
-import { ACTIONS, type ActionKind, type Context } from "./policy.ts";
+import { ACTIONS, isPlatform, type ActionKind, type Context, type Platform } from "./policy.ts";
 import { SiteSandbox } from "./sandbox.ts";
 import { runAgent, type AgentDeps, type AgentResult } from "./loop.ts";
 import { publish, verifyToken } from "./netlify.ts";
+import { parseCredential, publishPost, verifyCredential, type BlueskyCredential } from "./bluesky.ts";
 import { ProviderError, type FetchLike } from "../calendar.ts";
 import { decryptToken, encryptToken, newDataKeyId } from "../crypto/envelope.ts";
 import type { Run } from "../connections.ts";
 
 /** What can actually be carried out today. Approving anything else is refused up front, so
- *  nobody approves something that has nowhere to go. Social posts join when a connector exists. */
-export const EXECUTABLE: ReadonlySet<ActionKind> = new Set<ActionKind>(["site.deploy"]);
+ *  nobody approves something that has nowhere to go. A social post can only target a connected
+ *  account, and Bluesky is the only social connection that can be made, so it is covered. */
+export const EXECUTABLE: ReadonlySet<ActionKind> = new Set<ActionKind>(["site.deploy", "social.post"]);
+
+/** Which platform each social provider posts to. */
+const SOCIAL_PROVIDERS: Record<string, Platform> = { bluesky: "bluesky" };
 
 export interface ServiceDeps {
   run: Run;
@@ -30,7 +35,7 @@ export interface ServiceDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-export interface ConnectionView { id: string; kind: string; provider: string; label: string; publishesTo: string | null }
+export interface ConnectionView { id: string; kind: string; provider: string; platform: Platform | null; label: string; publishesTo: string | null }
 
 export interface ProposalView {
   id: string; kind: ActionKind; label: string; summary: string;
@@ -70,7 +75,10 @@ export class AgentService {
     const { rows } = await this.d.run(
       `select id, kind, provider, label, target_ref from action_connections
         where user_id = $1 and revoked_at is null order by created_at`, [userId]);
-    return rows.map((r) => ({ id: r.id, kind: r.kind, provider: r.provider, label: r.label, publishesTo: r.target_ref ?? null }));
+    return rows.map((r) => ({
+      id: r.id, kind: r.kind, provider: r.provider, platform: SOCIAL_PROVIDERS[r.provider] ?? null,
+      label: r.label, publishesTo: r.kind === "hosting" ? r.target_ref ?? null : null,
+    }));
   }
 
   /** Checks the token with Netlify before storing it, so a typo fails now, not at publish time. */
@@ -90,7 +98,27 @@ export class AgentService {
       `insert into action_connections (user_id, kind, provider, label, token_ct, data_key_id)
        values ($1, 'hosting', 'netlify', $2, $3, $4) returning id`,
       [userId, label, encryptToken(token, keyId), keyId]);
-    return { id: rows[0].id, kind: "hosting", provider: "netlify", label, publishesTo: null };
+    return { id: rows[0].id, kind: "hosting", provider: "netlify", platform: null, label, publishesTo: null };
+  }
+
+  /** Checks the app password with Bluesky before storing it, so a typo fails now, not at post time. */
+  async connectBluesky(userId: string, identifier: unknown, appPassword: unknown): Promise<ConnectionView> {
+    let cred: BlueskyCredential;
+    let verified: { label: string; handle: string };
+    try {
+      cred = parseCredential(identifier, appPassword);
+      verified = await verifyCredential(cred, this.d.fetch);
+    } catch (e) {
+      if (e instanceof ProviderError && e.kind === "rejected") throw new ActionError("bad_token", e.message);
+      if (e instanceof ProviderError && e.kind === "unauthorized") throw new ActionError("bad_token", "Bluesky didn't accept that handle and app password.");
+      throw new ActionError("provider_unavailable", "Couldn't reach Bluesky to check the app password. Try again shortly.");
+    }
+    const keyId = newDataKeyId();
+    const { rows } = await this.d.run(
+      `insert into action_connections (user_id, kind, provider, label, token_ct, data_key_id, target_ref)
+       values ($1, 'social', 'bluesky', $2, $3, $4, $5) returning id`,
+      [userId, verified.label, encryptToken(JSON.stringify(cred), keyId), keyId, verified.handle]);
+    return { id: rows[0].id, kind: "social", provider: "bluesky", platform: "bluesky", label: verified.label, publishesTo: null };
   }
 
   /** Deletes the row outright, token included: a disconnected account leaves nothing behind. */
@@ -105,9 +133,15 @@ export class AgentService {
     const sandbox = await this.sandbox(userId);
     const usage = this.store.usage(userId);
     return {
-      connections: (await this.connections(userId)).map((c) => ({ id: c.id, kind: c.kind as Context["connections"][number]["kind"], label: c.label })),
+      connections: (await this.connections(userId)).map((c) => ({
+        id: c.id, kind: c.kind as Context["connections"][number]["kind"], label: c.label,
+        ...(isPlatform(c.platform) ? { platform: c.platform } : {}),
+      })),
       lists: [],
-      recentPosts: [],
+      // Posts that went out, so the duplicate and repeat rules see them.
+      recentPosts: this.store.list(userId)
+        .filter((p) => p.kind === "social.post" && (p.status === "executed" || p.status === "executing"))
+        .map((p) => ({ connectionId: String(p.payload.connectionId), text: String(p.payload.text), at: p.approvedAt ?? p.createdAt })),
       usageToday: usage.usageToday,
       spendCapCents: 0, // spending stays off until there is a setting for it
       spentThisMonthCents: usage.spentThisMonthCents,
@@ -160,6 +194,7 @@ export class AgentService {
   }
 
   private async carryOut(userId: string, kind: ActionKind, payload: Readonly<Record<string, unknown>>): Promise<ExecutionResult> {
+    if (kind === "social.post") return this.carryOutPost(userId, payload);
     if (kind !== "site.deploy") return { ok: false, detail: "No connection can carry this out yet." };
     const { rows } = await this.d.run(
       `select id, token_ct, data_key_id, target_ref from action_connections
@@ -185,6 +220,29 @@ export class AgentService {
       if (e instanceof ProviderError && e.kind === "unauthorized") {
         await this.d.run(`update action_connections set revoked_at = now() where id = $1`, [c.id]);
         return { ok: false, detail: "Netlify no longer accepts this connection. Reconnect it in the app." };
+      }
+      if (e instanceof ProviderError) return { ok: false, detail: e.message };
+      throw e;
+    }
+  }
+
+  private async carryOutPost(userId: string, payload: Readonly<Record<string, unknown>>): Promise<ExecutionResult> {
+    const { rows } = await this.d.run(
+      `select id, provider, token_ct, data_key_id from action_connections
+        where id = $1 and user_id = $2 and kind = 'social' and revoked_at is null`,
+      [payload.connectionId, userId]);
+    const c = rows[0];
+    if (!c) return { ok: false, detail: "That social account is no longer connected." };
+    if (c.provider !== "bluesky") return { ok: false, detail: "Posting to this platform isn't supported yet." };
+
+    const cred = JSON.parse(decryptToken(Buffer.from(c.token_ct), c.data_key_id)) as BlueskyCredential;
+    try {
+      const out = await publishPost(cred, { text: String(payload.text), link: (payload.link as string | null) ?? null }, { fetch: this.d.fetch });
+      return { ok: true, ref: out.url, detail: `Posted at ${out.url}` };
+    } catch (e) {
+      if (e instanceof ProviderError && e.kind === "unauthorized") {
+        await this.d.run(`update action_connections set revoked_at = now() where id = $1`, [c.id]);
+        return { ok: false, detail: "Bluesky no longer accepts this app password. Reconnect the account in the app." };
       }
       if (e instanceof ProviderError) return { ok: false, detail: e.message };
       throw e;

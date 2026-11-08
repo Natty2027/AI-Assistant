@@ -99,7 +99,7 @@ create table action_connections (
   id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references auth.users(id) on delete cascade,
   kind          text not null check (kind in ('hosting','social','email','sms','ads','registrar')),
-  provider      text not null check (provider in ('netlify')),
+  provider      text not null check (provider in ('netlify','bluesky')),
   label         text not null,
   token_ct      bytea not null,
   data_key_id   text not null,
