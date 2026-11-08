@@ -4,27 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsx build.ts",
-    "build:chrome": "tsx build.ts chrome",
-    "build:edge": "tsx build.ts edge",
-    "build:firefox": "tsx build.ts firefox",
-    "build:safari": "tsx build.ts safari",
-    "build:mock": "API_BASE=http://localhost:4000 tsx build.ts chrome",
-    "mock": "node scripts/mock-server.mjs",
-    "dev": "bash scripts/dev-chrome.sh",
+    "start": "tsx server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm run test",
+    "mock:app": "node scripts/mock-app-server.mjs",
+    "app:build": "xcodebuild -project app/CyberCompanion.xcodeproj -scheme CyberCompanion -destination 'generic/platform=iOS Simulator' build -quiet && xcodebuild -project app/CyberCompanion.xcodeproj -scheme CyberCompanion -destination 'platform=macOS' build -quiet CODE_SIGNING_ALLOWED=NO",
     "smoke:models": "node scripts/smoke-models.mjs",
-    "test:host": "python3 -m unittest discover -s native-host -p 'test_*.py'",
-    "e2e:apps": "tsx build.ts chrome && node scripts/e2e-apps.mjs",
-    "check": "npm run typecheck && npm run test && npm run test:host && npm run build",
-    "start": "tsx server/index.ts",
     "deck": "node deck/build-deck.mjs",
-    "deck:preview": "node deck/preview.mjs",
-    "deck:screens": "API_BASE=http://127.0.0.1:4471 tsx build.ts chrome && node deck/capture-screens.mjs; s=$?; tsx build.ts chrome; exit $s",
-    "e2e:signals": "tsx build.ts chrome && node scripts/e2e-signals.mjs",
-    "e2e:panel": "API_BASE=http://127.0.0.1:4470 tsx build.ts chrome && node scripts/e2e-panel.mjs; s=$?; tsx build.ts chrome; exit $s",
-    "e2e:create": "API_BASE=http://127.0.0.1:4470 tsx build.ts chrome && node scripts/e2e-create.mjs; s=$?; tsx build.ts chrome; exit $s"
+    "deck:preview": "node deck/preview.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -37,10 +25,8 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.15",
-    "@fontsource/hanken-grotesk": "^5.3.0",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
-    "esbuild": "^0.28.2",
     "playwright": "^1.64.1",
     "pptxgenjs": "4.0.0",
     "typescript": "^5.6.0"

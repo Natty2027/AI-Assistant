@@ -1,104 +1,54 @@
-# Testing in Xcode
+# Running the app in Xcode
 
-Yes — with the caveat that Xcode is for the Safari half only. Keep writing code in VS Code or
-Cursor; open Xcode to build, run, and sign.
+The app is one SwiftUI project for iPhone, iPad and Mac: `app/CyberCompanion.xcodeproj`.
 
 ## What you need
 
-- macOS 13 or later, Xcode 15+
-- Node 20+
-- A free Apple ID is enough for the Mac and the iOS Simulator. The $99/yr Developer Program
-  is only needed for a device build or App Store submission.
+- Xcode 26 or later. The app targets iOS 26 / macOS 26, the first releases with on-device
+  `SpeechAnalyzer` and SwiftUI's `WebView`.
+- Node 20+ for the server (or the mock below).
+- A free Apple ID runs it on the Mac and in the Simulator. A device build or App Store
+  submission needs the Apple Developer Program, and a team set under Signing & Capabilities.
 
-## First run (macOS Safari) — about ten minutes
+## First run, against the mock server (about two minutes)
 
 ```bash
 npm install
-npm run check          # 45 tests + typecheck, before you touch Xcode
-npm run build:safari   # emits dist/safari
-xcrun safari-web-extension-converter dist/safari \
-  --project-location ./xcode \
-  --app-name "Ambient Cyber Companion" \
-  --bundle-identifier com.yourorg.acc \
-  --macos-only
+npm run mock:app          # http://localhost:4480, any token works
+open app/CyberCompanion.xcodeproj
 ```
 
-That generates an Xcode project and opens it. Then:
+Pick a run destination (My Mac or an iPhone simulator) and press ⌘R. In the app, open
+**Settings**, enter `http://localhost:4480` and any token, and tap **Save and connect**.
+Plain `http` is accepted only for `localhost`; real servers must use `https`.
 
-1. **Product → Run** (⌘R). A small container app launches — that's expected. The app exists
-   to host the extension; it isn't the product.
-2. Safari → **Settings → Advanced → Show features for web developers**.
-3. Safari → **Develop → Allow Unsigned Extensions**. This resets every time Safari quits, so
-   you will re-tick it often during development.
-4. Safari → **Settings → Extensions** → enable Ambient Cyber Companion.
-5. Click the toolbar button. The panel opens as a popup.
+Debug builds can skip that step: in the scheme's Run → Arguments, set the environment variables
+`CC_SERVER_URL=http://localhost:4480` and `CC_ACCESS_TOKEN=dev`.
 
-**Debugging:** Develop → Web Extension Background Content → your extension. That's the
-console for `sw.js`. Right-click inside the popup → Inspect Element for the panel itself.
+## Against the real server
 
-## iOS Simulator
+`npm start` runs the server (see `.env.example` for its settings, including `ANTHROPIC_API_KEY`
+and the database). Point the app at its https address and use your access token
+(`TEST_ACCESS_TOKEN` on staging).
 
-Drop `--macos-only` from the converter command, pick the iOS scheme, and run against a
-simulator. Then in the simulator: Settings → Apps → Safari → Extensions → enable it, and
-allow permissions for the sites you're testing.
+For a database created before Bluesky publishing existed, run
+`db/migrations/001_bluesky_provider.sql` once.
 
-Expect it to be slower to iterate than macOS. Do your logic work on macOS and use iOS to
-check layout and the extension lifecycle.
+## Voice
 
-## What actually works in this build
+Tap **Speak** on the Create tab. Speech is recognized on the device by Apple's `SpeechAnalyzer`;
+the audio never leaves it, and only the finished text is sent when you tap Send. The first use
+downloads the speech model for your language (shared with other apps, kept up to date by the
+system). Devices without the newer model fall back to `DictationTranscriber`.
 
-Working, testable today:
+**The Simulator can't test voice**: Apple's speech models don't run there. Use a Mac or a
+physical iPhone.
 
-- Both panels render — `ui/sidepanel.html` and `ui/connect-disclosure.html`
-- The presence indicator, including the reduced-motion fallback (System Settings →
-  Accessibility → Display → Reduce Motion)
-- The automation toggle, keyboard-reachable, sending its message to the background
-- The disclosure gate's disabled-until-acknowledged behaviour
-- Context menu registration on selected text and images
-- The quiet-mode resolver, if you stub `/events/active`
-
-Not working until you build a backend — `sw.ts` points `API` at `https://api.example.com`:
-
-- OAuth (needs your token-exchange endpoint; PKCE only, no client secret in the extension)
-- Calendar sync, capture, vision extraction
-- Anything that reads or writes real events
-
-To exercise the UI without a backend, point `API` at a local mock:
+## Tests
 
 ```bash
-npx json-server --port 4000 mock.json   # then set API = "http://localhost:4000"
+npm run check             # server: typecheck + tests
+npm run app:build         # app: builds for iOS Simulator and macOS
 ```
 
-## Safari-specific things that will bite
-
-**No `sidePanel` API.** `build.mjs --safari` converts the panel to `action.default_popup`
-automatically. Don't add `sidePanel` back for Safari; it silently fails to load the manifest.
-
-**`browser`, not `chrome`.** The Safari build prepends an alias. If you add new source that
-touches extension APIs, use `chrome.*` and let the banner handle it.
-
-**Native messaging works differently.** `native-host/quiet-probe.py` is a Chrome-style host
-and will not run under Safari — Safari routes native messages through the containing app's
-`SafariWebExtensionHandler`. The Safari build drops the `nativeMessaging` permission, so
-`probeNativeFocus()` returns `null` and the resolver falls back to calendar evidence and
-fails quiet. That's the designed behaviour, not a regression. Porting the Focus probe to
-`SafariWebExtensionHandler.swift` is a later task.
-
-**No native messaging at all on iOS.** Same fallback, permanently.
-
-**Unsigned-extension permission resets** on every Safari quit. Not a bug in your code.
-
-**Remote fonts draw scrutiny in review.** Both panels load Hanken Grotesk from Google Fonts.
-Self-host it in `ext/ui/fonts/` before submitting.
-
-## Which IDE for what
-
-| Work | Tool |
-|---|---|
-| TypeScript, backend, schema, tests | VS Code / Cursor / WebStorm |
-| Chrome extension (`chrome://extensions` → Load unpacked → `dist/chrome`) | No Xcode needed |
-| Safari build, run, sign, ship | Xcode |
-| Native Focus probe (Swift) | Xcode |
-
-Xcode has no TypeScript language server, so editing `.ts` there gets you no types, no
-autocomplete, and no inline errors. Treat it as a build tool.
+In Xcode, ⌘U runs the app's Swift Testing suite (`app/CyberCompanionTests`).

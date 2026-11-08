@@ -1,5 +1,17 @@
 # Personal Cyber Companion (PCC)
 
+**Now an iPhone, iPad and Mac app.** Type or speak what you want, and the assistant builds a
+website and writes social posts for it. You review the exact content, and nothing is published
+until you approve it. See XCODE-TESTING.md to run it and PLATFORMS.md for what runs where.
+
+```
+app/                        SwiftUI app (iOS 26 / macOS 26), on-device voice input
+server/agent/               the assistant, its rules, Netlify and Bluesky publishing
+docs/SAFE-ACTIONS.md        how acting for people is kept safe
+```
+
+---
+
 Unified calendar intelligence over Google Workspace, Microsoft 365, and Canvas/Blackboard
 iCal, with multimodal capture (text, voice, photo) and an opt-in habit engine.
 
