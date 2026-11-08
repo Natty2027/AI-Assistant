@@ -10,8 +10,9 @@ enum AppConfig {
     /// e.g. URL(string: "https://api.cybercompanion.app")
     static let serverURL: URL? = nil
     /// e.g. URL(string: "https://abcd.supabase.co")
-    static let supabaseURL: URL? = nil
-    static let supabaseAnonKey: String? = nil
+    static let supabaseURL: URL? = URL(string: "https://ozleskfpkntrfkzalczf.supabase.co")
+    /// Supabase's public (publishable) key. Safe to ship in the app.
+    static let supabaseAnonKey: String? = "sb_publishable_EVyM4y-78MPUeot0iYMVXw_DscT1B3x"
 }
 
 /// Normalizes what someone types as a server address. "api.example.com/" and
