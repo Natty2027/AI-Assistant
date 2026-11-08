@@ -13,6 +13,7 @@ struct AssistantView: View {
     /// What was typed before the mic started, so dictation is added to it rather than replacing it.
     @State private var promptBeforeVoice = ""
     @FocusState private var promptFocused: Bool
+    @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
 
     private let suggestions: [(String, String)] = [
         ("globe", "Make a one-page website for my business"),
@@ -64,8 +65,9 @@ struct AssistantView: View {
         .scrollDismissesKeyboard(.interactively)
         .onChange(of: model.isRunning) { wasRunning, isRunning in
             // Results appear when a run finishes, usually below the fold: bring them into view.
-            guard wasRunning, !isRunning, model.lastRun != nil else { return }
+            guard wasRunning, !isRunning, let run = model.lastRun else { return }
             withAnimation(reduceMotion ? nil : .spring(duration: 0.6)) { proxy.scrollTo("results", anchor: .top) }
+            if speakReplies { model.speech.speak(run.text) }
         }
         }
         .auroraBackground()
@@ -198,11 +200,13 @@ struct AssistantView: View {
     private func toggleVoice() async {
         if !voice.isListening { promptBeforeVoice = prompt.trimmingCharacters(in: .whitespacesAndNewlines) }
         promptFocused = false
+        model.speech.stop()  // Hera stops talking as soon as the person starts
         await voice.toggle()
     }
 
     private func send() async {
         promptFocused = false
+        model.speech.stop()
         await model.runAssistant(prompt: prompt, allowWebSearch: allowWebSearch)
     }
 
@@ -242,14 +246,20 @@ private struct RunResultView: View {
     let run: AgentRunResponse
     var openReview: () -> Void
 
+    @Environment(AppModel.self) private var model
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             if !run.text.isEmpty {
                 HStack(alignment: .top, spacing: 14) {
                     IconTile(systemImage: run.needsAnswer ? "questionmark" : "sparkles", size: 34)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(run.needsAnswer ? "A question for you" : "Assistant")
-                            .font(.subheadline.weight(.semibold))
+                        HStack {
+                            Text(run.needsAnswer ? "A question for you" : "Assistant")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            if HeraVoice.isAvailable { listenButton }
+                        }
                         Text(run.text)
                             .textSelection(.enabled)
                         if run.needsAnswer {
@@ -314,6 +324,20 @@ private struct RunResultView: View {
                 }
             }
         }
+    }
+
+    /// Replays the reply in Hera's voice, or stops her mid-sentence.
+    private var listenButton: some View {
+        let speaking = model.speech.isSpeaking
+        return Button {
+            if speaking { model.speech.stop() } else { model.speech.speak(run.text) }
+        } label: {
+            Label(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop.fill" : "speaker.wave.2.fill")
+                .font(.footnote.weight(.semibold))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.glass)
+        .controlSize(.small)
     }
 }
 

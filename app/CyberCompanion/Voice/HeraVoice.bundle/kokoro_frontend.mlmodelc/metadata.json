@@ -1,0 +1,211 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Mixed (Float32, Int32, Palettized (8 bits), UInt8)",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "asr",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "F0_pred",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "N_pred",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "har",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "audio_length_samples",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "pred_dur_clamped",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.sin" : 1,
+      "Ios18.layerNorm" : 31,
+      "Ios18.realDiv" : 7,
+      "Ios18.pow" : 2,
+      "Ios18.sigmoid" : 1,
+      "Ios18.gather" : 49,
+      "Fill" : 9,
+      "Ios18.scatterNd" : 1,
+      "Identity" : 1,
+      "Ios18.mul" : 54,
+      "Ios18.lstm" : 6,
+      "Ios16.reduceSum" : 1,
+      "Shape" : 35,
+      "Ios18.logicalAnd" : 9,
+      "Ios18.transpose" : 90,
+      "Ios18.linear" : 91,
+      "Select" : 24,
+      "Range1d" : 4,
+      "Ios16.upsampleBilinear" : 1,
+      "Ios18.tanh" : 1,
+      "Ios18.clip" : 1,
+      "Pad" : 2,
+      "Ios18.sqrt" : 1,
+      "Ios18.concat" : 57,
+      "Ios18.less" : 4,
+      "Split" : 25,
+      "Ios18.reshape" : 63,
+      "UpsampleNearestNeighbor" : 3,
+      "Ios18.sliceUpdate" : 4,
+      "Ios18.gelu" : 12,
+      "Ios18.convTranspose" : 2,
+      "Ios18.add" : 91,
+      "Ios18.leakyRelu" : 15,
+      "Ios18.greater" : 3,
+      "Ios18.avgPool" : 1,
+      "Ios18.matmul" : 26,
+      "NonZero" : 1,
+      "Ios18.greaterEqual" : 11,
+      "Tile" : 6,
+      "Ios18.instanceNorm" : 11,
+      "Ios18.randomNormal" : 1,
+      "Ios18.gatherAlongAxis" : 1,
+      "Ios18.cast" : 18,
+      "Ios18.conv" : 21,
+      "Ios18.round" : 1,
+      "Ios18.sliceByIndex" : 11,
+      "Ios18.constexprLutToDense" : 68,
+      "Ios18.squeeze" : 17,
+      "Ios18.expandDims" : 26,
+      "Ios18.softmax" : 12,
+      "Ios18.atan" : 1,
+      "Stack" : 1,
+      "Ios18.gatherNd" : 1,
+      "Ios18.floor" : 2,
+      "Ios18.sub" : 7,
+      "Ios18.equal" : 8,
+      "Ios16.cumsum" : 2
+    },
+    "computePrecision" : "Mixed (Float32, Int32, Int8)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-03-23",
+      "com.github.apple.coremltools.source" : "torch==2.10.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "dataType" : "Int32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 3...512",
+        "shapeRange" : "[[1, 1], [3, 512]]",
+        "formattedType" : "MultiArray (Int32 1 × 100)",
+        "type" : "MultiArray",
+        "shape" : "[1, 100]",
+        "name" : "input_ids",
+        "shortDescription" : ""
+      },
+      {
+        "dataType" : "Int32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 3...512",
+        "shapeRange" : "[[1, 1], [3, 512]]",
+        "formattedType" : "MultiArray (Int32 1 × 100)",
+        "type" : "MultiArray",
+        "shape" : "[1, 100]",
+        "name" : "attention_mask",
+        "shortDescription" : ""
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 256)",
+        "shortDescription" : "",
+        "shape" : "[1, 256]",
+        "name" : "ref_s",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1)",
+        "shortDescription" : "",
+        "shape" : "[1]",
+        "name" : "speed",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 9)",
+        "shortDescription" : "",
+        "shape" : "[1, 9]",
+        "name" : "random_phases",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "kokoro_frontend_pal8",
+    "method" : "predict"
+  }
+]

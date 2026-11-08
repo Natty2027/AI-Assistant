@@ -15,6 +15,8 @@ final class AppModel {
 
     let session = Session()
     let connectivity = Connectivity()
+    /// Hera's spoken voice. Shared so the model is loaded once, the first time she speaks.
+    let speech = HeraVoice()
 
     var connections: [Connection] = []
     var proposals: [Proposal] = []
@@ -97,6 +99,7 @@ final class AppModel {
     }
 
     private func resetLocalState() {
+        speech.stop()
         connections = []
         proposals = []
         lastRun = nil

@@ -8,12 +8,14 @@ struct SettingsView: View {
     @State private var supabaseAnonKey = ""
     @State private var status: String?
     @State private var showDelete = false
+    @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
 
     var body: some View {
         NavigationStack {
             Form {
                 account
                 if model.isConfigured { aiSection }
+                if HeraVoice.isAvailable { voiceSection }
                 legal
                 advanced
             }
@@ -68,6 +70,17 @@ struct SettingsView: View {
             SectionLabel("AI")
         } footer: {
             Text("Your requests are sent to your server, which asks Claude (Anthropic) to do the work. Voice is recognized on this device; only the finished text is sent. Turn this off at any time.")
+        }
+    }
+
+    private var voiceSection: some View {
+        Section {
+            Toggle("Hera speaks her replies", isOn: $speakReplies)
+                .onChange(of: speakReplies) { _, on in if !on { model.speech.stop() } }
+        } header: {
+            SectionLabel("Voice")
+        } footer: {
+            Text("Hera's voice is made on this device; nothing is sent anywhere to speak. Voice: Kokoro-82M \"af_heart\" by hexgrad, Core ML by kokoro-coreml, both under the Apache License 2.0.")
         }
     }
 

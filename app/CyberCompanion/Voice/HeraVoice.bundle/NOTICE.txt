@@ -1,0 +1,13 @@
+Hera's voice: Kokoro-82M, voice "af_heart"
+
+Model: Kokoro-82M by hexgrad (https://huggingface.co/hexgrad/Kokoro-82M), Apache License 2.0.
+Core ML conversion: kokoro-coreml by Jud (https://github.com/Jud/kokoro-coreml), Apache License 2.0.
+
+These files come from the kokoro-coreml release "models-2026-03-23", asset kokoro-models.tar.gz
+(SHA-256 0d24bbf80526456bd8640f9f484cd1c333aee8a936e618ac44e619eafb79aec9). Only the two models
+and the af_heart voice are kept; the other 53 voices are left out to save space.
+
+The app reads this folder directly (KokoroEngine(modelDirectory:)); the package's own downloader
+only works on macOS, which is why the model ships inside the app.
+
+Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0

@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F1B20D9730A10C5E00B408C4 /* KokoroCoreML in Frameworks */ = {isa = PBXBuildFile; productRef = F1B20D9630A10C5E00B408C4 /* KokoroCoreML */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		A10000000000000000000010 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -39,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F1B20D9730A10C5E00B408C4 /* KokoroCoreML in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -57,6 +62,7 @@
 			children = (
 				A10000000000000000000004 /* CyberCompanion */,
 				A10000000000000000000005 /* CyberCompanionTests */,
+				F1B20D9530A10C5E00B408C4 /* Frameworks */,
 				A10000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -68,6 +74,13 @@
 				A10000000000000000000007 /* CyberCompanionTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F1B20D9530A10C5E00B408C4 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -90,6 +103,7 @@
 			);
 			name = CyberCompanion;
 			packageProductDependencies = (
+				F1B20D9630A10C5E00B408C4 /* KokoroCoreML */,
 			);
 			productName = CyberCompanion;
 			productReference = A10000000000000000000006 /* CyberCompanion.app */;
@@ -146,6 +160,9 @@
 			);
 			mainGroup = A10000000000000000000002;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F1B20D9430A1088F00B408C4 /* XCRemoteSwiftPackageReference "kokoro-coreml" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A10000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -398,6 +415,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F1B20D9430A1088F00B408C4 /* XCRemoteSwiftPackageReference "kokoro-coreml" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Jud/kokoro-coreml.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.11.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F1B20D9630A10C5E00B408C4 /* KokoroCoreML */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F1B20D9430A1088F00B408C4 /* XCRemoteSwiftPackageReference "kokoro-coreml" */;
+			productName = KokoroCoreML;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A10000000000000000000001 /* Project object */;
 }

@@ -1,0 +1,130 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Mixed (Float32, Palettized (8 bits), UInt8)",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "audio",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.expandDims" : 3,
+      "Ios18.mul" : 222,
+      "UpsampleNearestNeighbor" : 1,
+      "Ios18.cos" : 1,
+      "Ios18.exp" : 1,
+      "Ios18.sin" : 49,
+      "Split" : 58,
+      "Ios18.add" : 202,
+      "Ios18.reshape" : 58,
+      "Pad" : 1,
+      "Ios18.instanceNorm" : 54,
+      "Ios18.constexprLutToDense" : 128,
+      "Ios18.leakyRelu" : 10,
+      "Ios18.linear" : 58,
+      "Ios18.conv" : 69,
+      "Ios18.concat" : 5,
+      "Ios18.relu" : 3,
+      "Ios18.sub" : 9,
+      "Ios18.round" : 1,
+      "Ios18.convTranspose" : 5,
+      "Ios18.sliceByIndex" : 4,
+      "Ios18.squeeze" : 1
+    },
+    "computePrecision" : "Mixed (Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-03-23",
+      "com.github.apple.coremltools.source" : "torch==2.10.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "dataType" : "Float32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 512 × 1...2000",
+        "shapeRange" : "[[1, 1], [512, 512], [1, 2000]]",
+        "formattedType" : "MultiArray (Float32 1 × 512 × 19)",
+        "type" : "MultiArray",
+        "shape" : "[1, 512, 19]",
+        "name" : "asr",
+        "shortDescription" : ""
+      },
+      {
+        "dataType" : "Float32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 1...4000",
+        "shapeRange" : "[[1, 1], [1, 4000]]",
+        "formattedType" : "MultiArray (Float32 1 × 38)",
+        "type" : "MultiArray",
+        "shape" : "[1, 38]",
+        "name" : "F0_pred",
+        "shortDescription" : ""
+      },
+      {
+        "dataType" : "Float32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 1...4000",
+        "shapeRange" : "[[1, 1], [1, 4000]]",
+        "formattedType" : "MultiArray (Float32 1 × 38)",
+        "type" : "MultiArray",
+        "shape" : "[1, 38]",
+        "name" : "N_pred",
+        "shortDescription" : ""
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 128)",
+        "shortDescription" : "",
+        "shape" : "[1, 128]",
+        "name" : "s_content",
+        "type" : "MultiArray"
+      },
+      {
+        "dataType" : "Float32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 22 × 1...500000",
+        "shapeRange" : "[[1, 1], [22, 22], [1, 500000]]",
+        "formattedType" : "MultiArray (Float32 1 × 22 × 2281)",
+        "type" : "MultiArray",
+        "shape" : "[1, 22, 2281]",
+        "name" : "har",
+        "shortDescription" : ""
+      }
+    ],
+    "generatedClassName" : "kokoro_backend_pal8",
+    "method" : "predict"
+  }
+]
