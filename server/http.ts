@@ -4,6 +4,7 @@
  * handlers, CORS with credentials, body parsing with a size cap, and one place where every
  * thrown error becomes a clean JSON response instead of a hung socket.
  */
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { config } from "./config.ts";
 import { clientIp, createLimiter } from "./rateLimit.ts";
@@ -20,6 +21,9 @@ export interface Ctx {
   params: Record<string, string>;
   /** Populated by requireAuth(); the authenticated user's id. */
   userId?: string;
+  /** Short id for this request, returned as X-Request-Id and in 500 bodies, so a person can
+   *  quote it to support and it can be found in the logs. */
+  requestId: string;
 }
 
 export type Handler = (ctx: Ctx) => Promise<unknown> | unknown;
@@ -80,6 +84,8 @@ export class Router {
     // ones most likely to be probed.
     setSecurityHeaders(res);
     setCors(req, res);
+    const requestId = randomUUID().slice(0, 8);
+    res.setHeader("X-Request-Id", requestId);
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
     if (!perIp.hit(clientIp(req))) {
@@ -95,11 +101,11 @@ export class Router {
 
     try {
       const body = await readJsonBody(req);
-      const ctx: Ctx = { req, res, url, body, params: matched.params };
+      const ctx: Ctx = { req, res, url, body, params: matched.params, requestId };
       const result = await matched.route.handler(ctx);
       if (!res.writableEnded) send(res, 200, result ?? { ok: true });
     } catch (err) {
-      handleError(res, err, `${req.method} ${url.pathname}`);
+      handleError(res, err, `${req.method} ${url.pathname} [${requestId}]`, requestId);
     }
   }
 }
@@ -149,15 +155,46 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   }
 }
 
-function handleError(res: ServerResponse, err: unknown, where: string): void {
+/**
+ * Log lines are capped. A database error's message can embed every bound parameter (a whole
+ * website file, a long prompt), and hosted log pipes truncate long lines, cutting off the part
+ * that says what went wrong (Cognivate, LESSONS_LEARNED 2026-10-07). Capping keeps the cause
+ * visible and keeps people's content out of the logs.
+ */
+const MAX_LOGGED_MESSAGE = 500;
+export function loggable(message: string): string {
+  return message.length > MAX_LOGGED_MESSAGE ? `${message.slice(0, MAX_LOGGED_MESSAGE)}… [${message.length} chars]` : message;
+}
+
+function handleError(res: ServerResponse, err: unknown, where: string, requestId: string): void {
   if (err instanceof HttpError) {
-    console.warn(`[${err.status}] ${where}: ${err.message}`);
+    console.warn(`[${err.status}] ${where}: ${loggable(err.message)}`);
     send(res, err.status, { error: err.expose ? err.message : "Request failed", code: err.code ?? null });
     return;
   }
+  // undefined_column / undefined_table: the database is behind the deployed code. That's an
+  // operations problem, not a bug in the request, so it gets its own log line and a 503.
+  const pgCode = err && typeof err === "object" && "code" in err ? String((err as { code: unknown }).code) : "";
+  if (pgCode === "42703" || pgCode === "42P01") {
+    console.error(`[503 schema_drift] ${where}: run the latest db/migrations against this database`);
+    send(res, 503, { error: "The server is being updated. Please try again shortly.", code: "schema_drift", requestId });
+    return;
+  }
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`[500] ${where}:`, message);
-  send(res, 500, { error: "Internal error" });
+  console.error(`[500] ${where}:`, loggable(message));
+  send(res, 500, { error: "Something went wrong on our side.", requestId });
+}
+
+/** For the public pages (privacy, terms, support). Everything else is JSON. */
+export function sendHtml(res: ServerResponse, html: string): void {
+  if (res.writableEnded) return;
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    // Static pages with inline styles only: nothing else may load or run.
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "Cache-Control": "public, max-age=3600",
+  });
+  res.end(html);
 }
 
 export function send(res: ServerResponse, status: number, payload: unknown): void {

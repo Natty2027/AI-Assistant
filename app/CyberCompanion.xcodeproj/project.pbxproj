@@ -261,6 +261,8 @@
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Cyber Companion";
+				CODE_SIGN_ENTITLEMENTS = CyberCompanion.entitlements;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Speak your request instead of typing it. Your voice is recognized on this device.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is turned into text on this device so you can speak your request.";
@@ -297,6 +299,8 @@
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Cyber Companion";
+				CODE_SIGN_ENTITLEMENTS = CyberCompanion.entitlements;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Speak your request instead of typing it. Your voice is recognized on this device.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is turned into text on this device so you can speak your request.";

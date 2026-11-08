@@ -14,15 +14,18 @@ struct AccountsView: View {
         NavigationStack {
             Form {
                 if !model.connections.isEmpty {
-                    Section("Connected") {
+                    Section {
                         ForEach(model.connections) { connection in
-                            HStack {
-                                Label(connection.label, systemImage: connection.kind == "hosting" ? "globe" : "text.bubble")
+                            HStack(spacing: 12) {
+                                IconTile(systemImage: connection.kind == "hosting" ? "globe" : "cloud.fill", size: 32)
+                                Text(connection.label)
                                 Spacer()
                                 Button("Disconnect", role: .destructive) { pendingDisconnect = connection }
                                     .buttonStyle(.borderless)
                             }
                         }
+                    } header: {
+                        SectionLabel("Connected", color: .green)
                     }
                 }
 
@@ -37,9 +40,10 @@ struct AccountsView: View {
                             isWorking = false
                         }
                     }
+                    .buttonStyle(.glassProminent)
                     .disabled(netlifyToken.isEmpty || isWorking || !model.isConfigured)
                 } header: {
-                    Text("Website hosting: Netlify")
+                    SectionLabel("Website hosting · Netlify")
                 } footer: {
                     Text("Your website is published to your own Netlify account. Create a token in Netlify under User settings → Applications → Personal access tokens.")
                 }
@@ -64,19 +68,27 @@ struct AccountsView: View {
                             isWorking = false
                         }
                     }
+                    .buttonStyle(.glassProminent)
                     .disabled(blueskyHandle.isEmpty || blueskyPassword.isEmpty || isWorking || !model.isConfigured)
                 } header: {
-                    Text("Social: Bluesky")
+                    SectionLabel("Social · Bluesky")
                 } footer: {
                     Text("Approved posts are published to your account. Use an app password, never your main password: create one in Bluesky under Settings → Privacy and security → App passwords. You can revoke it there at any time.")
                 }
 
                 Section {
                     ForEach([Platform.instagram, .x, .linkedin, .facebook]) { platform in
-                        Label(platform.displayName, systemImage: platform.systemImage)
+                        HStack(spacing: 12) {
+                            IconTile(systemImage: platform.systemImage, size: 32)
+                            Text(platform.displayName)
+                            Spacer()
+                            Text("Share")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 } header: {
-                    Text("Other platforms")
+                    SectionLabel("Other platforms")
                 } footer: {
                     Text("The assistant writes posts for these too. You post them yourself with the Share button, which opens the platform's app with the text ready. Direct publishing needs each platform's approval of this app and will come later.")
                 }
@@ -86,6 +98,7 @@ struct AccountsView: View {
                 }
             }
             .formStyle(.grouped)
+            .auroraBackground()
             .navigationTitle("Accounts")
             .overlay { if isWorking { ProgressView() } }
             .task { await model.refreshConnections() }

@@ -23,10 +23,19 @@ struct SiteView: View {
                 } else if let page {
                     WebView(page)
                         .webViewBackForwardNavigationGestures(.enabled)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                                .strokeBorder(Theme.spectrumGradient.opacity(0.5), lineWidth: 1)
+                        }
+                        .shadow(color: Theme.spectrum[1].opacity(0.3), radius: 30, y: 12)
+                        .padding(16)
                 } else {
                     ProgressView()
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .auroraBackground()
             .navigationTitle("Website")
             .toolbar {
                 ToolbarItemGroup {
@@ -39,7 +48,7 @@ struct SiteView: View {
             .sheet(isPresented: $showFiles) {
                 if let site { SiteDetailsSheet(site: site) }
             }
-            .task(id: model.serverURLString + model.accessToken) { await load() }
+            .task(id: "\(model.serverURLString)|\(model.accessToken)|\(model.session.isSignedIn)") { await load() }
         }
     }
 
@@ -73,17 +82,25 @@ private struct SiteDetailsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Checks") {
+                Section {
                     if site.checks.isEmpty {
                         Label("No problems found", systemImage: "checkmark.circle").foregroundStyle(.green)
                     } else {
                         CheckList(checks: site.checks)
                     }
+                } header: {
+                    SectionLabel("Checks")
                 }
-                Section("Files") {
+                Section {
                     ForEach(site.files) { file in
-                        LabeledContent(file.path, value: file.bytes.formatted(.byteCount(style: .file)))
+                        LabeledContent {
+                            Text(file.bytes.formatted(.byteCount(style: .file))).monospacedDigit()
+                        } label: {
+                            Label(file.path, systemImage: "doc.text")
+                        }
                     }
+                } header: {
+                    SectionLabel("Files")
                 }
             }
             .navigationTitle("Your website")

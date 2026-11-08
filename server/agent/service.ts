@@ -156,7 +156,7 @@ export class AgentService {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     const ctx = await this.context(userId);
     const sandbox = await this.sandbox(userId);
-    const out = await runAgent({ client: this.d.client, store: this.store, sandbox, userId, context: () => ctx, allowWebSearch: opts.allowWebSearch }, request);
+    const out = await runAgent({ client: this.d.client, store: this.store, sandbox, userId, context: () => ctx, allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep }, request);
     return { ...out, proposals: out.proposalIds.map((id) => viewOf(this.store.get(id, userId))) };
   }
 

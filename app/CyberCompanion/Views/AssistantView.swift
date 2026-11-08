@@ -6,6 +6,7 @@ struct AssistantView: View {
     var openReview: () -> Void
 
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var prompt = ""
     @State private var allowWebSearch = false
     @State private var voice = VoiceInput()
@@ -13,122 +14,176 @@ struct AssistantView: View {
     @State private var promptBeforeVoice = ""
     @FocusState private var promptFocused: Bool
 
+    private let suggestions: [(String, String)] = [
+        ("globe", "Make a one-page website for my business"),
+        ("calendar.badge.plus", "Announce my next event on social media"),
+        ("sparkles", "Write a week of posts about what I do"),
+    ]
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if !model.isConfigured {
-                        setupNotice
-                    } else if model.aiConsent == false {
-                        consentNotice
-                    }
-                    promptCard
-                    if let message = model.errorMessage {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .font(.callout)
-                    }
-                    if let run = model.lastRun {
-                        RunResultView(run: run, openReview: openReview)
-                    }
+        ScrollViewReader { proxy in
+        ScrollView {
+            VStack(spacing: 28) {
+                hero
+                if !model.isConfigured {
+                    setupNotice
+                } else if model.aiConsent == false {
+                    consentNotice
                 }
-                .padding()
-                .frame(maxWidth: 760)
-                .frame(maxWidth: .infinity)
+                VoiceOrb(isListening: voice.isListening, isBusy: isPreparingVoice, level: voice.level) {
+                    Task { await toggleVoice() }
+                }
+                .disabled(model.isRunning)
+                voiceStatus
+                composer
+                if prompt.isEmpty && model.lastRun == nil && !model.isRunning {
+                    suggestionChips
+                }
+                if model.isRunning {
+                    working
+                }
+                if let message = model.errorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .glowCard(padding: 14)
+                }
+                if let run = model.lastRun, !model.isRunning {
+                    RunResultView(run: run, openReview: openReview)
+                        .id("results")
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                }
             }
-            .navigationTitle("Create")
-            .onChange(of: voice.transcript) { _, spoken in
-                prompt = [promptBeforeVoice, spoken].filter { !$0.isEmpty }.joined(separator: " ")
-            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+            .animation(.spring(duration: 0.45), value: model.isRunning)
+            .animation(.spring(duration: 0.45), value: model.lastRun)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .onChange(of: model.isRunning) { wasRunning, isRunning in
+            // Results appear when a run finishes, usually below the fold: bring them into view.
+            guard wasRunning, !isRunning, model.lastRun != nil else { return }
+            withAnimation(reduceMotion ? nil : .spring(duration: 0.6)) { proxy.scrollTo("results", anchor: .top) }
+        }
+        }
+        .auroraBackground()
+        .onChange(of: voice.transcript) { _, spoken in
+            prompt = [promptBeforeVoice, spoken].filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        .sensoryFeedback(.start, trigger: voice.isListening) { _, listening in listening }
+        .sensoryFeedback(.success, trigger: model.lastRun)
     }
 
-    /* ---------------- the prompt ---------------- */
+    /* ---------------- header ---------------- */
 
-    private var promptCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("What would you like to make?")
-                .font(.headline)
-            TextEditor(text: $prompt)
-                .focused($promptFocused)
-                .frame(minHeight: 120)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(.background.secondary, in: .rect(cornerRadius: 10))
-                .overlay(alignment: .topLeading) {
-                    if prompt.isEmpty && !promptFocused {
-                        Text("e.g. Make a one-page website for my Saturday pottery class and write an Instagram caption and a Bluesky post announcing it.")
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 16)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .disabled(voice.isListening)
-
-            voiceStatus
-
-            Toggle("Allow web search", isOn: $allowWebSearch)
-                .help("Lets the assistant look things up. Anything it reads from the web is flagged before you approve.")
-                #if os(macOS)
-                .toggleStyle(.checkbox)
-                #endif
-
-            HStack(spacing: 12) {
-                micButton
-                Spacer()
-                Button {
-                    Task { await send() }
-                } label: {
-                    if model.isRunning {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Send", systemImage: "paperplane.fill")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!canSend)
-            }
+    private var hero: some View {
+        VStack(spacing: 8) {
+            Text("What should we create?")
+                .font(Theme.heading())
+                .foregroundStyle(Theme.spectrumGradient)
+                .multilineTextAlignment(.center)
+            Text("Speak or type. Nothing is published until you approve it.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-    }
-
-    private var micButton: some View {
-        Button {
-            Task {
-                if !voice.isListening { promptBeforeVoice = prompt.trimmingCharacters(in: .whitespacesAndNewlines) }
-                promptFocused = false
-                await voice.toggle()
-            }
-        } label: {
-            Label(voice.isListening ? "Stop" : "Speak", systemImage: voice.isListening ? "stop.circle.fill" : "mic.fill")
-                .symbolEffect(.pulse, isActive: voice.isListening)
-        }
-        .buttonStyle(.bordered)
-        .tint(voice.isListening ? .red : .accentColor)
-        .disabled(model.isRunning || isPreparingVoice)
-        .accessibilityHint("Speaks your request using on-device recognition")
+        .padding(.top, 8)
     }
 
     @ViewBuilder
     private var voiceStatus: some View {
-        switch voice.state {
-        case .idle:
-            EmptyView()
-        case .listening:
-            Label("Listening… recognized on this device", systemImage: "waveform")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .preparing(let message):
-            Label(message, systemImage: "arrow.down.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .unavailable(let message):
-            Label(message, systemImage: "mic.slash")
-                .font(.caption)
-                .foregroundStyle(.orange)
+        Group {
+            switch voice.state {
+            case .idle:
+                Text("Tap to speak")
+            case .listening:
+                Label("Listening · recognized on this device", systemImage: "lock.fill")
+            case .preparing(let message):
+                Text(message)
+            case .unavailable(let message):
+                Label(message, systemImage: "mic.slash").foregroundStyle(.orange)
+            }
         }
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .contentTransition(.opacity)
+        .animation(.easeInOut, value: voice.state)
     }
+
+    /* ---------------- the composer ---------------- */
+
+    private var composer: some View {
+        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        return VStack(alignment: .leading, spacing: 12) {
+            TextField("Describe what you'd like…", text: $prompt, axis: .vertical)
+                .lineLimit(3...10)
+                .font(.body)
+                .focused($promptFocused)
+                .textFieldStyle(.plain)
+                .disabled(voice.isListening)
+
+            HStack(spacing: 10) {
+                Toggle(isOn: $allowWebSearch) {
+                    Label("Web search", systemImage: "globe")
+                        .font(.footnote.weight(.semibold))
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.glass)
+                .help("Lets the assistant look things up. Anything it reads from the web is flagged before you approve.")
+
+                Spacer()
+
+                Button {
+                    Task { await send() }
+                } label: {
+                    Label("Create", systemImage: "arrow.up")
+                        .font(.body.weight(.semibold))
+                        .padding(.horizontal, 4)
+                }
+                .buttonStyle(.glassProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!canSend)
+            }
+        }
+        .padding(16)
+        .glassEffect(.regular, in: shape)
+        .overlay { SpectrumEdge(cornerRadius: 28, isActive: model.isRunning || voice.isListening) }
+    }
+
+    private var suggestionChips: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel("Try")
+            ForEach(suggestions, id: \.1) { icon, text in
+                Button {
+                    prompt = text
+                    promptFocused = true
+                } label: {
+                    Label(text, systemImage: icon)
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.glass)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var working: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Working", color: Theme.spectrum[2])
+            Text("Building your site and writing your posts. This can take a minute.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            ThinkingBeam()
+        }
+        .glowCard()
+        .transition(.opacity)
+    }
+
+    /* ---------------- actions ---------------- */
 
     private var isPreparingVoice: Bool {
         if case .preparing = voice.state { return true }
@@ -140,6 +195,12 @@ struct AssistantView: View {
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private func toggleVoice() async {
+        if !voice.isListening { promptBeforeVoice = prompt.trimmingCharacters(in: .whitespacesAndNewlines) }
+        promptFocused = false
+        await voice.toggle()
+    }
+
     private func send() async {
         promptFocused = false
         await model.runAssistant(prompt: prompt, allowWebSearch: allowWebSearch)
@@ -148,32 +209,31 @@ struct AssistantView: View {
     /* ---------------- notices ---------------- */
 
     private var setupNotice: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Connect to your server first", systemImage: "server.rack")
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel("Setup", color: .orange)
+            Text("Connect to your server")
                 .font(.headline)
-            Text("Add your server address and access token in Settings. The assistant runs there, so your AI key and account tokens never live on this device.")
+            Text("Add your server address and access token in Settings. The assistant runs there, so your AI key and account passwords never live on this device.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Button("Open Settings", action: openSettings)
+            Button("Open Settings", systemImage: "gearshape", action: openSettings)
+                .buttonStyle(.glass)
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.yellow.opacity(0.15), in: .rect(cornerRadius: 12))
+        .glowCard()
     }
 
     private var consentNotice: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("The assistant needs your OK to use AI", systemImage: "hand.raised")
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel("Your OK")
+            Text("Allow the assistant to use AI")
                 .font(.headline)
-            Text("What you type or say is sent to your server, which asks Claude (Anthropic) to write the site and posts. Nothing is published until you approve it.")
+            Text("What you type or say goes to your server, which asks Claude (Anthropic) to write the site and posts. Nothing is published until you approve it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Button("Allow AI") { Task { await model.setAIConsent(true) } }
-                .buttonStyle(.borderedProminent)
+            Button("Allow AI", systemImage: "checkmark") { Task { await model.setAIConsent(true) } }
+                .buttonStyle(.glassProminent)
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.blue.opacity(0.1), in: .rect(cornerRadius: 12))
+        .glowCard()
     }
 }
 
@@ -183,57 +243,73 @@ private struct RunResultView: View {
     var openReview: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 24) {
             if !run.text.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(run.needsAnswer ? "The assistant has a question" : "Assistant", systemImage: run.needsAnswer ? "questionmark.bubble" : "sparkles")
-                        .font(.headline)
-                    Text(run.text)
-                        .textSelection(.enabled)
-                    if run.needsAnswer {
-                        Text("Answer in the box above and send again.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 14) {
+                    IconTile(systemImage: run.needsAnswer ? "questionmark" : "sparkles", size: 34)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(run.needsAnswer ? "A question for you" : "Assistant")
+                            .font(.subheadline.weight(.semibold))
+                        Text(run.text)
+                            .textSelection(.enabled)
+                        if run.needsAnswer {
+                            Text("Answer above and tap Create again.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+                .glowCard()
             }
 
             if run.tainted {
-                Label("This used content from the web. Check everything carefully before approving.", systemImage: "exclamationmark.shield")
+                Label("This used content from the web. Check everything carefully before approving.", systemImage: "exclamationmark.shield.fill")
                     .font(.callout)
                     .foregroundStyle(.orange)
-            }
-
-            let sharable = run.drafts.filter(\.isForSharing)
-            if !sharable.isEmpty {
-                Text("Posts to share")
-                    .font(.title3.bold())
-                ForEach(sharable) { DraftCard(draft: $0) }
+                    .glowCard(padding: 14)
             }
 
             let waiting = run.proposals.filter(\.isPending)
             if !waiting.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Waiting for your approval")
-                        .font(.title3.bold())
-                    ForEach(waiting) { p in
-                        Label(p.summary, systemImage: p.isSite ? "globe" : "text.bubble")
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionLabel("Waiting for your approval")
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(waiting) { p in
+                            HStack(spacing: 12) {
+                                IconTile(systemImage: p.isSite ? "globe" : "text.bubble.fill", size: 30)
+                                Text(p.summary).font(.subheadline)
+                            }
+                        }
+                        Button(action: openReview) {
+                            Label("Review and publish", systemImage: "checkmark.seal.fill")
+                                .font(.body.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
                     }
-                    Button("Review and publish", systemImage: "checkmark.seal", action: openReview)
-                        .buttonStyle(.borderedProminent)
+                    .glowCard()
+                }
+            }
+
+            let sharable = run.drafts.filter(\.isForSharing)
+            if !sharable.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionLabel("Posts to share")
+                    ForEach(sharable) { DraftCard(draft: $0) }
                 }
             }
 
             let blocked = run.proposals.filter { $0.status == "blocked" }
             if !blocked.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Couldn't be proposed")
-                        .font(.title3.bold())
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionLabel("Couldn't be proposed", color: .red)
                     ForEach(blocked) { p in
-                        VStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text(p.summary).font(.headline)
                             CheckList(checks: p.checks)
                         }
+                        .glowCard()
                     }
                 }
             }

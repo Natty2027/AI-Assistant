@@ -23,6 +23,7 @@ import { z } from "zod";
 import { ActionError, type ActionStore } from "./approvals.ts";
 import { evaluate, NEVER_AUTOMATED, PLATFORMS, postContentChecks, TEXT_LIMITS, type Context, type Platform } from "./policy.ts";
 import { SandboxError, type SiteSandbox } from "./sandbox.ts";
+import { withAiRetry } from "./aiRetry.ts";
 
 type MessageParam = Anthropic.Beta.Messages.BetaMessageParam;
 type ToolResult = Anthropic.Beta.Messages.BetaToolResultBlockParam;
@@ -44,7 +45,9 @@ export interface Draft {
 
 export interface AgentDeps {
   /** Only the beta messages surface is used; tests pass a scripted fake. */
-  client: { beta: { messages: { create: (params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming) => Promise<Anthropic.Beta.Messages.BetaMessage> } } };
+  client: { beta: { messages: { create: (params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, options?: { signal?: AbortSignal }) => Promise<Anthropic.Beta.Messages.BetaMessage> } } };
+  /** Injected in tests so retry backoff costs nothing. */
+  sleep?: (ms: number) => Promise<void>;
   store: ActionStore;
   sandbox: SiteSandbox;
   userId: string;
@@ -160,7 +163,8 @@ export async function runAgent(deps: AgentDeps, request: string): Promise<AgentR
       tools,
       messages,
     };
-    const res = await deps.client.beta.messages.create(params);
+    // A transient failure on one turn is retried rather than throwing away the turns before it.
+    const res = await withAiRetry((signal) => deps.client.beta.messages.create(params, { signal }), { sleep: deps.sleep });
     tokens += (res.usage?.input_tokens ?? 0) + (res.usage?.output_tokens ?? 0);
     const text = res.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
 

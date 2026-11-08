@@ -8,6 +8,7 @@ import { createServer } from "node:http";
 import { config } from "./config.ts";
 import { closePool } from "./db.ts";
 import { buildRouter } from "./routes.ts";
+import { refreshSigningKeys } from "./auth.ts";
 
 // moderation.ts posts its content-free safety events to process.env.INTERNAL_API directly.
 process.env.INTERNAL_API ??= config.internalApi;
@@ -23,6 +24,10 @@ if (config.testAccessToken && config.testAccessToken.length < 32) {
   console.error("[boot] TEST_ACCESS_TOKEN must be at least 32 characters. Refusing to start.");
   process.exit(1);
 }
+
+// Fetch the sign-in public keys now, and keep them fresh (see auth.ts).
+void refreshSigningKeys();
+setInterval(() => void refreshSigningKeys(), 10 * 60_000).unref();
 
 const router = buildRouter();
 const server = createServer((req, res) => {

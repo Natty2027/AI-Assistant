@@ -6,24 +6,27 @@ struct ReviewView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                let pending = model.proposals.filter(\.isPending)
-                let history = model.proposals.filter { !$0.isPending }
-                if pending.isEmpty && history.isEmpty {
-                    ContentUnavailableView("Nothing to review", systemImage: "checkmark.seal",
-                                           description: Text("When the assistant has a website or post ready to publish, it shows up here for you to approve."))
-                }
-                if !pending.isEmpty {
-                    Section("Waiting for you") {
-                        ForEach(pending) { row($0) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    let pending = model.proposals.filter(\.isPending)
+                    let history = model.proposals.filter { !$0.isPending }
+                    if pending.isEmpty && history.isEmpty {
+                        ContentUnavailableView("Nothing to review", systemImage: "checkmark.seal",
+                                               description: Text("When the assistant has a website or post ready to publish, it appears here for you to approve."))
+                            .glowCard()
+                    }
+                    if !pending.isEmpty {
+                        group("Waiting for you", pending)
+                    }
+                    if !history.isEmpty {
+                        group("Earlier", history, color: .secondary)
                     }
                 }
-                if !history.isEmpty {
-                    Section("Earlier") {
-                        ForEach(history) { row($0) }
-                    }
-                }
+                .padding(20)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
             }
+            .auroraBackground()
             .navigationTitle("Review")
             .navigationDestination(for: Proposal.self) { ProposalDetailView(proposal: $0) }
             .refreshable { await model.refreshProposals() }
@@ -34,53 +37,35 @@ struct ReviewView: View {
         }
     }
 
-    private func row(_ p: Proposal) -> some View {
-        NavigationLink(value: p) {
-            VStack(alignment: .leading, spacing: 4) {
-                Label(p.label, systemImage: p.isSite ? "globe" : "text.bubble")
-                    .font(.headline)
-                Text(p.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                StatusBadge(status: p.status)
+    private func group(_ title: String, _ proposals: [Proposal], color: Color = Theme.spectrum[0]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel(title, color: color)
+            ForEach(proposals) { p in
+                NavigationLink(value: p) { row(p) }
+                    .buttonStyle(.plain)
             }
         }
     }
-}
 
-struct StatusBadge: View {
-    let status: String
-
-    var body: some View {
-        Text(title)
-            .font(.caption.bold())
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.2), in: .capsule)
-            .foregroundStyle(color)
-    }
-
-    private var title: String {
-        switch status {
-        case "pending": "Needs approval"
-        case "executed": "Published"
-        case "blocked": "Blocked"
-        case "failed": "Failed"
-        case "rejected": "Declined"
-        case "expired": "Expired"
-        case "approved", "executing": "Publishing…"
-        default: status.capitalized
+    private func row(_ p: Proposal) -> some View {
+        HStack(spacing: 14) {
+            IconTile(systemImage: p.isSite ? "globe" : "text.bubble.fill", size: 42)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(p.summary)
+                    .font(.headline)
+                    .lineLimit(2)
+                Text(p.label)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                StatusPill(status: p.status)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
-    }
-
-    private var color: Color {
-        switch status {
-        case "pending": .blue
-        case "executed": .green
-        case "blocked", "failed": .red
-        default: .secondary
-        }
+        .glowCard(padding: 16)
+        .contentShape(.rect)
     }
 }
 
@@ -98,91 +83,138 @@ struct ProposalDetailView: View {
     }
 
     var body: some View {
-        Form {
-            Section {
-                Text(proposal.summary).font(.headline)
-                StatusBadge(status: proposal.status)
-            }
-
-            Section(proposal.isSite ? "Website" : "Post") {
-                if proposal.isPost {
-                    Text(proposal.postText ?? "")
-                        .textSelection(.enabled)
-                    if let link = proposal.postLink, let url = URL(string: link) {
-                        Link(link, destination: url)
-                    }
-                } else if proposal.isSite {
-                    Text("Publishes every file currently in your website, exactly as you can preview it in the Website tab.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !proposal.checks.isEmpty {
-                Section("Checks") { CheckList(checks: proposal.checks) }
-            }
-
-            if proposal.isPending {
-                if !proposal.requiredAttestations.isEmpty {
-                    Section("Confirm before publishing") {
-                        ForEach(proposal.requiredAttestations) { check in
-                            Toggle(isOn: binding(for: check.id)) {
-                                Text(check.message).font(.callout)
-                            }
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                header
+                content
+                if !proposal.checks.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionLabel("Checks")
+                        CheckList(checks: proposal.checks).glowCard()
                     }
                 }
-                if proposal.tainted {
-                    Section {
-                        Toggle("I've checked this. It used content from the web, and it says only what I intend.", isOn: $acknowledgedTaint)
-                    }
-                }
-                Section {
-                    if !proposal.canBeCarriedOut {
-                        Text("There's no connected account that can publish this yet.")
-                            .foregroundStyle(.secondary)
-                    }
-                    Button {
-                        showPublishConfirmation = true
-                    } label: {
-                        Label("Approve and publish", systemImage: "checkmark.seal.fill")
-                    }
-                    .disabled(!canApprove || isWorking)
-
-                    Button("Decline", role: .destructive) {
-                        Task {
-                            isWorking = true
-                            await model.reject(proposal)
-                            refreshFromModel()
-                            isWorking = false
-                        }
-                    }
-                    .disabled(isWorking)
+                if proposal.isPending { decision }
+                if let result = proposal.result { outcome(result) }
+                if let message = model.errorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .glowCard(padding: 14)
                 }
             }
-
-            if let result = proposal.result {
-                Section("Outcome") {
-                    Label(result.detail, systemImage: result.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(result.ok ? .green : .red)
-                    if let ref = result.ref, let url = URL(string: ref) {
-                        Link("Open", destination: url)
-                    }
-                }
-            }
-
-            if let message = model.errorMessage {
-                Section { Text(message).foregroundStyle(.red) }
-            }
+            .padding(20)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+            .animation(.spring(duration: 0.4), value: proposal)
         }
-        .formStyle(.grouped)
+        .auroraBackground()
         .navigationTitle(proposal.label)
-        .overlay { if isWorking { ProgressView() } }
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .overlay { if isWorking { ProgressView().controlSize(.large) } }
+        .sensoryFeedback(.success, trigger: proposal.status) { _, status in status == "executed" }
         .confirmationDialog("Publish this now?", isPresented: $showPublishConfirmation, titleVisibility: .visible) {
             Button("Publish") { Task { await publish() } }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Once published, anyone can see it.")
         }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            IconTile(systemImage: proposal.isSite ? "globe" : "text.bubble.fill", size: 48)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(proposal.summary).font(Theme.heading(.title2))
+                StatusPill(status: proposal.status)
+            }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel(proposal.isSite ? "Website" : "Exactly what will be posted")
+            VStack(alignment: .leading, spacing: 10) {
+                if proposal.isPost {
+                    Text(proposal.postText ?? "")
+                        .font(.body)
+                        .textSelection(.enabled)
+                    if let link = proposal.postLink, let url = URL(string: link) {
+                        Link(destination: url) { Label(link, systemImage: "link") }
+                            .font(.callout)
+                    }
+                } else {
+                    Text("Publishes every file currently in your website, exactly as you can preview it in the Website tab.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .glowCard()
+        }
+    }
+
+    private var decision: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Your decision")
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(proposal.requiredAttestations) { check in
+                    Toggle(isOn: binding(for: check.id)) {
+                        Text(check.message).font(.callout)
+                    }
+                }
+                if proposal.tainted {
+                    Toggle("I've checked this. It used content from the web, and it says only what I intend.", isOn: $acknowledgedTaint)
+                        .font(.callout)
+                }
+                if !proposal.canBeCarriedOut {
+                    Text("There's no connected account that can publish this yet.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Button {
+                    showPublishConfirmation = true
+                } label: {
+                    Label("Approve and publish", systemImage: "checkmark.seal.fill")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.large)
+                .disabled(!canApprove || isWorking)
+
+                Button(role: .destructive) {
+                    Task {
+                        isWorking = true
+                        await model.reject(proposal)
+                        refreshFromModel()
+                        isWorking = false
+                    }
+                } label: {
+                    Text("Decline").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glass)
+                .disabled(isWorking)
+            }
+            .glowCard()
+        }
+    }
+
+    private func outcome(_ result: Proposal.Outcome) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Outcome", color: result.ok ? .green : .red)
+            VStack(alignment: .leading, spacing: 12) {
+                Label(result.detail, systemImage: result.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(result.ok ? .green : .red)
+                if let ref = result.ref, let url = URL(string: ref) {
+                    Link(destination: url) {
+                        Label("Open", systemImage: "arrow.up.right")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glass)
+                }
+            }
+            .glowCard()
+        }
+        .transition(.scale(scale: 0.95).combined(with: .opacity))
     }
 
     private var canApprove: Bool {

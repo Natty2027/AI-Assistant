@@ -16,7 +16,7 @@
  * DEV_USER_ID locally, or add the header in sw.ts. This is the one client change the backend
  * needs and it is intentionally called out rather than hidden.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, createPublicKey, timingSafeEqual, verify as verifySignature, type JsonWebKey, type KeyObject } from "node:crypto";
 import { config } from "./config.ts";
 import { HttpError, type Ctx } from "./http.ts";
 import { clientIp, createLimiter } from "./rateLimit.ts";
@@ -51,6 +51,79 @@ function verifyJwt(token: string, secret: string): JwtClaims {
   }
   if (claims.exp && claims.exp * 1000 < Date.now()) throw new HttpError(401, "Token expired");
   if (!claims.sub) throw new HttpError(401, "Token has no subject");
+  return claims;
+}
+
+/* ---------------- asymmetric signing keys (ES256 / RS256) ----------------
+ * New Supabase projects sign access tokens with an asymmetric key and publish the public half at
+ * /auth/v1/.well-known/jwks.json. The keys are fetched at boot and every ten minutes, so checking
+ * a token stays synchronous; a token signed with a key we haven't seen triggers a refresh and is
+ * refused this once (the app refreshes and retries). */
+
+const signingKeys = new Map<string, { key: KeyObject; alg: "ES256" | "RS256" }>();
+let refreshing: Promise<void> | null = null;
+
+type Jwk = JsonWebKey & { kid?: string; alg?: string };
+
+/** Replaces the known keys. Exported for tests; refreshSigningKeys is the production path. */
+export function setSigningKeys(keys: Jwk[]): void {
+  signingKeys.clear();
+  for (const jwk of keys) {
+    const alg = jwk.alg ?? (jwk.kty === "EC" ? "ES256" : jwk.kty === "RSA" ? "RS256" : undefined);
+    if (!jwk.kid || (alg !== "ES256" && alg !== "RS256")) continue;
+    try {
+      signingKeys.set(jwk.kid, { key: createPublicKey({ key: jwk, format: "jwk" }), alg });
+    } catch { /* a malformed key is skipped, not fatal */ }
+  }
+}
+
+export function refreshSigningKeys(fetchImpl: typeof fetch = fetch): Promise<void> {
+  if (!config.supabaseUrl) return Promise.resolve();
+  refreshing ??= (async () => {
+    try {
+      const res = await fetchImpl(`${config.supabaseUrl}/auth/v1/.well-known/jwks.json`, { signal: AbortSignal.timeout(8_000) });
+      if (res.ok) {
+        const body = (await res.json()) as { keys?: Jwk[] };
+        if (Array.isArray(body.keys)) setSigningKeys(body.keys);
+      }
+    } catch {
+      // Keep the keys we have; the next refresh tries again.
+    } finally {
+      refreshing = null;
+    }
+  })();
+  return refreshing;
+}
+
+function decodeSegment<T>(segment: string, what: string): T {
+  try {
+    return JSON.parse(b64urlToBuf(segment).toString("utf8")) as T;
+  } catch {
+    throw new HttpError(401, `Token ${what} unreadable`);
+  }
+}
+
+function checkClaims(claims: JwtClaims): JwtClaims {
+  if (claims.exp && claims.exp * 1000 < Date.now()) throw new HttpError(401, "Token expired");
+  if (!claims.sub) throw new HttpError(401, "Token has no subject");
+  return claims;
+}
+
+function verifyAsymmetricJwt(token: string, alg: string, kid: string | undefined): JwtClaims {
+  const [headerB64, payloadB64, sigB64] = token.split(".");
+  const entry = kid ? signingKeys.get(kid) : undefined;
+  if (!entry) {
+    void refreshSigningKeys();
+    throw new HttpError(401, "Sign-in key not recognised yet. Try again.");
+  }
+  if (entry.alg !== alg) throw new HttpError(401, "Token algorithm mismatch");
+  const ok = verifySignature("sha256", Buffer.from(`${headerB64}.${payloadB64}`),
+    entry.alg === "ES256" ? { key: entry.key, dsaEncoding: "ieee-p1363" } : entry.key, b64urlToBuf(sigB64));
+  if (!ok) throw new HttpError(401, "Token signature invalid");
+  const claims = checkClaims(decodeSegment<JwtClaims>(payloadB64, "payload"));
+  // Supabase issues user sessions for the "authenticated" audience from <project>/auth/v1.
+  if (claims.aud !== "authenticated") throw new HttpError(401, "Token is not a user session");
+  if (config.supabaseUrl && claims.iss !== `${config.supabaseUrl}/auth/v1`) throw new HttpError(401, "Token issuer not recognised");
   return claims;
 }
 
@@ -96,10 +169,18 @@ function resolveUser(ctx: Ctx): string {
     }
   }
 
-  if (token && config.supabaseJwtSecret && token.split(".").length === 3) {
-    const claims = verifyJwt(token, config.supabaseJwtSecret);
-    ctx.userId = claims.sub!;
-    return ctx.userId;
+  if (token && token.split(".").length === 3) {
+    const header = decodeSegment<{ alg?: string; kid?: string }>(token.split(".")[0], "header");
+    if (header.alg === "HS256" && config.supabaseJwtSecret) {
+      ctx.userId = verifyJwt(token, config.supabaseJwtSecret).sub!;
+      return ctx.userId;
+    }
+    if ((header.alg === "ES256" || header.alg === "RS256") && (config.supabaseUrl || signingKeys.size)) {
+      ctx.userId = verifyAsymmetricJwt(token, header.alg, header.kid).sub!;
+      return ctx.userId;
+    }
+    // Anything else ("none", an algorithm we don't verify) is never trusted.
+    if (!config.devUserId) throw new HttpError(401, "Token type not accepted");
   }
 
   if (config.devUserId) {

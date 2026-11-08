@@ -2,20 +2,35 @@ import Foundation
 
 /// Talks to the Cyber Companion server. Every request carries the person's access token as a
 /// Bearer header (server/auth.ts); request bodies use the server's snake_case field names.
+///
+/// Network behaviour, ported from Cognivate's client: a 401 refreshes the session once and
+/// retries; reads are retried on brief failures with backoff; the preferred language is sent;
+/// errors come back as sentences a person can act on, with a reference for support.
 struct APIClient: Sendable {
     let baseURL: URL
-    let token: String
-    var session: URLSession = .shared
+    /// Supplies a currently valid access token (refreshing if needed), or nil when signed out.
+    let tokenProvider: @Sendable () async throws -> String?
+    /// Called once after a 401. Returns true if a new token is now available to retry with.
+    var refreshAfterUnauthorized: @Sendable () async -> Bool = { false }
+    var session: URLSession = SecureSession.shared
+    /// Injected in tests so retry backoff costs nothing.
+    var sleep: @Sendable (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
 
     enum APIError: LocalizedError {
-        case server(status: Int, message: String, code: String?)
+        case server(status: Int, message: String, code: String?, requestID: String?)
         case invalidResponse
 
         var errorDescription: String? {
             switch self {
-            case .server(_, let message, _): message
+            case .server(_, let message, _, let requestID):
+                requestID.map { "\(message) (Ref: \($0))" } ?? message
             case .invalidResponse: "The server sent a reply the app couldn't read."
             }
+        }
+
+        var code: String? {
+            if case .server(_, _, let code, _) = self { return code }
+            return nil
         }
     }
 
@@ -47,6 +62,14 @@ struct APIClient: Sendable {
 
     func reject(_ proposal: Proposal) async throws {
         let _: OKResponse = try await send("POST", "agent/proposals/\(proposal.id)/reject", body: [String: String]())
+    }
+
+    /* ---------------- account ---------------- */
+
+    /// Deletes everything the server holds about the person, and their sign-in account.
+    func deleteAccount() async throws {
+        struct Body: Encodable { let confirm: String }
+        let _: OKResponse = try await send("POST", "account/delete", body: Body(confirm: "DELETE"), timeout: 60)
     }
 
     /* ---------------- the website ---------------- */
@@ -111,26 +134,71 @@ struct APIClient: Sendable {
     private func send<T: Decodable>(_ method: String, _ path: String, query: [URLQueryItem], bodyData: Data?, timeout: TimeInterval) async throws -> T {
         var url = baseURL.appending(path: path)
         if !query.isEmpty { url.append(queryItems: query) }
+        let retriesAllowed = method == "GET"
+        var refreshed = false
+        var attempt = 1
+
+        while true {
+            do {
+                let (data, http) = try await perform(method: method, url: url, bodyData: bodyData, timeout: timeout)
+                if http.statusCode == 401 && !refreshed {
+                    // The token may have just expired: refresh once and try again. A 401 means the
+                    // request wasn't processed, so repeating it is safe for any method.
+                    refreshed = true
+                    if await refreshAfterUnauthorized() { continue }
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    // The server's errors are written for people (server/http.ts), so show them as they are.
+                    let body = try? JSONDecoder().decode(ServerErrorBody.self, from: data)
+                    let requestID = body?.requestId ?? http.value(forHTTPHeaderField: "X-Request-Id").flatMap { http.statusCode >= 500 ? $0 : nil }
+                    let error = APIError.server(status: http.statusCode, message: body?.error ?? Self.fallbackMessage(http.statusCode),
+                                                code: body?.code, requestID: requestID)
+                    if retriesAllowed, attempt < RetryPolicy.maxAttempts, RetryPolicy.isTransient(error) {
+                        try await sleep(RetryPolicy.delay(beforeRetry: attempt, retryAfter: RetryPolicy.retryAfter(from: http)))
+                        attempt += 1
+                        continue
+                    }
+                    throw error
+                }
+                do {
+                    return try JSONDecoder().decode(T.self, from: data)
+                } catch {
+                    throw APIError.invalidResponse
+                }
+            } catch let error as URLError {
+                if retriesAllowed, attempt < RetryPolicy.maxAttempts, RetryPolicy.isTransient(error) {
+                    try await sleep(RetryPolicy.delay(beforeRetry: attempt, retryAfter: nil))
+                    attempt += 1
+                    continue
+                }
+                throw error
+            }
+        }
+    }
+
+    private func perform(method: String, url: URL, bodyData: Data?, timeout: TimeInterval) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let token = try await tokenProvider() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(Locale.preferredLanguages.prefix(3).joined(separator: ", "), forHTTPHeaderField: "Accept-Language")
         if let bodyData {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = bodyData
         }
-
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            // The server's errors are written for people (server/http.ts), so show them as they are.
-            let body = try? JSONDecoder().decode(ServerErrorBody.self, from: data)
-            throw APIError.server(status: http.statusCode, message: body?.error ?? "The server returned an error (\(http.statusCode)).", code: body?.code)
-        }
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw APIError.invalidResponse
+        return (data, http)
+    }
+
+    private static func fallbackMessage(_ status: Int) -> String {
+        switch status {
+        case 401: "You're signed out. Please sign in again."
+        case 429: "That's a lot of requests at once. Wait a moment and try again."
+        case 500...: "Something went wrong on our side. Please try again."
+        default: "The server couldn't do that (\(status))."
         }
     }
 }

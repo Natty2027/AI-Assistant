@@ -201,4 +201,5 @@ struct ApprovalResponse: Decodable, Sendable {
 struct ServerErrorBody: Decodable, Sendable {
     let error: String
     let code: String?
+    let requestId: String?
 }

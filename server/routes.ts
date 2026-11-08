@@ -10,7 +10,8 @@ import { isIP } from "node:net";
 import { config } from "./config.ts";
 import { requireAuth, assertLoopback } from "./auth.ts";
 import { dbConfigured, dbReachable, pool, query } from "./db.ts";
-import { HttpError, Router, type Ctx } from "./http.ts";
+import { HttpError, Router, sendHtml, type Ctx } from "./http.ts";
+import { privacyPage, supportPage, termsPage } from "./pages.ts";
 import { challengeFor, createVerifier, randomState } from "./oauth/pkce.ts";
 import { decryptToken, encryptToken, newDataKeyId } from "./crypto/envelope.ts";
 import { createLimiter } from "./rateLimit.ts";
@@ -36,7 +37,8 @@ function agent(): AgentService {
     run: (sql, params) => query(sql, params ?? []) as Promise<{ rows: any[] }>,
     fetch: (url, init) => fetch(url, init),
     sitesDir: config.sitesDir,
-    client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey }) : null,
+    // maxRetries 0: the agent loop retries through withAiRetry, so the SDK must not retry too.
+    client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 }) : null,
   });
   return agentService;
 }
@@ -265,6 +267,12 @@ const CRISIS_NOTICE =
 export function buildRouter(): Router {
   const r = new Router();
 
+  /* ---- public pages: App Store Connect needs live Support, Privacy Policy and Marketing URLs ---- */
+  r.get("/", (ctx) => sendHtml(ctx.res, supportPage(config.supportEmail)));
+  r.get("/support", (ctx) => sendHtml(ctx.res, supportPage(config.supportEmail)));
+  r.get("/privacy", (ctx) => sendHtml(ctx.res, privacyPage(config.supportEmail)));
+  r.get("/terms", (ctx) => sendHtml(ctx.res, termsPage(config.supportEmail)));
+
   r.get("/health", async () => ({
     ok: true,
     db: dbConfigured() ? ((await dbReachable()) ? "reachable" : "unreachable") : "not_configured",
@@ -339,8 +347,25 @@ export function buildRouter(): Router {
     } finally {
       client.release();
     }
-    // audit_log is append-only by design and keeps its rows; the extension clears local data.
-    return { ok: true };
+    // Apple requires deleting the account itself, not only its data (guideline 5.1.1(v)).
+    // The data is already gone, so a retry after a failure here is safe and finishes the job.
+    if (config.supabaseUrl && config.supabaseServiceRoleKey && userId !== config.testUserId) {
+      let res: Response;
+      try {
+        res = await fetch(`${config.supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+          method: "DELETE",
+          headers: { apikey: config.supabaseServiceRoleKey, Authorization: `Bearer ${config.supabaseServiceRoleKey}` },
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch {
+        throw new HttpError(502, "Your data was deleted, but we couldn't close your sign-in account. Please try again.");
+      }
+      if (!res.ok && res.status !== 404) {
+        throw new HttpError(502, "Your data was deleted, but we couldn't close your sign-in account. Please try again.");
+      }
+    }
+    // audit_log is append-only by design and keeps its rows; the app signs out and clears local data.
+    return { ok: true, accountDeleted: Boolean(config.supabaseUrl && config.supabaseServiceRoleKey) };
   });
 
   /* ---- what the resolver reads to decide whether the assistant may speak ---- */

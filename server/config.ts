@@ -49,6 +49,17 @@ export const config = {
    *  token the client presents. When absent, DEV_USER_ID below is used instead. */
   supabaseJwtSecret: opt("SUPABASE_JWT_SECRET"),
 
+  /** The Supabase project URL, e.g. https://abcd.supabase.co. Lets the server verify tokens
+   *  signed with the project's asymmetric signing keys (the default for new projects), and
+   *  delete the sign-in account when a person deletes their account. */
+  supabaseUrl: opt("SUPABASE_URL")?.replace(/\/+$/, ""),
+  /** Server-only. Used for one thing: deleting a person's sign-in account at their request
+   *  (Apple guideline 5.1.1(v)). Never sent to the app. */
+  supabaseServiceRoleKey: opt("SUPABASE_SERVICE_ROLE_KEY"),
+
+  /** Shown on the public support, privacy and terms pages. */
+  supportEmail: opt("SUPPORT_EMAIL") ?? "support@example.com",
+
   /** Dev-only escape hatch: treat every request as this user id. Never set in production. */
   devUserId: opt("DEV_USER_ID"),
 

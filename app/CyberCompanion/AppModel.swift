@@ -10,7 +10,11 @@ final class AppModel {
     private static let tokenAccount = "accessToken"
 
     private(set) var serverURLString: String
+    /// Development and staging only: the server's TEST_ACCESS_TOKEN, used instead of signing in.
     private(set) var accessToken: String
+
+    let session = Session()
+    let connectivity = Connectivity()
 
     var connections: [Connection] = []
     var proposals: [Proposal] = []
@@ -34,19 +38,30 @@ final class AppModel {
 
     var isConfigured: Bool { client != nil }
 
+    /// The server address: the release value in AppConfig, else what was entered in Settings.
+    var serverURL: URL? { AppConfig.serverURL ?? ServerAddress.normalize(serverURLString) }
+
+    /// Signing in is required when the build can sign in and no developer token is set.
+    var needsSignIn: Bool { session.isAvailable && !session.isSignedIn && accessToken.isEmpty }
+
     var pendingCount: Int { proposals.filter(\.isPending).count }
 
     var socialConnections: [Connection] { connections.filter { $0.kind == "social" } }
     var hostingConnections: [Connection] { connections.filter { $0.kind == "hosting" } }
 
-    /// nil until a valid https server address (or a local http one, for development) and a token are set.
+    /// nil until there's a valid server address (https, or http on this machine) and a way to
+    /// authenticate: a signed-in session, or a developer token.
     var client: APIClient? {
-        guard !accessToken.isEmpty,
-              let url = URL(string: serverURLString.trimmingCharacters(in: .whitespaces)),
-              let scheme = url.scheme, let host = url.host() else { return nil }
-        let isLocal = host == "localhost" || host == "127.0.0.1"
-        guard scheme == "https" || (scheme == "http" && isLocal) else { return nil }
-        return APIClient(baseURL: url, token: accessToken)
+        guard let url = serverURL else { return nil }
+        if !accessToken.isEmpty {
+            let token = accessToken
+            return APIClient(baseURL: url, tokenProvider: { token })
+        }
+        guard session.isSignedIn else { return nil }
+        let session = session
+        return APIClient(baseURL: url,
+                         tokenProvider: { try await session.validAccessToken() },
+                         refreshAfterUnauthorized: { (try? await session.refresh()) != nil })
     }
 
     func saveSettings(serverURL: String, accessToken: String) {
@@ -54,6 +69,39 @@ final class AppModel {
         self.accessToken = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         UserDefaults.standard.set(serverURLString, forKey: Self.serverURLKey)
         Keychain.write(self.accessToken, for: Self.tokenAccount)
+    }
+
+    /// Development: point sign-in at a Supabase project without rebuilding.
+    func saveSignInService(url: String, anonKey: String) {
+        UserDefaults.standard.set(url.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "supabaseURL")
+        UserDefaults.standard.set(anonKey.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "supabaseAnonKey")
+    }
+
+    /* ---------------- account ---------------- */
+
+    func signOut() async {
+        await session.signOut()
+        resetLocalState()
+    }
+
+    /// Deletes the account on the server (data and sign-in), then signs out on this device.
+    /// Returns false, with errorMessage set, if the server didn't confirm.
+    func deleteAccount() async -> Bool {
+        guard let client else { return false }
+        let deleted = await perform { try await client.deleteAccount() }
+        guard deleted else { return false }
+        session.clear()
+        saveSettings(serverURL: serverURLString, accessToken: "")
+        resetLocalState()
+        return true
+    }
+
+    private func resetLocalState() {
+        connections = []
+        proposals = []
+        lastRun = nil
+        aiConsent = nil
+        errorMessage = nil
     }
 
     /// Loads everything the tabs show. Called on launch and after settings change.
@@ -161,7 +209,7 @@ final class AppModel {
         } catch is CancellationError {
             return false
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = RetryPolicy.message(for: error)
             return false
         }
     }

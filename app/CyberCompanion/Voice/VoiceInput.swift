@@ -21,6 +21,8 @@ final class VoiceInput {
     private(set) var finalizedText = ""
     /// The recognizer's current best guess for the words still being spoken; it may change.
     private(set) var volatileText = ""
+    /// How loud the speaker is right now, 0 (silence) to 1, for the orb to react to.
+    private(set) var level: Double = 0
 
     var transcript: String { finalizedText + volatileText }
     var isListening: Bool { state == .listening }
@@ -138,7 +140,9 @@ final class VoiceInput {
         try await analyzer.start(inputSequence: inputs)
 
         let engine = AVAudioEngine()
-        let pipe = try AudioPipe(input: engine.inputNode, analyzerFormat: analyzerFormat, continuation: continuation)
+        let pipe = try AudioPipe(input: engine.inputNode, analyzerFormat: analyzerFormat, continuation: continuation) { [weak self] level in
+            Task { @MainActor in self?.level = level }
+        }
         pipe.install(on: engine.inputNode)
         engine.prepare()
         try engine.start()
@@ -168,6 +172,7 @@ final class VoiceInput {
     }
 
     private func stopAudio() {
+        level = 0
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
@@ -194,8 +199,11 @@ private final class AudioPipe: @unchecked Sendable {
     private let inputFormat: AVAudioFormat
     private let analyzerFormat: AVAudioFormat
     private let continuation: AsyncStream<AnalyzerInput>.Continuation
+    private let onLevel: @Sendable (Double) -> Void
 
-    init(input: AVAudioInputNode, analyzerFormat: AVAudioFormat, continuation: AsyncStream<AnalyzerInput>.Continuation) throws {
+    init(input: AVAudioInputNode, analyzerFormat: AVAudioFormat, continuation: AsyncStream<AnalyzerInput>.Continuation,
+         onLevel: @escaping @Sendable (Double) -> Void) throws {
+        self.onLevel = onLevel
         let inputFormat = input.outputFormat(forBus: 0)
         self.inputFormat = inputFormat
         self.analyzerFormat = analyzerFormat
@@ -206,10 +214,22 @@ private final class AudioPipe: @unchecked Sendable {
 
     func install(on node: AVAudioInputNode) {
         node.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [self] buffer, _ in
+            onLevel(Self.level(of: buffer))
             if let converted = convert(buffer) {
                 continuation.yield(AnalyzerInput(buffer: converted))
             }
         }
+    }
+
+    /// Loudness of one buffer, mapped from about -50 dB (quiet room) to 0 dB onto 0...1.
+    private static func level(of buffer: AVAudioPCMBuffer) -> Double {
+        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
+        let count = Int(buffer.frameLength)
+        var sum: Float = 0
+        for i in 0..<count { sum += samples[i] * samples[i] }
+        let rms = (sum / Float(count)).squareRoot()
+        let decibels = 20 * log10(max(rms, 1e-6))
+        return Double(min(max((decibels + 50) / 50, 0), 1))
     }
 
     private func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {

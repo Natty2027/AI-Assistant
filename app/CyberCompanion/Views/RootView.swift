@@ -10,6 +10,31 @@ struct RootView: View {
     @State private var selection: Section = .create
 
     var body: some View {
+        if model.needsSignIn {
+            SignInView()
+                .transition(.opacity)
+        } else {
+            tabs
+                .safeAreaInset(edge: .top) { offlineBanner }
+                .animation(.spring(duration: 0.4), value: model.connectivity.isOnline)
+        }
+    }
+
+    @ViewBuilder
+    private var offlineBanner: some View {
+        if !model.connectivity.isOnline {
+            Label("You're offline. Changes will need a connection.", systemImage: "wifi.slash")
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .glassEffect(.regular.tint(.orange.opacity(0.35)), in: .capsule)
+                .padding(.top, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .accessibilityAddTraits(.isStaticText)
+        }
+    }
+
+    private var tabs: some View {
         TabView(selection: $selection) {
             Tab("Create", systemImage: "sparkles", value: .create) {
                 AssistantView(openSettings: { selection = .settings }, openReview: { selection = .review })
