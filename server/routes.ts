@@ -256,7 +256,7 @@ export function buildRouter(): Router {
     // Website and posts are separate runs. Builds from before the split send no mode; they get
     // the website, which is what they were opened for most often.
     const mode = ctx.body.mode ?? "site";
-    if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'site', 'posts' or 'schedule'.");
+    if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'site', 'posts', 'schedule' or 'launch'.");
     await ensureSettings(userId);
     // What the person writes is sent to the model provider, so the AI consent switch applies.
     await requireAiConsent(userId);
@@ -264,9 +264,9 @@ export function buildRouter(): Router {
     if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
     const out = await guarded(() => agent().run(userId, request, {
       mode: mode as AgentMode, allowWebSearch: ctx.body.allow_web_search === true,
-      photoId: mode === "posts" ? ctx.body.photo_id ?? null : null,
+      photoId: mode === "posts" || mode === "launch" ? ctx.body.photo_id ?? null : null,
       // Their calendar and reminders as their device sees them, for this request; never stored on its own.
-      schedule: mode === "schedule" ? ctx.body.schedule : undefined,
+      schedule: mode === "schedule" || mode === "launch" ? ctx.body.schedule : undefined,
       // Continue an earlier task: the id from the previous answer.
       conversationId: ctx.body.conversation_id,
     }));

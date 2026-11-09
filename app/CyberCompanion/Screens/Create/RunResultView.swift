@@ -13,6 +13,10 @@ struct RunResultView: View {
         VStack(alignment: .leading, spacing: 24) {
             if !run.text.isEmpty { reply }
 
+            if let kit = LaunchKitSummary(run: run) {
+                launchKit(kit)
+            }
+
             if run.tainted {
                 Label("This used content from the web. Check everything carefully before approving.", systemImage: "exclamationmark.shield.fill")
                     .font(.callout)
@@ -88,6 +92,23 @@ struct RunResultView: View {
         .glowCard()
     }
 
+    /// Launch Kit: everything one request made ready, at a glance, before the details below.
+    private func launchKit(_ kit: LaunchKitSummary) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Launch Kit")
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(kit.items, id: \.text) { item in
+                    Label(item.text, systemImage: item.systemImage)
+                        .font(.subheadline)
+                }
+                Text("Each piece waits for your approval below or in Review. Nothing goes out until you say so.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .glowCard()
+        }
+    }
+
     private func waitingForApproval(_ waiting: [Proposal]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionLabel("Waiting for your approval")
@@ -135,5 +156,38 @@ struct RunResultView: View {
         }
         .buttonStyle(.glass)
         .controlSize(.small)
+    }
+}
+
+/// What a run made ready, by kind. Shown as the Launch Kit overview when a run produced more than
+/// one kind of thing (a website and posts, posts and calendar entries, and so on).
+struct LaunchKitSummary: Equatable {
+    struct Item: Equatable {
+        let text: String
+        let systemImage: String
+    }
+
+    let items: [Item]
+
+    init?(run: AgentRunResponse) {
+        func plural(_ n: Int, _ one: String, _ many: String) -> String { n == 1 ? one : "\(n) \(many)" }
+        let pending = run.proposals.filter(\.isPending)
+        let site = pending.filter(\.isSite).count
+        let posts = pending.count - site
+        let sharing = run.drafts.filter(\.isForSharing).count
+        let calendar = run.scheduleChanges ?? []
+        let events = calendar.filter { [.addEvent, .changeEvent, .cancelEvent].contains($0.kind) }.count
+        let reminders = calendar.count - events
+        let emails = run.emailDrafts?.count ?? 0
+
+        var items: [Item] = []
+        if site > 0 { items.append(.init(text: "Website ready to publish", systemImage: "globe")) }
+        if posts > 0 { items.append(.init(text: plural(posts, "A post ready to approve", "posts ready to approve"), systemImage: "text.bubble.fill")) }
+        if sharing > 0 { items.append(.init(text: plural(sharing, "A post to share yourself", "posts to share yourself"), systemImage: "square.and.arrow.up")) }
+        if events > 0 { items.append(.init(text: plural(events, "A calendar change", "calendar changes"), systemImage: "calendar")) }
+        if reminders > 0 { items.append(.init(text: plural(reminders, "A reminder", "reminders"), systemImage: "checklist")) }
+        if emails > 0 { items.append(.init(text: plural(emails, "An email to send", "emails to send"), systemImage: "envelope.fill")) }
+        guard items.count > 1 else { return nil }
+        self.items = items
     }
 }

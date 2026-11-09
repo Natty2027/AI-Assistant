@@ -32,6 +32,7 @@ struct AssistantView: View {
     @State private var conversation: Conversation = .none
 
     private let suggestions: [(CreateMode, String, String)] = [
+        (.launch, "sparkles", "Launch my pottery workshop on the 20th at 6 PM: $40, 8 spots"),
         (.site, "globe", "Make a one-page website for my business"),
         (.posts, "calendar.badge.plus", "Announce my next event on social media"),
         (.posts, "sparkles", "Write a week of posts about what I do"),
@@ -194,17 +195,17 @@ struct AssistantView: View {
                 .textFieldStyle(.plain)
                 .disabled(voice.isListening)
 
-            if mode == .posts, let photo {
+            if mode.takesPhoto, let photo {
                 attachedPhoto(photo)
             }
-            if mode == .posts, let photoProblem {
+            if mode.takesPhoto, let photoProblem {
                 Label(photoProblem, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
 
             HStack(spacing: 10) {
-                if mode == .posts {
+                if mode.takesPhoto {
                     // The label closure runs off the main actor, so it gets plain values.
                     let loading = isLoadingPhoto
                     let title = photo == nil ? "Photo" : "Change"
@@ -329,6 +330,7 @@ struct AssistantView: View {
         case .site: "Describe the website you'd like…"
         case .posts: "Describe the posts you'd like…"
         case .schedule: "Tell Hera what to plan, move or remind you about…"
+        case .launch: "What are you launching? The date, place, price and how to sign up…"
         }
     }
 
@@ -337,6 +339,7 @@ struct AssistantView: View {
         case .site: "Building your website. This can take a minute."
         case .posts: "Writing your posts. This can take a minute."
         case .schedule: "Looking at your schedule. This can take a minute."
+        case .launch: "Putting your launch together: website, posts, calendar and email. This can take a few minutes."
         }
     }
 
@@ -389,7 +392,7 @@ struct AssistantView: View {
         model.speech.stop()
         let continuing = model.isContinuing(mode)
         await model.runAssistant(prompt: prompt, mode: mode, allowWebSearch: allowWebSearch,
-                                 photo: mode == .posts ? photo?.jpeg : nil)
+                                 photo: mode.takesPhoto ? photo?.jpeg : nil)
         // In a conversation the box is for the next reply, so it starts empty again.
         if continuing || model.isContinuing(mode) {
             prompt = ""
@@ -449,8 +452,8 @@ struct AssistantView: View {
     private func askWebsiteOrPosts(firstTime: Bool) {
         conversation = .choosing
         let question = firstTime
-            ? "Hi, I'm Hera. Would you like to create a website, write some posts, or work on your schedule?"
-            : "Let's do one at a time. A website, posts, or your schedule?"
+            ? "Hi, I'm Hera. Would you like a website, some posts, help with your schedule, or a full launch with all of it?"
+            : "Let's do one at a time. A website, posts, your schedule, or a full launch?"
         model.speech.speak(question) {
             Task { await hearWebsiteOrPosts(firstTime: firstTime) }
         }
@@ -478,6 +481,7 @@ struct AssistantView: View {
         case .site: "Great. What should the website be about?"
         case .posts: "Great. What would you like to post about?"
         case .schedule: "Great. What do you need done on your schedule?"
+        case .launch: "Great. What are you launching? Tell me the date, the place, the price and how people sign up."
         }
         model.speech.speak(question) {
             Task { await hearRequest() }

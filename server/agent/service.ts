@@ -287,7 +287,8 @@ export class AgentService {
   async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     let schedule: ScheduleSnapshot | undefined;
-    if (opts.mode === "schedule") {
+    // Schedule needs the calendar; a launch uses it when the person allowed access and skips it otherwise.
+    if (opts.mode === "schedule" || (opts.mode === "launch" && opts.schedule != null)) {
       const parsed = ScheduleSnapshot.safeParse(opts.schedule);
       if (!parsed.success) throw new ActionError("bad_schedule", "Your calendar couldn't be read for this request. Check that Hera can see your calendar, then try again.");
       schedule = parsed.data;

@@ -159,6 +159,11 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case posts
     /// The person's calendar and reminders, read and changed on their device.
     case schedule
+    /// Launch Kit: one request, and the website page, posts, calendar and email are all made ready.
+    case launch
+
+    /// Modes that can carry a photo for posts.
+    var takesPhoto: Bool { self == .posts || self == .launch }
 
     var id: Self { self }
 
@@ -167,6 +172,7 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .site: "Website"
         case .posts: "Posts"
         case .schedule: "Schedule"
+        case .launch: "Launch"
         }
     }
 
@@ -175,6 +181,7 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .site: "globe"
         case .posts: "text.bubble"
         case .schedule: "calendar"
+        case .launch: "sparkles"
         }
     }
 }

@@ -19,8 +19,9 @@ const MAX_STATE_BYTES = 1_500_000;
 
 export interface Memory { id: string; text: string; createdAt: string }
 
-/** Postgres "relation does not exist": the migration hasn't been run. */
-const missingTable = (e: unknown) => (e as { code?: string })?.code === "42P01";
+/** Postgres "relation does not exist" (migration 003 not run) or a check constraint that predates
+ *  a newer mode (migration 004 not run): either way, keep working in-process. */
+const missingTable = (e: unknown) => ["42P01", "23514"].includes((e as { code?: string })?.code ?? "");
 
 export class MemoryStore {
   private fallback: { conversations: Map<string, { userId: string; mode: AgentMode; state: ConversationState; at: number }>; memories: Map<string, Memory[]> } | null = null;

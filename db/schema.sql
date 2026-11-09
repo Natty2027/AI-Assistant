@@ -122,7 +122,7 @@ alter table action_connections enable row level security;
 create table if not exists agent_conversations (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users(id) on delete cascade,
-  mode        text not null check (mode in ('site','posts','schedule')),
+  mode        text not null check (mode in ('site','posts','schedule','launch')),
   -- The model conversation so far, and the drafts and taint it carries between turns.
   state       jsonb not null,
   updated_at  timestamptz not null default now()

@@ -102,6 +102,9 @@ enum ConversationReply {
         let posts = ["post", "social", "tweet", "instagram", "caption", "bluesky", "announce"].contains { said.contains($0) }
         let site = ["website", "web site", "site", "web page", "webpage", "landing page"].contains { said.contains($0) }
         let schedule = ["schedule", "calendar", "meeting", "appointment", "remind", "plan my", "my day", "my week"].contains { said.contains($0) }
+        let launch = ["launch", "everything", "all of it", "the works", "launch kit"].contains { said.contains($0) }
+        // "Launch" covers website and posts too, so it wins when said.
+        if launch { return .launch }
         let matches = [(posts, CreateMode.posts), (site, .site), (schedule, .schedule)].filter(\.0)
         return matches.count == 1 ? matches[0].1 : nil
     }

@@ -153,9 +153,14 @@ final class AppModel {
         isRunning = true
         defer { isRunning = false }
         await perform {
-            let photoID = if let photo, mode == .posts { try await client.uploadPhoto(jpeg: photo) } else { String?.none }
+            let photoID = if let photo, mode.takesPhoto { try await client.uploadPhoto(jpeg: photo) } else { String?.none }
             // Read on this device, for this request only.
-            let snapshot = if mode == .schedule { try await schedule.snapshot() } else { ScheduleSnapshot?.none }
+            // Schedule needs the calendar. A launch uses it if allowed, and goes ahead without it if not.
+            let snapshot: ScheduleSnapshot? = switch mode {
+            case .schedule: try await schedule.snapshot()
+            case .launch: try? await schedule.snapshot()
+            default: nil
+            }
             let continuing = conversation?.mode == mode ? conversation?.id : nil
             let run = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
                                                     photoID: photoID, schedule: snapshot, conversationID: continuing)
