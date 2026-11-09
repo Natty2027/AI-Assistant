@@ -52,6 +52,10 @@ struct AssistantView: View {
                 // While Hera is reading a reply out, the orb stays usable as her Stop button.
                 .disabled(model.isRunning && !model.speech.isSpeaking)
                 voiceStatus
+                if let briefing = model.briefing {
+                    briefingCard(briefing)
+                        .transition(.opacity)
+                }
                 composer
                 if prompt.isEmpty && model.lastRun == nil && !model.isRunning {
                     suggestionChips
@@ -96,10 +100,33 @@ struct AssistantView: View {
         .onChange(of: conversations.isPending, initial: true) { _, pending in
             if pending, conversations.take() { startConversation() }
         }
+        // "Siri, hi Hera, what's on my day?" (WhatsOnMyDayIntent) lands here.
+        .onChange(of: conversations.isBriefingPending, initial: true) { _, pending in
+            if pending, conversations.takeBriefing() { Task { await briefMe() } }
+        }
+        // "Hi Hera" said into the orb: a greeting starts the conversation, "what's on my day" gets
+        // the briefing, and a greeting in front of a request is dropped.
+        .onChange(of: voice.isListening) { wasListening, isListening in
+            guard wasListening, !isListening, conversation == .none, promptBeforeVoice.isEmpty else { return }
+            switch HeraGreeting.interpret(prompt) {
+            case .conversation:
+                prompt = ""
+                startConversation()
+            case .briefing:
+                prompt = ""
+                Task { await briefMe() }
+            case .request(let request):
+                prompt = request
+            }
+        }
         // The first load on a device compiles the voice model; start it now, not at the first reply.
         .task { if speakReplies { model.speech.prepare() } }
         // In the background the system pauses Hera's audio mid-sentence; stop cleanly instead.
-        .onChange(of: scenePhase) { _, phase in if phase == .background { model.speech.stop() } }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { model.speech.stop() }
+            // Back in the app: the calendar may have changed elsewhere, so freshen the widget.
+            if phase == .active { Task { await model.refreshWidget() } }
+        }
         .sensoryFeedback(.start, trigger: voice.isListening) { _, listening in listening }
         .sensoryFeedback(.success, trigger: model.lastRun)
     }
@@ -360,6 +387,40 @@ struct AssistantView: View {
         model.speech.stop()
         await model.runAssistant(prompt: prompt, mode: mode, allowWebSearch: allowWebSearch,
                                  photo: mode == .posts ? photo?.jpeg : nil)
+    }
+
+    /* ---------------- "What's on my day?" ---------------- */
+
+    private func briefMe() async {
+        model.speech.stop()
+        conversation = .none
+        guard model.isConfigured else { return }
+        guard let text = await model.briefMe() else { return }
+        model.speech.speak(text)
+    }
+
+    private func briefingCard(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionLabel("Your day")
+                Spacer()
+                Button("Close", systemImage: "xmark") {
+                    model.speech.stop()
+                    withAnimation { model.briefing = nil }
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            Text(text)
+                .textSelection(.enabled)
+            if model.pendingCount > 0 {
+                Button("Open Review", systemImage: "checkmark.seal", action: openReview)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+            }
+        }
+        .glowCard()
     }
 
     /* ---------------- "Talk to Hera" ---------------- */

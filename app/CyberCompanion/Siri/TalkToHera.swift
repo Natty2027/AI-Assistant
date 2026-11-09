@@ -11,14 +11,40 @@ final class ConversationRequests {
     /// Set by the intent, cleared by the screen that starts the conversation. Waits if that
     /// screen isn't showing yet (for example while the person signs in).
     private(set) var isPending = false
+    /// "What's on my day?": the same, for the spoken briefing.
+    private(set) var isBriefingPending = false
 
     func request() { isPending = true }
+    func requestBriefing() { isBriefingPending = true }
 
     /// Returns true once per request.
     func take() -> Bool {
         guard isPending else { return false }
         isPending = false
         return true
+    }
+
+    func takeBriefing() -> Bool {
+        guard isBriefingPending else { return false }
+        isBriefingPending = false
+        return true
+    }
+}
+
+/// "Siri, hi Hera, what's on my day?": opens Hera, who reads out today's events, the reminders
+/// due and what's waiting for approval, in her own voice. Built on the device; nothing is sent.
+struct WhatsOnMyDayIntent: AppIntent {
+    static let title: LocalizedStringResource = "What's on My Day"
+    static let description = IntentDescription("Hera reads out today's events, the reminders that are due, and anything waiting for your approval.")
+    // Foreground, so it's Hera's own voice rather than Siri's.
+    static var supportedModes: IntentModes { .foreground }
+
+    @Dependency private var requests: ConversationRequests
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        requests.requestBriefing()
+        return .result()
     }
 }
 
@@ -44,11 +70,25 @@ struct HeraShortcuts: AppShortcutsProvider {
             phrases: [
                 "Talk to \(.applicationName)",
                 "Hey \(.applicationName)",
+                "Hi \(.applicationName)",
+                "Hello \(.applicationName)",
                 "Start \(.applicationName)",
                 "Create with \(.applicationName)",
             ],
             shortTitle: "Talk to Hera",
             systemImageName: "waveform"
+        )
+        AppShortcut(
+            intent: WhatsOnMyDayIntent(),
+            phrases: [
+                "Hi \(.applicationName), what's on my day",
+                "Hi \(.applicationName), what's my day look like",
+                "Hey \(.applicationName), what's on my day",
+                "What's on my day in \(.applicationName)",
+                "Brief me with \(.applicationName)",
+            ],
+            shortTitle: "What's on My Day",
+            systemImageName: "sun.horizon"
         )
     }
 }

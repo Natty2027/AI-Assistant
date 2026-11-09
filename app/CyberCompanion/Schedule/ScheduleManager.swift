@@ -89,6 +89,35 @@ final class ScheduleManager {
             })
     }
 
+    /// What's left of today, for the spoken briefing and the Today widget: today's events and the
+    /// open reminders due by the end of today (overdue ones included).
+    func today(now: Date = .now) async throws -> DayAgenda {
+        try await requestAccess()
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: now)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now
+        let events = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: nil))
+            .compactMap { e -> DayAgenda.Event? in
+                guard let s = e.startDate, let f = e.endDate else { return nil }
+                return .init(title: e.title ?? "Untitled", start: s, end: f, allDay: e.isAllDay)
+            }
+            .sorted { $0.start < $1.start }
+        var reminders: [DayAgenda.Reminder] = []
+        if remindersAllowed {
+            let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: end, calendars: nil)
+            // @Sendable: EventKit calls back on its own queue (see snapshot()).
+            reminders = await withCheckedContinuation { done in
+                store.fetchReminders(matching: predicate) { @Sendable found in
+                    let plain = (found ?? []).map { r in
+                        DayAgenda.Reminder(title: r.title ?? "Untitled", due: r.dueDateComponents.flatMap { Calendar.current.date(from: $0) })
+                    }
+                    done.resume(returning: plain.sorted { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) })
+                }
+            }
+        }
+        return DayAgenda(events: events, reminders: reminders)
+    }
+
     /// Calendar names as Hera sees them. Two accounts can both have a calendar called "Calendar",
     /// so repeated names get their account added: "Calendar (Gmail)".
     private static func displayNames(for calendars: [EKCalendar]) -> [String: String] {
@@ -125,8 +154,10 @@ final class ScheduleManager {
 
     /* ---------------- changing ---------------- */
 
-    /// Makes one approved change. Each is saved on its own, so one failure leaves the rest as they were.
-    func apply(_ change: ScheduleChange) async throws {
+    /// Makes one approved change. Each is saved on its own, so one failure leaves the rest as they
+    /// were. Returns how to put it back, for the Undo button.
+    @discardableResult
+    func apply(_ change: ScheduleChange) async throws -> ScheduleUndo {
         try await requestAccess()
         switch change.kind {
         case .addEvent:
@@ -141,11 +172,16 @@ final class ScheduleManager {
             }
             event.calendar = calendar
             try store.save(event, span: .thisEvent, commit: true)
+            guard let added = Self.occurrenceID(event) else { throw Self.incomplete }
+            return .deleteEvent(occurrenceID: added)
 
         case .changeEvent:
             guard let id = change.eventId else { throw Self.incomplete }
             let event = try occurrence(id)
-            guard event.calendar?.allowsContentModifications == true else { throw Self.readOnly }
+            guard event.calendar?.allowsContentModifications == true, let oldStart = event.startDate, let oldEnd = event.endDate else {
+                throw Self.readOnly
+            }
+            let before = (title: event.title, location: event.location, start: oldStart, end: oldEnd, allDay: event.isAllDay)
             if let title = change.title { event.title = title }
             if let location = change.location { event.location = location }
             if change.start != nil || change.end != nil {
@@ -157,12 +193,20 @@ final class ScheduleManager {
                 try Self.setTimes(of: event, start: start, end: end, allDay: event.isAllDay && start.count == 10)
             }
             try store.save(event, span: .thisEvent, commit: true)
+            // A moved one-off event's id follows its new date, so undo looks it up by the new one.
+            guard let moved = Self.occurrenceID(event) else { throw Self.incomplete }
+            return .restoreEvent(occurrenceID: moved, title: before.title, location: before.location,
+                                 start: before.start, end: before.end, allDay: before.allDay)
 
         case .cancelEvent:
             guard let id = change.eventId else { throw Self.incomplete }
             let event = try occurrence(id)
-            guard event.calendar?.allowsContentModifications == true else { throw Self.readOnly }
+            guard let calendar = event.calendar, calendar.allowsContentModifications,
+                  let start = event.startDate, let end = event.endDate else { throw Self.readOnly }
+            let copy = ScheduleUndo.recreateEvent(title: event.title, location: event.location, notes: event.notes, url: event.url,
+                                                  start: start, end: end, allDay: event.isAllDay, calendarID: calendar.calendarIdentifier)
             try store.remove(event, span: .thisEvent, commit: true)
+            return copy
 
         case .addReminder:
             guard remindersAllowed else {
@@ -181,12 +225,56 @@ final class ScheduleManager {
                 reminder.addAlarm(EKAlarm(absoluteDate: date))
             }
             try store.save(reminder, commit: true)
+            return .deleteReminder(id: reminder.calendarItemIdentifier)
 
         case .completeReminder:
             guard let id = change.reminderId, let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else {
                 throw ScheduleError(message: "That reminder is no longer in your list.")
             }
             reminder.isCompleted = true
+            try store.save(reminder, commit: true)
+            return .reopenReminder(id: id)
+        }
+    }
+
+    /// Puts one applied change back as it was.
+    func undo(_ undo: ScheduleUndo) async throws {
+        try await requestAccess()
+        switch undo {
+        case .deleteEvent(let id):
+            try store.remove(try occurrence(id), span: .thisEvent, commit: true)
+        case .restoreEvent(let id, let title, let location, let start, let end, let allDay):
+            let event = try occurrence(id)
+            event.title = title
+            event.location = location
+            event.isAllDay = allDay
+            event.startDate = start
+            event.endDate = end
+            try store.save(event, span: .thisEvent, commit: true)
+        case .recreateEvent(let title, let location, let notes, let url, let start, let end, let allDay, let calendarID):
+            // Comes back as a single event: if it was one date of a repeating series, it isn't
+            // rejoined to the series, and invitees aren't re-invited.
+            guard let calendar = store.calendar(withIdentifier: calendarID), calendar.allowsContentModifications else {
+                throw ScheduleError(message: "Its calendar is no longer available, so the event couldn't be put back.")
+            }
+            let event = EKEvent(eventStore: store)
+            event.title = title
+            event.location = location
+            event.notes = notes
+            event.url = url
+            event.isAllDay = allDay
+            event.startDate = start
+            event.endDate = end
+            event.calendar = calendar
+            try store.save(event, span: .thisEvent, commit: true)
+        case .deleteReminder(let id):
+            guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else { return }  // already gone
+            try store.remove(reminder, commit: true)
+        case .reopenReminder(let id):
+            guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else {
+                throw ScheduleError(message: "That reminder is no longer in your list.")
+            }
+            reminder.isCompleted = false
             try store.save(reminder, commit: true)
         }
     }
@@ -241,6 +329,15 @@ final class ScheduleManager {
         }
         return nil
     }
+}
+
+/// How to reverse one change made in the calendar or reminders, kept for its Undo button.
+enum ScheduleUndo: Sendable {
+    case deleteEvent(occurrenceID: String)
+    case restoreEvent(occurrenceID: String, title: String?, location: String?, start: Date, end: Date, allDay: Bool)
+    case recreateEvent(title: String?, location: String?, notes: String?, url: URL?, start: Date, end: Date, allDay: Bool, calendarID: String)
+    case deleteReminder(id: String)
+    case reopenReminder(id: String)
 }
 
 /// What's sent with a Schedule request (ScheduleSnapshot in server/agent/schedule.ts). The API

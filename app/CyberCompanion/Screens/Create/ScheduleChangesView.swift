@@ -69,9 +69,22 @@ struct ScheduleChangesView: View {
         case .working:
             ProgressView().controlSize(.small)
         case .done:
-            Label("Done", systemImage: "checkmark.circle.fill")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.green)
+            HStack(spacing: 12) {
+                Label("Done", systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.green)
+                if model.canUndo(change) {
+                    Button("Undo", systemImage: "arrow.uturn.backward") {
+                        Task { await model.undo(change) }
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                }
+            }
+        case .undone:
+            Label("Undone: put back as it was", systemImage: "arrow.uturn.backward.circle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         case .skipped:
             Label("Skipped", systemImage: "minus.circle")
                 .font(.footnote)

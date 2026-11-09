@@ -75,6 +75,54 @@ struct ScheduleTests {
         #expect(!after.reminders.contains { $0.title == title }, "completed reminders aren't open any more")
     }
 
+    /// Undo puts each kind of change back: an added event goes, a moved one returns to its old
+    /// time, a deleted one comes back, and reminders are removed or reopened.
+    @Test(.enabled(if: EKEventStore.authorizationStatus(for: .event) == .fullAccess, "needs calendar access granted to the test host"))
+    @MainActor func undoPutsChangesBack() async throws {
+        let manager = ScheduleManager()
+        let title = "Hera undo \(UUID().uuidString.prefix(8))"
+        let start = Calendar.current.date(byAdding: .day, value: 3, to: Calendar.current.startOfDay(for: .now))!.addingTimeInterval(9 * 3600)
+        func find() async throws -> ScheduleSnapshot.Event? { try await manager.snapshot().events.first { $0.title == title } }
+
+        // Add, then undo: gone.
+        var undo = try await manager.apply(ScheduleChange(id: "a", kind: .addEvent, summary: "Add", title: title,
+                                                          start: ScheduleManager.format(start), end: ScheduleManager.format(start.addingTimeInterval(3600)), allDay: false))
+        #expect(try await find() != nil)
+        try await manager.undo(undo)
+        #expect(try await find() == nil, "undoing an add removes the event")
+
+        // Add for real, move it, undo the move: back at the original time.
+        try await manager.apply(ScheduleChange(id: "b", kind: .addEvent, summary: "Add", title: title,
+                                               start: ScheduleManager.format(start), end: ScheduleManager.format(start.addingTimeInterval(3600)), allDay: false))
+        let original = try #require(try await find())
+        undo = try await manager.apply(ScheduleChange(id: "c", kind: .changeEvent, summary: "Move", title: "\(title) moved",
+                                                      start: ScheduleManager.format(start.addingTimeInterval(5 * 3600)), eventId: original.id))
+        try await manager.undo(undo)
+        let restored = try #require(try await find(), "the old title is back")
+        #expect(ScheduleManager.parse(restored.start, allDay: false) == start)
+
+        // Delete it, undo the delete: it's back. Then clean up.
+        undo = try await manager.apply(ScheduleChange(id: "d", kind: .cancelEvent, summary: "Delete", eventId: restored.id))
+        #expect(try await find() == nil)
+        try await manager.undo(undo)
+        let back = try #require(try await find(), "undoing a delete brings the event back")
+        #expect(ScheduleManager.parse(back.start, allDay: false) == start)
+        try await manager.apply(ScheduleChange(id: "e", kind: .cancelEvent, summary: "Clean up", eventId: back.id))
+
+        // Reminders, when allowed: undo an add, undo a completion.
+        guard EKEventStore.authorizationStatus(for: .reminder) == .fullAccess else { return }
+        let reminder = "Hera undo reminder \(UUID().uuidString.prefix(8))"
+        undo = try await manager.apply(ScheduleChange(id: "f", kind: .addReminder, summary: "Add", title: reminder))
+        try await manager.undo(undo)
+        #expect(try await !manager.snapshot().reminders.contains { $0.title == reminder })
+        try await manager.apply(ScheduleChange(id: "g", kind: .addReminder, summary: "Add", title: reminder))
+        let open = try #require(try await manager.snapshot().reminders.first { $0.title == reminder })
+        undo = try await manager.apply(ScheduleChange(id: "h", kind: .completeReminder, summary: "Done", reminderId: open.id))
+        try await manager.undo(undo)
+        #expect(try await manager.snapshot().reminders.contains { $0.title == reminder }, "reopened")
+        try await manager.apply(ScheduleChange(id: "i", kind: .completeReminder, summary: "Clean up", reminderId: open.id))
+    }
+
     /// The whole device side, on a real calendar: add, find in the snapshot, move, delete.
     @Test(.enabled(if: EKEventStore.authorizationStatus(for: .event) == .fullAccess, "needs calendar access granted to the test host"))
     @MainActor func approvedChangesAreMadeInTheCalendar() async throws {

@@ -23,7 +23,7 @@ struct HowHeraWorksCard: View {
                     }
                 }
             }
-            Label("Tip: say \"Hey Siri, talk to Hera\" to start hands-free.", systemImage: "waveform")
+            Label("Tip: tap the orb and say \"Hi Hera\", or from anywhere say \"Siri, hi Hera, what's on my day?\"", systemImage: "waveform")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Button("Got it", action: dismiss)

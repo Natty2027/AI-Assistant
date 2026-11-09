@@ -24,10 +24,15 @@ final class AppModel {
     enum ChangeOutcome: Equatable {
         case working
         case done
+        case undone
         case skipped
         case failed(String)
     }
     var scheduleOutcomes: [String: ChangeOutcome] = [:]
+    /// The latest "what's on my day" rundown, shown on Create while it's relevant.
+    var briefing: String?
+    /// How to reverse each change that was made, by change id, for its Undo button.
+    private var scheduleUndos: [String: ScheduleUndo] = [:]
 
     var connections: [Connection] = []
     /// Which platform sign-ins (X, Facebook and Instagram) the server can offer.
@@ -115,6 +120,8 @@ final class AppModel {
         proposals = []
         lastRun = nil
         scheduleOutcomes = [:]
+        scheduleUndos = [:]
+        briefing = nil
         aiConsent = nil
         errorMessage = nil
     }
@@ -143,6 +150,7 @@ final class AppModel {
             lastRun = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
                                                     photoID: photoID, schedule: snapshot)
             scheduleOutcomes = [:]
+        scheduleUndos = [:]
             proposals = try await client.proposals()
         }
     }
@@ -151,6 +159,7 @@ final class AppModel {
     func clearLastRun() {
         lastRun = nil
         scheduleOutcomes = [:]
+        scheduleUndos = [:]
         errorMessage = nil
     }
 
@@ -161,10 +170,44 @@ final class AppModel {
         guard scheduleOutcomes[change.id] == nil else { return }
         scheduleOutcomes[change.id] = .working
         do {
-            try await schedule.apply(change)
+            scheduleUndos[change.id] = try await schedule.apply(change)
             scheduleOutcomes[change.id] = .done
+            await refreshWidget()
         } catch {
             scheduleOutcomes[change.id] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// "What's on my day?": today's events, reminders due and approvals waiting, as a sentence or
+    /// two for Hera to say. Returns nil (with errorMessage set) if the calendar can't be read.
+    func briefMe() async -> String? {
+        await refreshProposals()
+        do {
+            let agenda = try await schedule.today()
+            let text = DayBriefing.text(for: agenda, pendingApprovals: pendingCount)
+            briefing = text
+            return text
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func canUndo(_ change: ScheduleChange) -> Bool {
+        scheduleOutcomes[change.id] == .done && scheduleUndos[change.id] != nil
+    }
+
+    /// Puts an approved change back the way it was.
+    func undo(_ change: ScheduleChange) async {
+        guard canUndo(change), let undo = scheduleUndos[change.id] else { return }
+        scheduleOutcomes[change.id] = .working
+        do {
+            try await schedule.undo(undo)
+            scheduleUndos[change.id] = nil
+            scheduleOutcomes[change.id] = .undone
+            await refreshWidget()
+        } catch {
+            scheduleOutcomes[change.id] = .failed("Couldn't undo: \(error.localizedDescription)")
         }
     }
 
@@ -178,6 +221,7 @@ final class AppModel {
     func refreshProposals() async {
         guard let client else { return }
         await perform { proposals = try await client.proposals() }
+        await refreshWidget()
     }
 
     /// Approves exactly what was shown (by its payload hash) and carries it out straight away.
@@ -190,6 +234,7 @@ final class AppModel {
             updated = try await client.execute(proposal, token: approval.token)
             proposals = try await client.proposals()
         }
+        await refreshWidget()
         return updated
     }
 
@@ -199,6 +244,7 @@ final class AppModel {
             try await client.reject(proposal)
             proposals = try await client.proposals()
         }
+        await refreshWidget()
     }
 
     /* ---------------- accounts ---------------- */
