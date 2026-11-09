@@ -40,11 +40,17 @@ struct APIClient: Sendable {
 
     /* ---------------- the assistant ---------------- */
 
-    func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil) async throws -> AgentRunResponse {
-        struct Body: Encodable { let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String? }
+    func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil,
+                      schedule: ScheduleSnapshot? = nil) async throws -> AgentRunResponse {
+        struct Body: Encodable {
+            let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String?
+            /// Schedule runs only: the person's calendar and reminders for this one request.
+            let schedule: ScheduleSnapshot?
+        }
         // A run can take several model turns, so it gets a much longer timeout than other calls.
         return try await send("POST", "agent/run",
-                              body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID), timeout: 300)
+                              body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID, schedule: schedule),
+                              timeout: 300)
     }
 
     /// Uploads a JPEG for the next posts run and returns its id.

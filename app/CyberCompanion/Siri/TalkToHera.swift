@@ -55,13 +55,14 @@ struct HeraShortcuts: AppShortcutsProvider {
 
 /// What the person's spoken answer means, for the conversation's first question.
 enum ConversationReply {
-    /// "Website" or "posts" from what was said; nil when it's neither, or both (Hera does one at
-    /// a time, so she asks again).
+    /// Website, posts or schedule from what was said; nil when it's none of them, or more than
+    /// one (Hera does one at a time, so she asks again).
     static func mode(from reply: String) -> CreateMode? {
         let said = reply.lowercased()
         let posts = ["post", "social", "tweet", "instagram", "caption", "bluesky", "announce"].contains { said.contains($0) }
         let site = ["website", "web site", "site", "web page", "webpage", "landing page"].contains { said.contains($0) }
-        guard posts != site else { return nil }
-        return posts ? .posts : .site
+        let schedule = ["schedule", "calendar", "meeting", "appointment", "remind", "plan my", "my day", "my week"].contains { said.contains($0) }
+        let matches = [(posts, CreateMode.posts), (site, .site), (schedule, .schedule)].filter(\.0)
+        return matches.count == 1 ? matches[0].1 : nil
     }
 }

@@ -11,6 +11,7 @@ import { ActionError, ActionStore, type ExecutionResult, type Proposal } from ".
 import { ACTIONS, isPlatform, type ActionKind, type Context, type Platform } from "./policy.ts";
 import { SiteSandbox } from "./sandbox.ts";
 import { runAgent, type AgentDeps, type AgentMode, type AgentResult } from "./loop.ts";
+import { ScheduleSnapshot } from "./schedule.ts";
 import { publish, verifyToken } from "./netlify.ts";
 import { parseCredential, publishPost, verifyCredential, type BlueskyCredential } from "./bluesky.ts";
 import * as x from "./x.ts";
@@ -274,8 +275,14 @@ export class AgentService {
 
   /* ---------------- the assistant ---------------- */
 
-  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown }): Promise<AgentResult & { proposals: ProposalView[] }> {
+  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown }): Promise<AgentResult & { proposals: ProposalView[] }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
+    let schedule: ScheduleSnapshot | undefined;
+    if (opts.mode === "schedule") {
+      const parsed = ScheduleSnapshot.safeParse(opts.schedule);
+      if (!parsed.success) throw new ActionError("bad_schedule", "Your calendar couldn't be read for this request. Check that Hera can see your calendar, then try again.");
+      schedule = parsed.data;
+    }
     let photoId: string | null = null;
     if (opts.photoId != null) {
       if (typeof opts.photoId !== "string" || !(await this.media.owns(this.siteIdFor(userId), opts.photoId))) {
@@ -285,7 +292,7 @@ export class AgentService {
     }
     const ctx = await this.context(userId);
     const sandbox = await this.sandbox(userId);
-    const out = await runAgent({ mode: opts.mode, client: this.d.client, store: this.store, sandbox, userId, context: () => ctx, allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId }, request);
+    const out = await runAgent({ mode: opts.mode, client: this.d.client, store: this.store, sandbox, userId, context: () => ctx, allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId, schedule }, request);
     return { ...out, proposals: out.proposalIds.map((id) => viewOf(this.store.get(id, userId))) };
   }
 

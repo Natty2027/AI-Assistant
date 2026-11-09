@@ -73,7 +73,7 @@ struct SettingsView: View {
         } header: {
             SectionLabel("AI")
         } footer: {
-            Text("What you ask Hera is sent to Claude, by Anthropic, to make your website and posts. Your voice is recognized on this device; only the finished text is sent. You can turn this off at any time.")
+            Text("What you ask Hera is sent to Claude, by Anthropic, to make your website and posts. When you use Schedule, your upcoming events and open reminders are sent with that request. Your voice is recognized on this device; only the finished text is sent. You can turn this off at any time.")
         }
     }
 

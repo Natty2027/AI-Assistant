@@ -6,7 +6,7 @@ struct HowHeraWorksCard: View {
     var dismiss: () -> Void
 
     private let steps: [(String, String, String)] = [
-        ("square.split.2x1", "Choose Website or Posts", "Hera does one at a time."),
+        ("square.split.2x1", "Choose Website, Posts or Schedule", "Hera does one at a time."),
         ("mic.fill", "Say or type what you'd like", "For example: a page for my bakery, or posts announcing Saturday's sale."),
         ("checkmark.seal.fill", "Review and approve", "Nothing is published until you approve the exact content."),
     ]

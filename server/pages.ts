@@ -47,6 +47,7 @@ export function supportPage(email: string): string {
 <h2>Common questions</h2>
 <p><strong>Is my voice recorded?</strong> No. Speech is turned into text on your device by Apple's speech recognition. Only the text you choose to send leaves your device.</p>
 <p><strong>Can it post without me?</strong> No. Every website and post waits in Review until you approve that exact content.</p>
+<p><strong>Can it change my calendar without me?</strong> No. In Schedule, Hera proposes each change and your device makes it only when you approve it.</p>
 <p><strong>How do I delete my account?</strong> In the app, open Settings and choose Delete account. Your data and your sign-in account are deleted.</p>`);
 }
 
@@ -62,12 +63,13 @@ export function privacyPage(email: string): string {
 <p><strong>What you ask for and what we make.</strong> The requests you type or dictate, the websites and posts the assistant creates, and your approvals.</p>
 <p><strong>Connected accounts.</strong> If you connect Netlify, Bluesky, X, or a Facebook Page and its Instagram account, we store the token, app password, or sign-in access the platform gives us, encrypted, only to publish what you approve. We never see your passwords for X, Facebook or Instagram: you sign in on their own pages. You can disconnect at any time, which deletes it.</p>
 <p><strong>Photos you attach.</strong> A photo you add to a post is stored on our server at a private, unguessable address so the platform can fetch it when you approve the post (Instagram requires this). Photos are deleted after seven days, or when you delete your account.</p>
+<p><strong>Your calendar and reminders.</strong> Only when you use Schedule, and only with your permission on your device, Hera reads your events for the next few weeks and your open reminders and sends them with that request, so the assistant can plan around them. We don't store them: they are used for that one request and discarded. Changes are made on your device, only the ones you approve. You can turn access off at any time in your device's settings.</p>
 <p><strong>Voice.</strong> Speech is recognized on your device. We never receive audio.</p>
 <p>We do not use tracking, advertising identifiers or third-party analytics, and we do not sell data.</p>
 
 <h2>Who processes it</h2>
 <ul>
-  <li><strong>Anthropic</strong> (the maker of Claude) receives your requests and the content the assistant works on, to write your website and posts. We ask for your consent before any AI processing and you can withdraw it in Settings. Your email address is not sent to Anthropic.</li>
+  <li><strong>Anthropic</strong> (the maker of Claude) receives your requests and the content the assistant works on, to write your website and posts and, when you use Schedule, the calendar events and reminders sent with that request. We ask for your consent before any AI processing and you can withdraw it in Settings. Your email address is not sent to Anthropic.</li>
   <li><strong>Supabase</strong>: sign-in and our database.</li>
   <li><strong>Our hosting provider</strong> runs the server.</li>
   <li><strong>Netlify</strong>, <strong>Bluesky</strong>, <strong>X</strong> and <strong>Meta</strong> (Facebook and Instagram), only when you connect them and approve publishing to your own account.</li>

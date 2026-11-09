@@ -20,6 +20,10 @@ struct RunResultView: View {
                     .glowCard(padding: 14)
             }
 
+            if let changes = run.scheduleChanges, !changes.isEmpty {
+                ScheduleChangesView(changes: changes)
+            }
+
             let waiting = run.proposals.filter(\.isPending)
             if !waiting.isEmpty { waitingForApproval(waiting) }
 

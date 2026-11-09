@@ -32,3 +32,16 @@ One SwiftUI app, one codebase (`app/`), and the Node server (`server/`) it talks
 X and Meta need developer apps; see [docs/SOCIAL-SETUP.md](docs/SOCIAL-SETUP.md). Adding another
 platform means: a developer app, a sign-in in `server/agent/oauth.ts` and `service.ts`, an
 executor case in `carryOutPost`, and the provider name in the `action_connections` check constraint.
+
+## Schedule (calendar and reminders)
+
+Hera works with the calendars and reminders on the person's own device through EventKit: iCloud,
+plus any Google/Gmail, Outlook, Microsoft 365 or Exchange accounts added in iOS Settings → Apps →
+Calendar → Calendar Accounts, or on a Mac in System Settings → Internet Accounts. No developer
+apps or platform review are needed.
+
+For a Schedule request the app sends a snapshot (the next 31 days of events and open reminders)
+with that one request; the server never stores it and cannot read or write any calendar
+(`server/agent/schedule.ts`). Hera answers with proposed changes, each checked in code against the
+snapshot, and the app makes each one on the device only when the person approves it
+(`app/CyberCompanion/Schedule/ScheduleManager.swift`).

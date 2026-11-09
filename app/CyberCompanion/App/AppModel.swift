@@ -17,6 +17,17 @@ final class AppModel {
     let connectivity = Connectivity()
     /// Hera's spoken voice. Shared so the model is loaded once, the first time she speaks.
     let speech = HeraVoice()
+    /// The person's calendar and reminders on this device, for Schedule.
+    let schedule = ScheduleManager()
+
+    /// What happened to each proposed schedule change the person acted on, by change id.
+    enum ChangeOutcome: Equatable {
+        case working
+        case done
+        case skipped
+        case failed(String)
+    }
+    var scheduleOutcomes: [String: ChangeOutcome] = [:]
 
     var connections: [Connection] = []
     /// Which platform sign-ins (X, Facebook and Instagram) the server can offer.
@@ -103,6 +114,7 @@ final class AppModel {
         signInAvailability = .none
         proposals = []
         lastRun = nil
+        scheduleOutcomes = [:]
         aiConsent = nil
         errorMessage = nil
     }
@@ -126,7 +138,11 @@ final class AppModel {
         defer { isRunning = false }
         await perform {
             let photoID = if let photo, mode == .posts { try await client.uploadPhoto(jpeg: photo) } else { String?.none }
-            lastRun = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch, photoID: photoID)
+            // Read on this device, for this request only.
+            let snapshot = if mode == .schedule { try await schedule.snapshot() } else { ScheduleSnapshot?.none }
+            lastRun = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
+                                                    photoID: photoID, schedule: snapshot)
+            scheduleOutcomes = [:]
             proposals = try await client.proposals()
         }
     }
@@ -134,7 +150,27 @@ final class AppModel {
     /// "Start something new" on Create. Proposals stay waiting on the Review tab.
     func clearLastRun() {
         lastRun = nil
+        scheduleOutcomes = [:]
         errorMessage = nil
+    }
+
+    /* ---------------- schedule ---------------- */
+
+    /// Makes one change Hera proposed, on this device, now that the person has approved it.
+    func approve(_ change: ScheduleChange) async {
+        guard scheduleOutcomes[change.id] == nil else { return }
+        scheduleOutcomes[change.id] = .working
+        do {
+            try await schedule.apply(change)
+            scheduleOutcomes[change.id] = .done
+        } catch {
+            scheduleOutcomes[change.id] = .failed(error.localizedDescription)
+        }
+    }
+
+    func skip(_ change: ScheduleChange) {
+        guard scheduleOutcomes[change.id] == nil else { return }
+        scheduleOutcomes[change.id] = .skipped
     }
 
     /* ---------------- review ---------------- */

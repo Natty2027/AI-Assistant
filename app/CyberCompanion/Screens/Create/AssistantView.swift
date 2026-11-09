@@ -35,6 +35,7 @@ struct AssistantView: View {
         (.site, "globe", "Make a one-page website for my business"),
         (.posts, "calendar.badge.plus", "Announce my next event on social media"),
         (.posts, "sparkles", "Write a week of posts about what I do"),
+        (.schedule, "calendar", "What's on my schedule tomorrow? Add a gym session in a free hour"),
     ]
 
     var body: some View {
@@ -157,7 +158,7 @@ struct AssistantView: View {
             .pickerStyle(.segmented)
             .disabled(model.isRunning)
 
-            TextField(mode == .site ? "Describe the website you'd like…" : "Describe the posts you'd like…",
+            TextField(placeholder,
                       text: $prompt, axis: .vertical)
                 .lineLimit(3...10)
                 .font(.body)
@@ -283,7 +284,7 @@ struct AssistantView: View {
     private var working: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionLabel("Working", color: Theme.spectrum[2])
-            Text(mode == .site ? "Building your website. This can take a minute." : "Writing your posts. This can take a minute.")
+            Text(workingMessage)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             ThinkingBeam()
@@ -293,6 +294,22 @@ struct AssistantView: View {
     }
 
     /* ---------------- actions ---------------- */
+
+    private var placeholder: String {
+        switch mode {
+        case .site: "Describe the website you'd like…"
+        case .posts: "Describe the posts you'd like…"
+        case .schedule: "Tell Hera what to plan, move or remind you about…"
+        }
+    }
+
+    private var workingMessage: String {
+        switch mode {
+        case .site: "Building your website. This can take a minute."
+        case .posts: "Writing your posts. This can take a minute."
+        case .schedule: "Looking at your schedule. This can take a minute."
+        }
+    }
 
     private var isPreparingVoice: Bool {
         if case .preparing = voice.state { return true }
@@ -363,8 +380,8 @@ struct AssistantView: View {
     private func askWebsiteOrPosts(firstTime: Bool) {
         conversation = .choosing
         let question = firstTime
-            ? "Hi, I'm Hera. Would you like to create a website, or write some posts?"
-            : "Let's do one at a time. A website, or posts?"
+            ? "Hi, I'm Hera. Would you like to create a website, write some posts, or work on your schedule?"
+            : "Let's do one at a time. A website, posts, or your schedule?"
         model.speech.speak(question) {
             Task { await hearWebsiteOrPosts(firstTime: firstTime) }
         }
@@ -380,7 +397,7 @@ struct AssistantView: View {
             askWebsiteOrPosts(firstTime: false)
         } else {
             conversation = .none
-            model.speech.speak("No problem. Choose Website or Posts, then tell me what you'd like.")
+            model.speech.speak("No problem. Choose Website, Posts or Schedule, then tell me what you'd like.")
         }
     }
 
@@ -388,7 +405,11 @@ struct AssistantView: View {
         conversation = .describing
         prompt = ""
         promptBeforeVoice = ""
-        let question = mode == .site ? "Great. What should the website be about?" : "Great. What would you like to post about?"
+        let question = switch mode {
+        case .site: "Great. What should the website be about?"
+        case .posts: "Great. What would you like to post about?"
+        case .schedule: "Great. What do you need done on your schedule?"
+        }
         model.speech.speak(question) {
             Task { await hearRequest() }
         }
@@ -441,7 +462,7 @@ struct AssistantView: View {
             SectionLabel("Your OK")
             Text("Allow Hera to use AI")
                 .font(.headline)
-            Text("What you type or say is sent to Claude, by Anthropic, to write your website and posts. Nothing is published until you approve it.")
+            Text("What you type or say is sent to Claude, by Anthropic, to write your website and posts, and with Schedule, your upcoming events and reminders too. Nothing is published or changed until you approve it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Allow AI", systemImage: "checkmark") { Task { await model.setAIConsent(true) } }

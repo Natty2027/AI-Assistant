@@ -40,7 +40,7 @@ function agent(): AgentService {
 /** Turns the agent's typed failures into HTTP answers a person can read. */
 function agentFailure(e: unknown): never {
   if (e instanceof ActionError) {
-    const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, bad_media: 400, ai_unavailable: 503, provider_unavailable: 502 };
+    const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, bad_media: 400, bad_schedule: 400, ai_unavailable: 503, provider_unavailable: 502 };
     throw new HttpError(status[e.code] ?? 409, e.message, true, e.code);
   }
   if (e instanceof SandboxError) throw new HttpError(400, e.message, true, `site_${e.code}`);
@@ -249,7 +249,7 @@ export function buildRouter(): Router {
     // Website and posts are separate runs. Builds from before the split send no mode; they get
     // the website, which is what they were opened for most often.
     const mode = ctx.body.mode ?? "site";
-    if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'site' or 'posts'.");
+    if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'site', 'posts' or 'schedule'.");
     await ensureSettings(userId);
     // What the person writes is sent to the model provider, so the AI consent switch applies.
     await requireAiConsent(userId);
@@ -258,8 +258,10 @@ export function buildRouter(): Router {
     const out = await guarded(() => agent().run(userId, request, {
       mode: mode as AgentMode, allowWebSearch: ctx.body.allow_web_search === true,
       photoId: mode === "posts" ? ctx.body.photo_id ?? null : null,
+      // Their calendar and reminders as their device sees them, for this request only; never stored.
+      schedule: mode === "schedule" ? ctx.body.schedule : undefined,
     }));
-    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, tainted: out.tainted };
+    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, tainted: out.tainted };
   });
 
   r.get("/agent/proposals", async (ctx) => {

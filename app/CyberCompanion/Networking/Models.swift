@@ -152,15 +152,71 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
     var isBlocked: Bool { status == "blocked" || checks.contains { $0.level == .block } }
 }
 
-/// What one assistant run is for. Building the website and writing posts are separate runs; the
-/// server enforces it, so a website run can't write posts and a posts run can't change the site.
+/// What one assistant run is for. Website, posts and schedule are separate runs; the server
+/// enforces it, so a website run can't write posts and a posts run can't change the site.
 enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case site
     case posts
+    /// The person's calendar and reminders, read and changed on their device.
+    case schedule
 
     var id: Self { self }
-    var title: String { self == .site ? "Website" : "Posts" }
-    var systemImage: String { self == .site ? "globe" : "text.bubble" }
+
+    var title: String {
+        switch self {
+        case .site: "Website"
+        case .posts: "Posts"
+        case .schedule: "Schedule"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .site: "globe"
+        case .posts: "text.bubble"
+        case .schedule: "calendar"
+        }
+    }
+}
+
+/// One change to the person's calendar or reminders that Hera proposed (server/agent/schedule.ts).
+/// The app makes it, on this device, only when the person approves it. Times are ISO 8601 with an
+/// offset, or a day (2026-11-09) for all-day events. Fields not used by a kind are nil.
+struct ScheduleChange: Codable, Hashable, Identifiable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case addEvent = "add_event"
+        case changeEvent = "change_event"
+        case cancelEvent = "cancel_event"
+        case addReminder = "add_reminder"
+        case completeReminder = "complete_reminder"
+    }
+
+    let id: String
+    let kind: Kind
+    let summary: String
+    var title: String?
+    var start: String?
+    var end: String?
+    var allDay: Bool?
+    var location: String?
+    var notes: String?
+    var calendar: String?
+    var eventId: String?
+    var eventTitle: String?
+    var due: String?
+    var list: String?
+    var reminderId: String?
+    var reminderTitle: String?
+
+    var systemImage: String {
+        switch kind {
+        case .addEvent: "calendar.badge.plus"
+        case .changeEvent: "calendar.badge.clock"
+        case .cancelEvent: "calendar.badge.minus"
+        case .addReminder: "checklist"
+        case .completeReminder: "checkmark.circle"
+        }
+    }
 }
 
 struct AgentRunResponse: Codable, Hashable, Sendable {
@@ -168,6 +224,8 @@ struct AgentRunResponse: Codable, Hashable, Sendable {
     let text: String
     let proposals: [Proposal]
     let drafts: [Draft]
+    /// Schedule runs only; absent from servers that predate it.
+    var scheduleChanges: [ScheduleChange]?
     let tainted: Bool
 
     var needsAnswer: Bool { status == "needs_user" }
