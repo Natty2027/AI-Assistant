@@ -28,23 +28,36 @@ Variables.
 
 Scopes Hera asks for: `tweet.read tweet.write users.read offline.access`.
 
-## 3. Meta (Facebook Pages and Instagram)
+## 3. Meta (Facebook Pages and Instagram) — business accounts only
 
-Meta only allows posting to **Facebook Pages** (not personal profiles) and to **Instagram
-Business or Creator accounts linked to a Page**.
+Meta only lets apps post to **Facebook Pages** (not personal profiles) and to **Instagram
+Business or Creator accounts linked to a Page**. Hera enforces the same: personal accounts can't
+be connected, and Instagram connects only through the Page it's linked to.
 
-1. Go to https://developers.facebook.com → My Apps → **Create app**. Pick the use case for
-   managing Pages / Instagram content (Business app type).
-2. Add the **Facebook Login** product. In its settings, under **Valid OAuth Redirect URIs**, add
-   `https://ai-assistant-production-e789.up.railway.app/oauth/callback/meta`
-3. Permissions Hera asks for: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`,
-   `instagram_basic`, `instagram_content_publish`, `business_management`.
-4. **App settings → Basic**: copy the App ID and App secret into Railway as `META_APP_ID` and
-   `META_APP_SECRET`. Set the Privacy Policy URL to
-   `https://ai-assistant-production-e789.up.railway.app/privacy`.
-5. While the Meta app is in **Development** mode, only people with a role on it (you, plus anyone
-   you add under App roles) can connect. That's enough for testing. To let everyone connect, Meta
-   needs **App Review** for the permissions above, plus Business Verification.
+1. https://developers.facebook.com → **My Apps → Create app**. Choose the **Business** app type
+   (it may be shown as "Other → Business"), name it **Hera**, and attach your Business portfolio
+   if asked.
+2. In the app dashboard, add the product **Facebook Login for Business**.
+   - **Settings → Valid OAuth Redirect URIs:**
+     `https://ai-assistant-production-e789.up.railway.app/oauth/callback/meta`
+   - **Configurations → Create configuration**: name it "Hera", login variation **General**,
+     access token **User access token**, and choose these permissions: `pages_show_list`,
+     `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`,
+     `instagram_content_publish`, `business_management`. Save, then copy the **Configuration ID**.
+3. **App settings → Basic**: copy the **App ID** and **App secret**. Set the Privacy Policy URL to
+   `https://ai-assistant-production-e789.up.railway.app/privacy` and the Terms URL to
+   `https://ai-assistant-production-e789.up.railway.app/terms`.
+4. In Railway → your service → **Variables**, add:
+   - `META_APP_ID` = the App ID
+   - `META_APP_SECRET` = the App secret (only here, never anywhere else)
+   - `META_CONFIG_ID` = the Configuration ID
+   - `PUBLIC_URL` = `https://ai-assistant-production-e789.up.railway.app` (if not set already)
+5. While the app is in **Development** mode, only people with a role on it (you, and anyone you
+   add under **App roles → Roles**) can connect. That's enough for testing. To let everyone
+   connect, submit the permissions above for **App Review** and complete **Business Verification**.
+
+If the app was created as a non-Business type and uses classic Facebook Login, leave
+`META_CONFIG_ID` unset: Hera then asks for the permissions directly.
 
 ## 4. Check
 

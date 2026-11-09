@@ -33,10 +33,12 @@ export function redirectUri(publicUrl: string, provider: OAuthProvider): string 
   return `${publicUrl}/oauth/callback/${provider}`;
 }
 
-/** Where the server sends the browser when it's done; the app's sign-in sheet closes on it. */
-export function appReturnUrl(provider: OAuthProvider, outcome: { ok: true } | { ok: false; message: string }): string {
+/** Where the server sends the browser when it's done; the app's sign-in sheet closes on it. A
+ *  success can carry a note, for something the person should know (e.g. Instagram wasn't linked). */
+export function appReturnUrl(provider: OAuthProvider, outcome: { ok: true; note?: string } | { ok: false; message: string }): string {
   const q = new URLSearchParams({ provider, status: outcome.ok ? "ok" : "error" });
   if (!outcome.ok) q.set("message", outcome.message);
+  else if (outcome.note) q.set("message", outcome.note);
   return `hera://connected?${q}`;
 }
 

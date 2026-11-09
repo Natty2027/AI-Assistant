@@ -45,7 +45,7 @@ export interface ServiceDeps {
   mediaDir: string;
   /** Sign-in with X and Meta. Each is off until this server's public address and that
    *  platform's developer app are configured. */
-  oauth?: { publicUrl?: string; x?: OAuthClient; meta?: OAuthClient };
+  oauth?: { publicUrl?: string; x?: OAuthClient; meta?: OAuthClient; metaConfigId?: string };
 }
 
 export interface ConnectionView { id: string; kind: string; provider: string; platform: Platform | null; label: string; publishesTo: string | null }
@@ -182,7 +182,7 @@ export class AgentService {
     }
     const { state, challenge } = this.oauthStates.begin(userId, provider);
     const back = redirectUri(o.publicUrl, provider);
-    return provider === "x" ? x.authorizeUrl(client, back, state, challenge) : meta.authorizeUrl(client, back, state);
+    return provider === "x" ? x.authorizeUrl(client, back, state, challenge) : meta.authorizeUrl(client, back, state, o.metaConfigId);
   }
 
   /**
@@ -210,9 +210,13 @@ export class AgentService {
       } else {
         const pages = await meta.exchangeCode(client, code, back, this.d.fetch);
         if (!pages.length) {
-          return fail("No Facebook Page was shared. Hera posts to Pages (not personal profiles) and to Instagram business or creator accounts linked to a Page. Create or pick a Page, then connect again.");
+          return fail("No Facebook Page was shared. Hera posts to Facebook Pages (not personal profiles) and to Instagram Business or Creator accounts linked to a Page. Create or pick a Page, then connect again.");
         }
         await this.saveMeta(pending.userId, pages);
+        // Business accounts only: Instagram connects through a Page it's linked to, never on its own.
+        if (!pages.some((p) => p.instagram)) {
+          return appReturnUrl(provider, { ok: true, note: "Your Facebook Page is connected, but no Instagram Business or Creator account is linked to it, so Instagram isn't. Switch Instagram to a professional account, link it to this Page, then connect again." });
+        }
       }
       return appReturnUrl(provider, { ok: true });
     } catch (e) {

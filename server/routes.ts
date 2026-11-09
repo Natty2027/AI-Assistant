@@ -30,7 +30,7 @@ function agent(): AgentService {
     fetch: (url, init) => fetch(url, init),
     sitesDir: config.sitesDir,
     mediaDir: config.mediaDir,
-    oauth: { publicUrl: config.publicUrl, x: config.x, meta: config.meta },
+    oauth: { publicUrl: config.publicUrl, x: config.x, meta: config.meta, metaConfigId: config.metaConfigId },
     // maxRetries 0: the agent loop retries through withAiRetry, so the SDK must not retry too.
     client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 }) : null,
   });

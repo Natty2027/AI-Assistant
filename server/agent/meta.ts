@@ -29,11 +29,14 @@ export interface MetaPage { id: string; name: string; token: string; instagram: 
 /** What is stored per connection: the Page token works for the Page and its Instagram account. */
 export interface MetaCredential { pageToken: string }
 
-export function authorizeUrl(client: OAuthClient, redirectUri: string, state: string): string {
-  const q = new URLSearchParams({
-    client_id: client.clientId, redirect_uri: redirectUri, state,
-    response_type: "code", scope: META_SCOPES.join(","),
-  });
+/**
+ * The sign-in page. With a configuration id (Facebook Login for Business, what business-type apps
+ * use), the permissions come from that configuration; otherwise they're listed here.
+ */
+export function authorizeUrl(client: OAuthClient, redirectUri: string, state: string, configId?: string): string {
+  const q = new URLSearchParams({ client_id: client.clientId, redirect_uri: redirectUri, state, response_type: "code" });
+  if (configId) q.set("config_id", configId);
+  else q.set("scope", META_SCOPES.join(","));
   return `${DIALOG}?${q}`;
 }
 

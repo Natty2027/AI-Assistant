@@ -288,15 +288,17 @@ final class AppModel {
     }
 
     /// The sign-in sheet closed on the server's hera://connected address, which says how it went.
-    /// Returns true when the accounts were connected.
-    func finishSignIn(callback: URL) async -> Bool {
+    /// Returns whether the accounts were connected, and anything the person should know (for
+    /// example, that a Page connected but no Instagram business account was linked to it).
+    func finishSignIn(callback: URL) async -> (connected: Bool, note: String?) {
         let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let message = items.first(where: { $0.name == "message" })?.value
         guard items.first(where: { $0.name == "status" })?.value == "ok" else {
-            errorMessage = items.first(where: { $0.name == "message" })?.value ?? "Connecting didn't finish. Please try again."
-            return false
+            errorMessage = message ?? "Connecting didn't finish. Please try again."
+            return (false, nil)
         }
         await refreshConnections()
-        return true
+        return (true, message)
     }
 
     func connectNetlify(token: String) async -> Bool {

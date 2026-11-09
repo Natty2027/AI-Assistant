@@ -93,4 +93,7 @@ export const config = {
   x: client("X_CLIENT_ID", "X_CLIENT_SECRET"),
   /** Meta developer app (Facebook Pages and Instagram): app id and app secret. */
   meta: client("META_APP_ID", "META_APP_SECRET"),
+  /** Business-type Meta apps sign in with "Facebook Login for Business", which takes the id of a
+   *  login configuration (made in the Meta dashboard) instead of a list of permissions. */
+  metaConfigId: opt("META_CONFIG_ID"),
 } as const;

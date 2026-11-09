@@ -215,6 +215,25 @@ test("connecting Meta adds the Page and its Instagram account; no Page explains 
   assert.match(failed.searchParams.get("message")!, /No Facebook Page/);
 });
 
+test("a business-type Meta app signs in with its Facebook Login for Business configuration", () => {
+  const svc = new AgentService({ run, fetch: fakeMeta().f, sitesDir: dir, mediaDir: dir, client: null,
+    oauth: { publicUrl: PUBLIC, meta: META_CLIENT, metaConfigId: "1234567890" } });
+  const url = new URL(svc.beginOAuth(U, "meta"));
+  assert.equal(url.searchParams.get("config_id"), "1234567890");
+  assert.equal(url.searchParams.get("scope"), null, "permissions come from the configuration");
+  // Without one, the permissions are listed (classic Facebook Login).
+  assert.match(new URL(service(fakeMeta().f).beginOAuth(U, "meta")).searchParams.get("scope")!, /instagram_content_publish/);
+});
+
+test("a Page with no Instagram business account linked connects Facebook only, and says why", async () => {
+  const svc = service(fakes(fakeX().f, fakeMeta({ pages: [{ id: "p1", name: "Clay Corner", access_token: "page-token" }] }).f));
+  const { next } = await signIn(svc, "meta");
+  assert.equal(next.searchParams.get("status"), "ok");
+  assert.match(next.searchParams.get("message")!, /no Instagram Business or Creator account is linked/);
+  assert.deepEqual((await svc.connections(U)).map((c) => c.platform), ["facebook"]);
+  await clearConnections();
+});
+
 test("sign-in isn't offered until the server has its public address and the developer app", () => {
   const bare = new AgentService({ run, fetch: fakeX().f, sitesDir: dir, mediaDir: dir, client: null, oauth: { x: X_CLIENT } });
   assert.deepEqual(bare.oauthAvailable(), { x: false, meta: false });

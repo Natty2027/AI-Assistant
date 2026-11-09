@@ -129,7 +129,10 @@ struct AccountsView: View {
                 // Closing the sheet is a choice, not an error; nothing to show.
                 return
             }
-            if await model.finishSignIn(callback: callback) {
+            let result = await model.finishSignIn(callback: callback)
+            if result.connected, let note = result.note {
+                outcome = SignInOutcome(title: "Facebook is connected", message: note)
+            } else if result.connected {
                 outcome = SignInOutcome(title: provider == .x ? "X is connected" : "Facebook and Instagram are connected",
                                         message: "Hera can now write posts for it. You approve each one before it goes out.")
             } else {
