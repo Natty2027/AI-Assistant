@@ -18,6 +18,8 @@ struct AssistantView: View {
     @State private var promptBeforeVoice = ""
     @FocusState private var promptFocused: Bool
     @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
+    /// The "How Hera works" card shows until it's dismissed once.
+    @AppStorage("seenHowHeraWorks") private var seenHowHeraWorks = false
 
     /// Where the spoken "Talk to Hera" conversation is.
     private enum Conversation { case none, choosing, describing }
@@ -34,11 +36,8 @@ struct AssistantView: View {
         ScrollView {
             VStack(spacing: 28) {
                 hero
-                if !model.isConfigured {
-                    setupNotice
-                } else if model.aiConsent == false {
-                    consentNotice
-                }
+                    .id("top")
+                notices
                 VoiceOrb(isListening: voice.isListening, isBusy: isPreparingVoice, level: voice.level) {
                     Task { await toggleVoice() }
                 }
@@ -58,7 +57,7 @@ struct AssistantView: View {
                         .glowCard(padding: 14)
                 }
                 if let run = model.lastRun, !model.isRunning {
-                    RunResultView(run: run, openReview: openReview)
+                    RunResultView(run: run, openReview: openReview, startOver: { startOver(scrollingWith: proxy) })
                         .id("results")
                         .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 }
@@ -161,7 +160,7 @@ struct AssistantView: View {
                 }
                 .toggleStyle(.button)
                 .buttonStyle(.glass)
-                .help("Lets the assistant look things up. Anything it reads from the web is flagged before you approve.")
+                .help("Lets Hera look things up. Anything it reads from the web is flagged before you approve.")
 
                 Spacer()
 
@@ -230,6 +229,22 @@ struct AssistantView: View {
         promptFocused = false
         model.speech.stop()  // Hera stops talking as soon as the person starts
         await voice.toggle()
+    }
+
+    /// Clears the last result and the box, ready for the next request, and scrolls back up.
+    private func startOver(scrollingWith proxy: ScrollViewProxy) {
+        model.speech.stop()
+        withAnimation(.spring(duration: 0.45)) {
+            model.clearLastRun()
+            prompt = ""
+            promptBeforeVoice = ""
+            conversation = .none
+        }
+        proxy.scrollTo("top", anchor: .top)
+    }
+
+    private func dismissHowHeraWorks() {
+        withAnimation { seenHowHeraWorks = true }
     }
 
     private func send() async {
@@ -302,12 +317,26 @@ struct AssistantView: View {
 
     /* ---------------- notices ---------------- */
 
+    /// What needs doing before the first request (sign in, allow AI), then the first-run guide.
+    @ViewBuilder
+    private var notices: some View {
+        if !model.isConfigured {
+            setupNotice
+        } else if model.aiConsent == false {
+            consentNotice
+        }
+        if !seenHowHeraWorks {
+            HowHeraWorksCard { dismissHowHeraWorks() }
+                .transition(.opacity)
+        }
+    }
+
     private var setupNotice: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel("Setup", color: .orange)
-            Text("Connect to your server")
+            Text("Hera isn't connected yet")
                 .font(.headline)
-            Text("Add your server address and access token in Settings. The assistant runs there, so your AI key and account passwords never live on this device.")
+            Text("Sign in from Settings to get started.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Open Settings", systemImage: "gearshape", action: openSettings)
@@ -319,125 +348,15 @@ struct AssistantView: View {
     private var consentNotice: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel("Your OK")
-            Text("Allow the assistant to use AI")
+            Text("Allow Hera to use AI")
                 .font(.headline)
-            Text("What you type or say goes to your server, which asks Claude (Anthropic) to write the site and posts. Nothing is published until you approve it.")
+            Text("What you type or say is sent to Claude, by Anthropic, to write your website and posts. Nothing is published until you approve it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Allow AI", systemImage: "checkmark") { Task { await model.setAIConsent(true) } }
                 .buttonStyle(.glassProminent)
         }
         .glowCard()
-    }
-}
-
-/// What the assistant said, the posts it wrote, and what's waiting for approval.
-private struct RunResultView: View {
-    let run: AgentRunResponse
-    var openReview: () -> Void
-
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            if !run.text.isEmpty {
-                HStack(alignment: .top, spacing: 14) {
-                    IconTile(systemImage: run.needsAnswer ? "questionmark" : "sparkles", size: 34)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(run.needsAnswer ? "A question for you" : "Assistant")
-                                .font(.subheadline.weight(.semibold))
-                            Spacer()
-                            if HeraVoice.isAvailable { listenButton }
-                        }
-                        Text(run.text)
-                            .textSelection(.enabled)
-                        if model.speech.phase == .preparing {
-                            Label("Getting Hera's voice ready…", systemImage: "waveform")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let problem = model.speech.problem {
-                            Text(problem)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if run.needsAnswer {
-                            Text("Answer above and tap Create again.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .glowCard()
-            }
-
-            if run.tainted {
-                Label("This used content from the web. Check everything carefully before approving.", systemImage: "exclamationmark.shield.fill")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .glowCard(padding: 14)
-            }
-
-            let waiting = run.proposals.filter(\.isPending)
-            if !waiting.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionLabel("Waiting for your approval")
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(waiting) { p in
-                            HStack(spacing: 12) {
-                                IconTile(systemImage: p.isSite ? "globe" : "text.bubble.fill", size: 30)
-                                Text(p.summary).font(.subheadline)
-                            }
-                        }
-                        Button(action: openReview) {
-                            Label("Review and publish", systemImage: "checkmark.seal.fill")
-                                .font(.body.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.large)
-                    }
-                    .glowCard()
-                }
-            }
-
-            let sharable = run.drafts.filter(\.isForSharing)
-            if !sharable.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionLabel("Posts to share")
-                    ForEach(sharable) { DraftCard(draft: $0) }
-                }
-            }
-
-            let blocked = run.proposals.filter { $0.status == "blocked" }
-            if !blocked.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionLabel("Couldn't be proposed", color: .red)
-                    ForEach(blocked) { p in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(p.summary).font(.headline)
-                            CheckList(checks: p.checks)
-                        }
-                        .glowCard()
-                    }
-                }
-            }
-        }
-    }
-
-    /// Replays the reply in Hera's voice, or stops her mid-sentence.
-    private var listenButton: some View {
-        let speaking = model.speech.isSpeaking
-        return Button {
-            if speaking { model.speech.stop() } else { model.speech.speak(run.text) }
-        } label: {
-            Label(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop.fill" : "speaker.wave.2.fill")
-                .font(.footnote.weight(.semibold))
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .buttonStyle(.glass)
-        .controlSize(.small)
     }
 }
 

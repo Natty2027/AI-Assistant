@@ -73,7 +73,7 @@ struct SettingsView: View {
         } header: {
             SectionLabel("AI")
         } footer: {
-            Text("Your requests are sent to your server, which asks Claude (Anthropic) to do the work. Voice is recognized on this device; only the finished text is sent. Turn this off at any time.")
+            Text("What you ask Hera is sent to Claude, by Anthropic, to make your website and posts. Your voice is recognized on this device; only the finished text is sent. You can turn this off at any time.")
         }
     }
 
@@ -84,7 +84,7 @@ struct SettingsView: View {
         } header: {
             SectionLabel("Voice")
         } footer: {
-            Text("Hera's voice is made on this device; nothing is sent anywhere to speak. Voice: Kokoro-82M \"af_heart\" by hexgrad, Core ML by kokoro-coreml, both under the Apache License 2.0.")
+            Text("Hera reads her replies aloud. Her voice is made on this device, so nothing is sent anywhere to speak.")
         }
     }
 
@@ -97,6 +97,9 @@ struct SettingsView: View {
                 Link(destination: base.appending(path: "support")) { Label("Support", systemImage: "questionmark.circle") }
             } header: {
                 SectionLabel("About")
+            } footer: {
+                // Required by the Apache License 2.0 that Hera's voice is used under.
+                Text("Hera's voice: Kokoro-82M \"af_heart\" by hexgrad, with Core ML by kokoro-coreml, both under the Apache License 2.0.")
             }
         }
     }

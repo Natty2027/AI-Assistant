@@ -59,7 +59,7 @@ struct DraftCard: View {
                 .sensoryFeedback(.success, trigger: copied) { _, now in now }
             }
             if hasBlockingProblem {
-                Text("Fix the problem above before posting. Ask the assistant to rewrite it.")
+                Text("Fix the problem above before posting, or ask Hera to rewrite it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -102,40 +102,6 @@ private struct LengthRing: View {
         .frame(width: 40, height: 40)
         .accessibilityElement()
         .accessibilityLabel(over ? "\(length - limit) characters over the limit" : "\(limit - length) characters left")
-    }
-}
-
-/// Rule results, worded by the server for people.
-struct CheckList: View {
-    let checks: [Check]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(checks) { check in
-                Label {
-                    Text(check.message).font(.callout)
-                } icon: {
-                    Image(systemName: icon(for: check.level))
-                        .foregroundStyle(color(for: check.level))
-                }
-            }
-        }
-    }
-
-    private func icon(for level: Check.Level) -> String {
-        switch level {
-        case .block: "xmark.octagon.fill"
-        case .attest: "hand.raised.fill"
-        case .warn: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private func color(for level: Check.Level) -> Color {
-        switch level {
-        case .block: .red
-        case .attest: .orange
-        case .warn: .yellow
-        }
     }
 }
 

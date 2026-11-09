@@ -40,6 +40,9 @@ struct NetworkingTests {
         #expect(RetryPolicy.message(for: URLError(.serverCertificateUntrusted)).contains("secure connection"))
         let error = APIClient.APIError.server(status: 500, message: "Something went wrong on our side.", code: nil, requestID: "ab12cd34")
         #expect(error.localizedDescription == "Something went wrong on our side. (Ref: ab12cd34)")
+        // Sign-in failures never show the server's developer wording.
+        let signedOut = APIClient.APIError.server(status: 401, message: "Not signed in. Send a Supabase access token…", code: nil, requestID: nil)
+        #expect(signedOut.localizedDescription == "You've been signed out. Please sign in again.")
     }
 
     @Test func noncesAreRandomAndHashedForApple() {

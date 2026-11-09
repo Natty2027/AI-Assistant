@@ -126,6 +126,12 @@ final class AppModel {
         }
     }
 
+    /// "Start something new" on Create. Proposals stay waiting on the Review tab.
+    func clearLastRun() {
+        lastRun = nil
+        errorMessage = nil
+    }
+
     /* ---------------- review ---------------- */
 
     func refreshProposals() async {

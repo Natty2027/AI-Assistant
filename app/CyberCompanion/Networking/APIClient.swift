@@ -22,9 +22,13 @@ struct APIClient: Sendable {
 
         var errorDescription: String? {
             switch self {
-            case .server(_, let message, _, let requestID):
-                requestID.map { "\(message) (Ref: \($0))" } ?? message
-            case .invalidResponse: "The server sent a reply the app couldn't read."
+            case .server(let status, let message, _, let requestID):
+                // The server words sign-in failures for developers (token details). A person
+                // only needs to know to sign in again.
+                let text = status == 401 ? "You've been signed out. Please sign in again." : message
+                return requestID.map { "\(text) (Ref: \($0))" } ?? text
+            case .invalidResponse:
+                return "Hera sent a reply the app couldn't read. Please try again."
             }
         }
 

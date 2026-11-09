@@ -45,16 +45,16 @@ enum RetryPolicy {
             case .notConnectedToInternet, .dataNotAllowed:
                 return "You're offline. Check your connection and try again."
             case .timedOut:
-                return "The server took too long to answer. Please try again."
+                return "Hera took too long to answer. Please try again."
             case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
-                return "Can't reach the server. Check your connection, or the server address in Settings."
+                return "Can't reach Hera right now. Check your connection and try again."
             case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
                  .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
-                return "The server's secure connection couldn't be verified, so the app didn't connect."
+                return "Hera's secure connection couldn't be verified, so the app didn't connect."
             case .networkConnectionLost:
                 return "The connection dropped. Please try again."
             default:
-                return "Something went wrong connecting to the server. Please try again."
+                return "Something went wrong connecting to Hera. Please try again."
             }
         }
         return error.localizedDescription

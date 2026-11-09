@@ -13,13 +13,13 @@ struct SiteView: View {
         NavigationStack {
             Group {
                 if !model.isConfigured {
-                    ContentUnavailableView("Not connected", systemImage: "server.rack",
-                                           description: Text("Add your server in Settings to see your website."))
+                    ContentUnavailableView("Not signed in", systemImage: "person.crop.circle.badge.exclamationmark",
+                                           description: Text("Sign in to see your website."))
                 } else if let loadError {
                     ContentUnavailableView("Couldn't load the website", systemImage: "exclamationmark.triangle", description: Text(loadError))
                 } else if let site, site.files.isEmpty {
                     ContentUnavailableView("No website yet", systemImage: "globe",
-                                           description: Text("Ask the assistant in Create, for example: \u{201C}Make a one-page website for my bakery.\u{201D}"))
+                                           description: Text("Choose Website on the Create tab and tell Hera what you'd like, for example: \u{201C}Make a one-page website for my bakery.\u{201D}"))
                 } else if let page {
                     WebView(page)
                         .webViewBackForwardNavigationGestures(.enabled)

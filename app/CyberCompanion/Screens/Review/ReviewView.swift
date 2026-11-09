@@ -12,7 +12,7 @@ struct ReviewView: View {
                     let history = model.proposals.filter { !$0.isPending }
                     if pending.isEmpty && history.isEmpty {
                         ContentUnavailableView("Nothing to review", systemImage: "checkmark.seal",
-                                               description: Text("When the assistant has a website or post ready to publish, it appears here for you to approve."))
+                                               description: Text("When Hera has a website or post ready to publish, it appears here for you to approve."))
                             .glowCard()
                     }
                     if !pending.isEmpty {
