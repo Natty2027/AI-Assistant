@@ -59,6 +59,22 @@ struct ScheduleTests {
         #expect(ConversationReply.mode(from: "posts about my calendar") == nil, "two things at once: ask again")
     }
 
+    /// Reminders on a real device list: add one, see it in the snapshot (EventKit hands reminders
+    /// back on a background queue), then complete it.
+    @Test(.enabled(if: EKEventStore.authorizationStatus(for: .reminder) == .fullAccess, "needs reminders access granted to the test host"))
+    @MainActor func remindersAreReadAddedAndCompleted() async throws {
+        let manager = ScheduleManager()
+        let title = "Hera reminder \(UUID().uuidString.prefix(8))"
+        try await manager.apply(ScheduleChange(id: "r1", kind: .addReminder, summary: "Add", title: title,
+                                               due: ScheduleManager.format(.now.addingTimeInterval(86_400))))
+        let snapshot = try await manager.snapshot()
+        let added = try #require(snapshot.reminders.first { $0.title == title }, "the new reminder is in the next snapshot")
+        #expect(added.due != nil)
+        try await manager.apply(ScheduleChange(id: "r2", kind: .completeReminder, summary: "Done", reminderId: added.id))
+        let after = try await manager.snapshot()
+        #expect(!after.reminders.contains { $0.title == title }, "completed reminders aren't open any more")
+    }
+
     /// The whole device side, on a real calendar: add, find in the snapshot, move, delete.
     @Test(.enabled(if: EKEventStore.authorizationStatus(for: .event) == .fullAccess, "needs calendar access granted to the test host"))
     @MainActor func approvedChangesAreMadeInTheCalendar() async throws {

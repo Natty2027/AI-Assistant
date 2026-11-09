@@ -48,12 +48,15 @@ final class ScheduleManager {
         let defaultCalendar = store.defaultCalendarForNewEvents
 
         let events = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: nil))
-            .sorted { $0.startDate < $1.startDate }
+            .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
             .prefix(400)
             .compactMap { e -> ScheduleSnapshot.Event? in
-                guard let id = Self.occurrenceID(e) else { return nil }
-                return .init(id: id, title: String((e.title ?? "").prefix(300)), start: Self.format(e.startDate), end: Self.format(e.endDate),
-                             allDay: e.isAllDay, calendar: String((names[e.calendar.calendarIdentifier] ?? e.calendar.title).prefix(200)),
+                // EventKit declares these as possibly missing; skip any event that lacks them
+                // rather than crash on it.
+                guard let id = Self.occurrenceID(e), let startDate = e.startDate, let endDate = e.endDate,
+                      let eventCalendar = e.calendar else { return nil }
+                return .init(id: id, title: String((e.title ?? "").prefix(300)), start: Self.format(startDate), end: Self.format(endDate),
+                             allDay: e.isAllDay, calendar: String((names[eventCalendar.calendarIdentifier] ?? eventCalendar.title).prefix(200)),
                              location: e.location.map { String($0.prefix(300)) })
             }
 
@@ -61,7 +64,9 @@ final class ScheduleManager {
         if remindersAllowed {
             let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: nil)
             reminders = await withCheckedContinuation { done in
-                store.fetchReminders(matching: predicate) { found in
+                // @Sendable: EventKit calls this on its own background queue. Without it, Swift 6
+                // treats the closure as main-actor code and stops the app when it runs elsewhere.
+                store.fetchReminders(matching: predicate) { @Sendable found in
                     // Copied to plain values here: EventKit objects stay on EventKit's side.
                     let plain = (found ?? []).prefix(200).map { r in
                         ScheduleSnapshot.Reminder(id: r.calendarItemIdentifier, title: String((r.title ?? "").prefix(300)),
@@ -96,8 +101,8 @@ final class ScheduleManager {
     /// A repeating event shares one identifier across all its occurrences, so each occurrence is
     /// named by the event and the date it falls on. Changes then touch only that occurrence.
     private static func occurrenceID(_ event: EKEvent) -> String? {
-        guard let id = event.eventIdentifier else { return nil }
-        return "\(id)|\(Int((event.occurrenceDate ?? event.startDate).timeIntervalSince1970))"
+        guard let id = event.eventIdentifier, let date: Date = event.occurrenceDate ?? event.startDate else { return nil }
+        return "\(id)|\(Int(date.timeIntervalSince1970))"
     }
 
     private func calendar(named name: String?) -> EKCalendar? {
@@ -140,7 +145,7 @@ final class ScheduleManager {
         case .changeEvent:
             guard let id = change.eventId else { throw Self.incomplete }
             let event = try occurrence(id)
-            guard event.calendar.allowsContentModifications else { throw Self.readOnly }
+            guard event.calendar?.allowsContentModifications == true else { throw Self.readOnly }
             if let title = change.title { event.title = title }
             if let location = change.location { event.location = location }
             if change.start != nil || change.end != nil {
@@ -156,7 +161,7 @@ final class ScheduleManager {
         case .cancelEvent:
             guard let id = change.eventId else { throw Self.incomplete }
             let event = try occurrence(id)
-            guard event.calendar.allowsContentModifications else { throw Self.readOnly }
+            guard event.calendar?.allowsContentModifications == true else { throw Self.readOnly }
             try store.remove(event, span: .thisEvent, commit: true)
 
         case .addReminder:
