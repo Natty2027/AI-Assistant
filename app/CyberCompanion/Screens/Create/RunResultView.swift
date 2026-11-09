@@ -72,7 +72,7 @@ struct RunResultView: View {
                         .foregroundStyle(.secondary)
                 }
                 if run.needsAnswer {
-                    Text("Answer in the box above and tap Create again.")
+                    Text("Answer in the box above and tap Send. Hera carries on from here.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var supabaseAnonKey = ""
     @State private var status: String?
     @State private var showDelete = false
+    @State private var newMemory = ""
+    @State private var memoryNote: String?
     @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
 
     var body: some View {
@@ -15,6 +17,7 @@ struct SettingsView: View {
             Form {
                 account
                 if model.isConfigured { aiSection }
+                if model.isConfigured { memorySection }
                 if HeraVoice.isAvailable { voiceSection }
                 legal
                 // Server addresses and the staging token are for development only. Release builds
@@ -75,6 +78,50 @@ struct SettingsView: View {
         } footer: {
             Text("What you ask Hera is sent to Claude, by Anthropic, to make your website and posts. When you use Schedule, your upcoming events and open reminders are sent with that request. Your voice is recognized on this device; only the finished text is sent. You can turn this off at any time.")
         }
+    }
+
+    /// Lasting facts Hera saved (or the person added), used in every task. Deleting one means Hera
+    /// no longer knows it.
+    private var memorySection: some View {
+        Section {
+            if model.memories.isEmpty {
+                Text("Nothing yet. Tell Hera about your business, such as its name, hours or the tone you like, and she'll remember it.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(model.memories) { memory in
+                HStack(alignment: .firstTextBaseline) {
+                    Text(memory.text)
+                    Spacer()
+                    Button("Forget", systemImage: "trash") { Task { await model.forget(memory) } }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Forget “\(memory.text)”")
+                }
+            }
+            HStack {
+                TextField("Add something for Hera to remember", text: $newMemory)
+                    .onSubmit(addMemory)
+                Button("Add", action: addMemory)
+                    .disabled(newMemory.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if let memoryNote {
+                Text(memoryNote).font(.caption).foregroundStyle(.secondary)
+            }
+        } header: {
+            SectionLabel("What Hera remembers")
+        } footer: {
+            Text("Hera uses these in every website, post and schedule task so you don't have to repeat yourself. They're sent to Claude with your requests. Delete anything you'd rather she forgot.")
+        }
+        .task { await model.refreshMemories() }
+    }
+
+    private func addMemory() {
+        let text = newMemory
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        newMemory = ""
+        Task { memoryNote = await model.addMemory(text) }
     }
 
     private var voiceSection: some View {

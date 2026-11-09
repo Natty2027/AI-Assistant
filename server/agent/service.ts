@@ -12,6 +12,7 @@ import { ACTIONS, isPlatform, type ActionKind, type Context, type Platform } fro
 import { SiteSandbox } from "./sandbox.ts";
 import { runAgent, type AgentDeps, type AgentMode, type AgentResult } from "./loop.ts";
 import { ScheduleSnapshot } from "./schedule.ts";
+import { MemoryStore } from "./memory.ts";
 import { publish, verifyToken } from "./netlify.ts";
 import { parseCredential, publishPost, verifyCredential, type BlueskyCredential } from "./bluesky.ts";
 import * as x from "./x.ts";
@@ -68,11 +69,13 @@ export function viewOf(p: Proposal): ProposalView {
 export class AgentService {
   readonly store: ActionStore;
   readonly media: MediaStore;
+  readonly memory: MemoryStore;
   private readonly oauthStates = new OAuthStates();
 
   constructor(private readonly d: ServiceDeps) {
     this.store = d.store ?? new ActionStore();
     this.media = new MediaStore(d.mediaDir);
+    this.memory = new MemoryStore(d.run);
   }
 
   /** Server-derived, never user- or model-supplied. */
@@ -89,6 +92,7 @@ export class AgentService {
   async forget(userId: string): Promise<void> {
     this.store.forget(userId);
     this.oauthStates.forget(userId);
+    this.memory.forgetAll(userId);
     await SiteSandbox.remove(this.d.sitesDir, this.siteIdFor(userId));
     await this.media.removeAll(this.siteIdFor(userId));
   }
@@ -275,7 +279,12 @@ export class AgentService {
 
   /* ---------------- the assistant ---------------- */
 
-  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown }): Promise<AgentResult & { proposals: ProposalView[] }> {
+  /**
+   * One request to Hera. With a `conversationId` from an earlier answer, it continues that task
+   * (an answer to her question, or a follow-up like "make the header blue"); otherwise it starts a
+   * new one. Returns the id to send with the next reply, or null if the task can't continue.
+   */
+  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     let schedule: ScheduleSnapshot | undefined;
     if (opts.mode === "schedule") {
@@ -292,8 +301,17 @@ export class AgentService {
     }
     const ctx = await this.context(userId);
     const sandbox = await this.sandbox(userId);
-    const out = await runAgent({ mode: opts.mode, client: this.d.client, store: this.store, sandbox, userId, context: () => ctx, allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId, schedule }, request);
-    return { ...out, proposals: out.proposalIds.map((id) => viewOf(this.store.get(id, userId))) };
+    const priorId = typeof opts.conversationId === "string" && /^[0-9a-f-]{36}$/i.test(opts.conversationId) ? opts.conversationId : null;
+    const resume = priorId ? await this.memory.conversation(userId, priorId, opts.mode) : null;
+    const memories = (await this.memory.memories(userId)).map((m) => m.text);
+    const out = await runAgent({
+      mode: opts.mode, client: this.d.client, store: this.store, sandbox, userId, context: () => ctx,
+      allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId, schedule, memories,
+      remember: async (fact) => (await this.memory.remember(userId, fact)).message,
+    }, request, resume);
+    // A conversation that expired or was never this person's starts fresh under a new id.
+    const conversationId = await this.memory.saveConversation(userId, resume ? priorId : null, opts.mode, out.state);
+    return { ...out, proposals: out.proposalIds.map((id) => viewOf(this.store.get(id, userId))), conversationId };
   }
 
   /* ---------------- approvals ---------------- */

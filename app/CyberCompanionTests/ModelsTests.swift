@@ -59,6 +59,17 @@ struct ModelsTests {
         #expect(Platform.x.measuredLength(of: "Hi \(link)") == 3 + 23)
     }
 
+    /// Memory: the id that continues a task, and the facts Hera remembers.
+    @Test func readsConversationIdAndMemories() throws {
+        let run = try JSONDecoder().decode(AgentRunResponse.self, from: Data(#"{"status":"needs_user","text":"What time?","proposals":[],"drafts":[],"tainted":false,"conversationId":"0b8a3c1e-6a59-4f4e-9d38-3f1f5e0c2a11"}"#.utf8))
+        #expect(run.conversationId == "0b8a3c1e-6a59-4f4e-9d38-3f1f5e0c2a11")
+        #expect(run.needsAnswer)
+        let old = try JSONDecoder().decode(AgentRunResponse.self, from: Data(#"{"status":"done","text":"","proposals":[],"drafts":[],"tainted":false}"#.utf8))
+        #expect(old.conversationId == nil, "older servers leave it out")
+        let memories = try JSONDecoder().decode(MemoriesResponse.self, from: Data(#"{"memories":[{"id":"m1","text":"Open Tue–Sat","createdAt":"2026-11-08T00:00:00.000Z"}]}"#.utf8))
+        #expect(memories.memories.map(\.text) == ["Open Tue–Sat"])
+    }
+
     @Test func readsWhichSignInsTheServerOffers() throws {
         let json = #"{ "connections": [], "signIn": { "x": true, "meta": false } }"#
         let out = try JSONDecoder().decode(ConnectionsResponse.self, from: Data(json.utf8))

@@ -227,6 +227,9 @@ struct AgentRunResponse: Codable, Hashable, Sendable {
     /// Schedule runs only; absent from servers that predate it.
     var scheduleChanges: [ScheduleChange]?
     let tainted: Bool
+    /// Send with the next reply to continue this task. nil when it can't be continued (or from
+    /// servers that predate it).
+    var conversationId: String?
 
     var needsAnswer: Bool { status == "needs_user" }
 }
@@ -287,6 +290,16 @@ struct SignInStartResponse: Decodable, Sendable { let authUrl: String }
 struct PhotoUploadResponse: Decodable, Sendable { let id: String }
 struct ConnectionResponse: Decodable, Sendable { let connection: Connection }
 struct ProposalsResponse: Decodable, Sendable { let proposals: [Proposal] }
+
+/// One lasting fact Hera remembers about the person (server/agent/memory.ts).
+struct Memory: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let text: String
+    let createdAt: String
+}
+
+struct MemoriesResponse: Decodable, Sendable { let memories: [Memory] }
+struct MemoryAddResponse: Decodable, Sendable { let memory: Memory?; let message: String }
 struct ProposalResponse: Decodable, Sendable { let proposal: Proposal }
 struct FileResponse: Decodable, Sendable { let contents: String }
 struct ConsentResponse: Decodable, Sendable { let granted: Bool }

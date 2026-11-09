@@ -199,7 +199,8 @@ test("a user's data can be removed table by table, as the account-deletion route
   // Mirrors USER_DATA_TABLES in server/routes.ts. If a table gains a user_id column and is not
   // added there, this fails to leave the user with zero rows and the gap is caught here.
   const tables = ["safety_events", "habit_observations", "habit_profiles", "proposed_events",
-    "events_cache", "connection_disclosures", "oauth_connections", "action_connections", "user_settings"];
+    "events_cache", "connection_disclosures", "oauth_connections", "action_connections",
+    "agent_conversations", "agent_memories", "user_settings"];
   for (const t of tables) await db.query(`delete from ${t} where user_id = $1`, [D]);
   let remaining = 0;
   const { rows } = await db.query<{ table_name: string }>(

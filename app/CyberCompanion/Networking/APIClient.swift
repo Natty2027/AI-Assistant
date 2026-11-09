@@ -41,15 +41,18 @@ struct APIClient: Sendable {
     /* ---------------- the assistant ---------------- */
 
     func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil,
-                      schedule: ScheduleSnapshot? = nil) async throws -> AgentRunResponse {
+                      schedule: ScheduleSnapshot? = nil, conversationID: String? = nil) async throws -> AgentRunResponse {
         struct Body: Encodable {
             let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String?
             /// Schedule runs only: the person's calendar and reminders for this one request.
             let schedule: ScheduleSnapshot?
+            /// Continues an earlier task, from the previous answer's conversationId.
+            let conversationId: String?
         }
         // A run can take several model turns, so it gets a much longer timeout than other calls.
         return try await send("POST", "agent/run",
-                              body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID, schedule: schedule),
+                              body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID,
+                                         schedule: schedule, conversationId: conversationID),
                               timeout: 300)
     }
 
@@ -80,6 +83,22 @@ struct APIClient: Sendable {
 
     func reject(_ proposal: Proposal) async throws {
         let _: OKResponse = try await send("POST", "agent/proposals/\(proposal.id)/reject", body: [String: String]())
+    }
+
+    /* ---------------- what Hera remembers ---------------- */
+
+    func memories() async throws -> [Memory] {
+        let out: MemoriesResponse = try await send("GET", "agent/memories")
+        return out.memories
+    }
+
+    func addMemory(_ text: String) async throws -> MemoryAddResponse {
+        struct Body: Encodable { let text: String }
+        return try await send("POST", "agent/memories", body: Body(text: text))
+    }
+
+    func deleteMemory(_ memory: Memory) async throws {
+        let _: OKResponse = try await send("DELETE", "agent/memories/\(memory.id)")
     }
 
     /* ---------------- account ---------------- */

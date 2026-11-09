@@ -76,7 +76,7 @@ test("a website run builds the site and ends with a proposal the user must appro
   assert.equal(req.fallbacks, "default");
   assertNoActingTools(req);
   assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
-    ["ask_user", "check_site", "list_site_files", "propose_site_deploy", "read_site_file", "write_site_file"]);
+    ["ask_user", "check_site", "list_site_files", "propose_site_deploy", "read_site_file", "remember", "write_site_file"]);
   assert.match(req.system, /only for the website/);
   assert.match(req.system, /Never write reviews, testimonials/);
 });
@@ -96,7 +96,7 @@ test("a posts run writes and proposes posts and is offered no way to change the 
   const req = calls[0];
   assertNoActingTools(req);
   assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
-    ["ask_user", "draft_post", "list_site_files", "propose_post", "read_site_file", "write_post"]);
+    ["ask_user", "draft_post", "list_site_files", "propose_post", "read_site_file", "remember", "write_post"]);
   assert.match(req.system, /only for posts/);
 });
 

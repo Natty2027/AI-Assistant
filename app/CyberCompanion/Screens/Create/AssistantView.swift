@@ -233,7 +233,7 @@ struct AssistantView: View {
                 Button {
                     Task { await send() }
                 } label: {
-                    Label("Create", systemImage: "arrow.up")
+                    Label(model.isContinuing(mode) ? "Send" : "Create", systemImage: "arrow.up")
                         .font(.body.weight(.semibold))
                         .padding(.horizontal, 4)
                 }
@@ -323,7 +323,8 @@ struct AssistantView: View {
     /* ---------------- actions ---------------- */
 
     private var placeholder: String {
-        switch mode {
+        if model.isContinuing(mode) { return "Reply to Hera, or ask for a change…" }
+        return switch mode {
         case .site: "Describe the website you'd like…"
         case .posts: "Describe the posts you'd like…"
         case .schedule: "Tell Hera what to plan, move or remind you about…"
@@ -385,8 +386,14 @@ struct AssistantView: View {
         promptFocused = false
         conversation = .none
         model.speech.stop()
+        let continuing = model.isContinuing(mode)
         await model.runAssistant(prompt: prompt, mode: mode, allowWebSearch: allowWebSearch,
                                  photo: mode == .posts ? photo?.jpeg : nil)
+        // In a conversation the box is for the next reply, so it starts empty again.
+        if continuing || model.isContinuing(mode) {
+            prompt = ""
+            promptBeforeVoice = ""
+        }
     }
 
     /* ---------------- "What's on my day?" ---------------- */

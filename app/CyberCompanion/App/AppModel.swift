@@ -31,6 +31,13 @@ final class AppModel {
     var scheduleOutcomes: [String: ChangeOutcome] = [:]
     /// The latest "what's on my day" rundown, shown on Create while it's relevant.
     var briefing: String?
+    /// The task in progress: a reply continues it until "Start something new".
+    private(set) var conversation: (id: String, mode: CreateMode)?
+    /// Lasting facts Hera remembers, shown in Settings.
+    var memories: [Memory] = []
+
+    /// True when the next message continues the current task in this mode.
+    func isContinuing(_ mode: CreateMode) -> Bool { conversation?.mode == mode && lastRun != nil }
     /// How to reverse each change that was made, by change id, for its Undo button.
     private var scheduleUndos: [String: ScheduleUndo] = [:]
 
@@ -122,13 +129,15 @@ final class AppModel {
         scheduleOutcomes = [:]
         scheduleUndos = [:]
         briefing = nil
+        conversation = nil
+        memories = []
         aiConsent = nil
         errorMessage = nil
     }
 
     /// Loads everything the tabs show. Called on launch and after settings change.
     func refreshAll() async {
-        guard isConfigured else { return }
+        guard isConfigured else { await refreshWidget(); return }
         async let consent: Void = refreshConsent()
         async let accounts: Void = refreshConnections()
         async let pending: Void = refreshProposals()
@@ -147,8 +156,11 @@ final class AppModel {
             let photoID = if let photo, mode == .posts { try await client.uploadPhoto(jpeg: photo) } else { String?.none }
             // Read on this device, for this request only.
             let snapshot = if mode == .schedule { try await schedule.snapshot() } else { ScheduleSnapshot?.none }
-            lastRun = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
-                                                    photoID: photoID, schedule: snapshot)
+            let continuing = conversation?.mode == mode ? conversation?.id : nil
+            let run = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
+                                                    photoID: photoID, schedule: snapshot, conversationID: continuing)
+            lastRun = run
+            conversation = run.conversationId.map { ($0, mode) }
             scheduleOutcomes = [:]
         scheduleUndos = [:]
             proposals = try await client.proposals()
@@ -158,6 +170,7 @@ final class AppModel {
     /// "Start something new" on Create. Proposals stay waiting on the Review tab.
     func clearLastRun() {
         lastRun = nil
+        conversation = nil
         scheduleOutcomes = [:]
         scheduleUndos = [:]
         errorMessage = nil
@@ -219,7 +232,8 @@ final class AppModel {
     /* ---------------- review ---------------- */
 
     func refreshProposals() async {
-        guard let client else { return }
+        // The widget's calendar part doesn't need the server, so it's refreshed even when signed out.
+        guard let client else { await refreshWidget(); return }
         await perform { proposals = try await client.proposals() }
         await refreshWidget()
     }
@@ -301,6 +315,32 @@ final class AppModel {
         await perform {
             try await client.disconnect(connection)
             try await loadConnections(client)
+        }
+    }
+
+    /* ---------------- what Hera remembers ---------------- */
+
+    func refreshMemories() async {
+        guard let client else { return }
+        await perform { memories = try await client.memories() }
+    }
+
+    /// Returns the server's answer in words ("Remembered.", "Already remembered.").
+    func addMemory(_ text: String) async -> String? {
+        guard let client else { return nil }
+        var message: String?
+        await perform {
+            message = try await client.addMemory(text.trimmingCharacters(in: .whitespacesAndNewlines)).message
+            memories = try await client.memories()
+        }
+        return message
+    }
+
+    func forget(_ memory: Memory) async {
+        guard let client else { return }
+        await perform {
+            try await client.deleteMemory(memory)
+            memories = try await client.memories()
         }
     }
 

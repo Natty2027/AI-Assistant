@@ -80,8 +80,11 @@ async function requireAiConsent(userId: string): Promise<void> {
  */
 const USER_DATA_TABLES = [
   "safety_events", "habit_observations", "habit_profiles", "proposed_events",
-  "events_cache", "connection_disclosures", "oauth_connections", "action_connections", "user_settings",
+  "events_cache", "connection_disclosures", "oauth_connections", "action_connections",
+  "agent_conversations", "agent_memories", "user_settings",
 ] as const;
+/** Added by a later migration; skipped, not failed on, in a database that doesn't have them yet. */
+const OPTIONAL_TABLES = new Set<string>(["agent_conversations", "agent_memories"]);
 
 /* ------------------------------ routes ------------------------------ */
 
@@ -165,6 +168,10 @@ export function buildRouter(): Router {
     try {
       await client.query("begin");
       for (const table of USER_DATA_TABLES) {
+        if (OPTIONAL_TABLES.has(table)) {
+          const { rows } = await client.query(`select to_regclass($1) as t`, [`public.${table}`]);
+          if (!rows[0]?.t) continue;
+        }
         await client.query(`delete from ${table} where user_id = $1`, [userId]);
       }
       await client.query("commit");
@@ -258,10 +265,36 @@ export function buildRouter(): Router {
     const out = await guarded(() => agent().run(userId, request, {
       mode: mode as AgentMode, allowWebSearch: ctx.body.allow_web_search === true,
       photoId: mode === "posts" ? ctx.body.photo_id ?? null : null,
-      // Their calendar and reminders as their device sees them, for this request only; never stored.
+      // Their calendar and reminders as their device sees them, for this request; never stored on its own.
       schedule: mode === "schedule" ? ctx.body.schedule : undefined,
+      // Continue an earlier task: the id from the previous answer.
+      conversationId: ctx.body.conversation_id,
     }));
-    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, tainted: out.tainted };
+    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, tainted: out.tainted, conversationId: out.conversationId };
+  });
+
+  /* ---- what Hera remembers: the person sees, adds and deletes these in Settings ---- */
+
+  r.get("/agent/memories", async (ctx) => {
+    const userId = requireAuth(ctx);
+    return { memories: await guarded(() => agent().memory.memories(userId)) };
+  });
+
+  r.post("/agent/memories", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    const text = typeof ctx.body.text === "string" ? ctx.body.text : "";
+    if (!text.trim() || text.length > 300) throw new HttpError(400, "Write something for Hera to remember, in up to 300 characters.");
+    await ensureSettings(userId);
+    const out = await guarded(() => agent().memory.remember(userId, text));
+    return { ok: true, memory: out.saved, message: out.message };
+  });
+
+  r.delete("/agent/memories/:id", async (ctx) => {
+    const userId = requireAuth(ctx);
+    assertUuid(ctx.params.id);
+    if (!(await guarded(() => agent().memory.forgetMemory(userId, ctx.params.id)))) throw new HttpError(404, "That memory isn't there any more.");
+    return { ok: true };
   });
 
   r.get("/agent/proposals", async (ctx) => {
