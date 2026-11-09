@@ -227,6 +227,8 @@ struct AgentRunResponse: Codable, Hashable, Sendable {
     /// Schedule runs only; absent from servers that predate it.
     var scheduleChanges: [ScheduleChange]?
     let tainted: Bool
+    /// Emails Hera wrote for the person to send from their own email app. Absent from older servers.
+    var emailDrafts: [EmailDraft]?
     /// Send with the next reply to continue this task. nil when it can't be continued (or from
     /// servers that predate it).
     var conversationId: String?
@@ -290,6 +292,16 @@ struct SignInStartResponse: Decodable, Sendable { let authUrl: String }
 struct PhotoUploadResponse: Decodable, Sendable { let id: String }
 struct ConnectionResponse: Decodable, Sendable { let connection: Connection }
 struct ProposalsResponse: Decodable, Sendable { let proposals: [Proposal] }
+
+/// An email Hera wrote (server/agent/loop.ts). She never sends it: the person edits it here and
+/// sends it from their email app.
+struct EmailDraft: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    var to: [String]
+    var cc: [String]
+    var subject: String
+    var body: String
+}
 
 /// One lasting fact Hera remembers about the person (server/agent/memory.ts).
 struct Memory: Codable, Hashable, Identifiable, Sendable {

@@ -36,6 +36,7 @@ struct AssistantView: View {
         (.posts, "calendar.badge.plus", "Announce my next event on social media"),
         (.posts, "sparkles", "Write a week of posts about what I do"),
         (.schedule, "calendar", "What's on my schedule tomorrow? Add a gym session in a free hour"),
+        (.posts, "envelope", "Write an email to a customer confirming their Saturday booking"),
     ]
 
     var body: some View {

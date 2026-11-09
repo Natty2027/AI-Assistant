@@ -270,7 +270,7 @@ export function buildRouter(): Router {
       // Continue an earlier task: the id from the previous answer.
       conversationId: ctx.body.conversation_id,
     }));
-    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, tainted: out.tainted, conversationId: out.conversationId };
+    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, emailDrafts: out.emailDrafts, tainted: out.tainted, conversationId: out.conversationId };
   });
 
   /* ---- what Hera remembers: the person sees, adds and deletes these in Settings ---- */

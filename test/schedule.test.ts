@@ -71,7 +71,7 @@ test("Hera proposes moves, additions and reminders; nothing is changed on the se
 
   // The request: only schedule tools, and the schedule itself in the instructions.
   const tools = calls[0].tools.map((t: any) => t.name).sort();
-  assert.deepEqual(tools, ["add_event", "add_reminder", "ask_user", "cancel_event", "change_event", "complete_reminder", "remember"]);
+  assert.deepEqual(tools, ["add_event", "add_reminder", "ask_user", "cancel_event", "change_event", "complete_reminder", "draft_email", "remember"]);
   assert.match(calls[0].system, /ev-dentist: "Dentist"/);
   assert.match(calls[0].system, /America\/Los_Angeles/);
 });

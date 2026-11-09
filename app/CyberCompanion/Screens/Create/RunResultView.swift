@@ -24,6 +24,13 @@ struct RunResultView: View {
                 ScheduleChangesView(changes: changes)
             }
 
+            if let emails = run.emailDrafts, !emails.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionLabel(emails.count == 1 ? "Email to send" : "Emails to send")
+                    ForEach(emails) { EmailDraftCard(draft: $0) }
+                }
+            }
+
             let waiting = run.proposals.filter(\.isPending)
             if !waiting.isEmpty { waitingForApproval(waiting) }
 
