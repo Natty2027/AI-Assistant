@@ -135,9 +135,7 @@ final class VoiceInput {
     private func makeTranscriber() async throws -> Transcriber {
         let transcriber: Transcriber
         if let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current) {
-            transcriber = .speech(SpeechTranscriber(
-                locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: []
-            ))
+            transcriber = .speech(Self.speechTranscriber(locale: locale))
         } else if let locale = await DictationTranscriber.supportedLocale(equivalentTo: .current) {
             transcriber = .dictation(DictationTranscriber(locale: locale, preset: .progressiveLongDictation))
         } else {
@@ -150,6 +148,11 @@ final class VoiceInput {
             try await request.downloadAndInstall()
         }
         return transcriber
+    }
+
+    /// The main recognizer's settings, shared with the end-to-end recognition test.
+    nonisolated static func speechTranscriber(locale: Locale) -> SpeechTranscriber {
+        SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
     }
 
     private func startListening(with transcriber: Transcriber) async throws {
@@ -177,7 +180,7 @@ final class VoiceInput {
         try await analyzer.start(inputSequence: inputs)
 
         let engine = AVAudioEngine()
-        let pipe = try AudioPipe(input: engine.inputNode, analyzerFormat: analyzerFormat, continuation: continuation) { [weak self] level in
+        let pipe = AudioPipe(inputFormat: engine.inputNode.outputFormat(forBus: 0), analyzerFormat: analyzerFormat, continuation: continuation) { [weak self] level in
             Task { @MainActor in self?.level = level }
         }
         pipe.install(on: engine.inputNode)
@@ -233,30 +236,39 @@ final class VoiceInput {
 
 /// Converts microphone buffers to the format the analyzer needs and feeds them in. It lives
 /// outside the main actor because the audio engine calls the tap on its own real-time thread.
-private final class AudioPipe: @unchecked Sendable {
+/// Tests feed it synthesized speech directly, to check recognition end to end.
+final class AudioPipe: @unchecked Sendable {
     private let converter: AVAudioConverter?
     private let inputFormat: AVAudioFormat
     private let analyzerFormat: AVAudioFormat
     private let continuation: AsyncStream<AnalyzerInput>.Continuation
     private let onLevel: @Sendable (Double) -> Void
 
-    init(input: AVAudioInputNode, analyzerFormat: AVAudioFormat, continuation: AsyncStream<AnalyzerInput>.Continuation,
-         onLevel: @escaping @Sendable (Double) -> Void) throws {
+    init(inputFormat: AVAudioFormat, analyzerFormat: AVAudioFormat, continuation: AsyncStream<AnalyzerInput>.Continuation,
+         onLevel: @escaping @Sendable (Double) -> Void) {
         self.onLevel = onLevel
-        let inputFormat = input.outputFormat(forBus: 0)
         self.inputFormat = inputFormat
         self.analyzerFormat = analyzerFormat
         self.continuation = continuation
         // The analyzer doesn't resample on its own, so convert unless the formats already match.
-        self.converter = inputFormat == analyzerFormat ? nil : AVAudioConverter(from: inputFormat, to: analyzerFormat)
+        let converter = inputFormat == analyzerFormat ? nil : AVAudioConverter(from: inputFormat, to: analyzerFormat)
+        // As in Apple's speech sample: no priming, so converted audio isn't shifted against the
+        // original at the start of each recording.
+        converter?.primeMethod = .none
+        self.converter = converter
     }
 
     func install(on node: AVAudioInputNode) {
         node.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [self] buffer, _ in
-            onLevel(Self.level(of: buffer))
-            if let converted = convert(buffer) {
-                continuation.yield(AnalyzerInput(buffer: converted))
-            }
+            feed(buffer)
+        }
+    }
+
+    /// One buffer of audio in the input format: measured for the orb, converted, sent on.
+    func feed(_ buffer: AVAudioPCMBuffer) {
+        onLevel(Self.level(of: buffer))
+        if let converted = convert(buffer) {
+            continuation.yield(AnalyzerInput(buffer: converted))
         }
     }
 
