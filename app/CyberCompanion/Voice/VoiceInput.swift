@@ -155,6 +155,17 @@ final class VoiceInput {
         SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
     }
 
+    #if os(iOS)
+    /// playAndRecord, as in Apple's live-transcription sample. The record category rejects
+    /// duckOthers with OSStatus -50 ("unsupported option for the category"), which is what stopped
+    /// the mic from starting in builds 2 and 3. Shared with a test that runs on iOS.
+    nonisolated static func activateSessionForListening() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.duckOthers, .defaultToSpeaker, .allowBluetoothHFP])
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
+    }
+    #endif
+
     private func startListening(with transcriber: Transcriber) async throws {
         let module = transcriber.module
         guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]) else {
@@ -162,9 +173,7 @@ final class VoiceInput {
         }
 
         #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .spokenAudio, options: [.duckOthers])
-        try session.setActive(true, options: .notifyOthersOnDeactivation)
+        try step("Couldn't set up the microphone") { try Self.activateSessionForListening() }
         #endif
 
         let analyzer = SpeechAnalyzer(modules: [module])
@@ -176,8 +185,10 @@ final class VoiceInput {
             await self?.collectResults(from: transcriber)
         }
         // Load the model now rather than on the first audio, so the opening words aren't delayed.
-        try await analyzer.prepareToAnalyze(in: analyzerFormat)
-        try await analyzer.start(inputSequence: inputs)
+        try await step("Couldn't load voice recognition") {
+            try await analyzer.prepareToAnalyze(in: analyzerFormat)
+            try await analyzer.start(inputSequence: inputs)
+        }
 
         let engine = AVAudioEngine()
         let pipe = AudioPipe(inputFormat: engine.inputNode.outputFormat(forBus: 0), analyzerFormat: analyzerFormat, continuation: continuation) { [weak self] level in
@@ -185,9 +196,18 @@ final class VoiceInput {
         }
         pipe.install(on: engine.inputNode)
         engine.prepare()
-        try engine.start()
+        try step("Couldn't start the microphone") { try engine.start() }
         self.engine = engine
         self.pipe = pipe
+    }
+
+    /// Names the setup step that failed, so a message from a tester says where to look.
+    private func step<T>(_ what: String, _ work: () throws -> T) throws -> T {
+        do { return try work() } catch { throw VoiceError(message: "\(what): \(error.localizedDescription)") }
+    }
+
+    private func step<T>(_ what: String, _ work: () async throws -> T) async throws -> T {
+        do { return try await work() } catch { throw VoiceError(message: "\(what): \(error.localizedDescription)") }
     }
 
     private func collectResults(from transcriber: Transcriber) async {
