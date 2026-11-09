@@ -19,6 +19,8 @@ final class AppModel {
     let speech = HeraVoice()
 
     var connections: [Connection] = []
+    /// Which platform sign-ins (X, Facebook and Instagram) the server can offer.
+    var signInAvailability: SignInAvailability = .none
     var proposals: [Proposal] = []
     var lastRun: AgentRunResponse?
     var aiConsent: Bool?
@@ -98,6 +100,7 @@ final class AppModel {
     private func resetLocalState() {
         speech.stop()
         connections = []
+        signInAvailability = .none
         proposals = []
         lastRun = nil
         aiConsent = nil
@@ -115,13 +118,15 @@ final class AppModel {
 
     /* ---------------- the assistant ---------------- */
 
-    func runAssistant(prompt: String, mode: CreateMode, allowWebSearch: Bool) async {
+    /// `photo` is a JPEG to attach to the posts (Posts only); it's uploaded first.
+    func runAssistant(prompt: String, mode: CreateMode, allowWebSearch: Bool, photo: Data? = nil) async {
         let request = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !request.isEmpty else { return }
         isRunning = true
         defer { isRunning = false }
         await perform {
-            lastRun = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch)
+            let photoID = if let photo, mode == .posts { try await client.uploadPhoto(jpeg: photo) } else { String?.none }
+            lastRun = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch, photoID: photoID)
             proposals = try await client.proposals()
         }
     }
@@ -164,14 +169,40 @@ final class AppModel {
 
     func refreshConnections() async {
         guard let client else { return }
-        await perform { connections = try await client.connections() }
+        await perform { try await loadConnections(client) }
+    }
+
+    private func loadConnections(_ client: APIClient) async throws {
+        let out = try await client.connections()
+        connections = out.connections
+        signInAvailability = out.signIn ?? .none
+    }
+
+    /// The platform's own sign-in page for connecting X, or Facebook and Instagram.
+    func signInPage(for provider: SignInProvider) async -> URL? {
+        guard let client else { return nil }
+        var url: URL?
+        await perform { url = try await client.signInPage(for: provider) }
+        return url
+    }
+
+    /// The sign-in sheet closed on the server's hera://connected address, which says how it went.
+    /// Returns true when the accounts were connected.
+    func finishSignIn(callback: URL) async -> Bool {
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard items.first(where: { $0.name == "status" })?.value == "ok" else {
+            errorMessage = items.first(where: { $0.name == "message" })?.value ?? "Connecting didn't finish. Please try again."
+            return false
+        }
+        await refreshConnections()
+        return true
     }
 
     func connectNetlify(token: String) async -> Bool {
         guard let client else { return false }
         return await perform {
             _ = try await client.connectNetlify(token: token.trimmingCharacters(in: .whitespacesAndNewlines))
-            connections = try await client.connections()
+            try await loadConnections(client)
         }
     }
 
@@ -179,7 +210,7 @@ final class AppModel {
         guard let client else { return false }
         return await perform {
             _ = try await client.connectBluesky(handle: handle, appPassword: appPassword)
-            connections = try await client.connections()
+            try await loadConnections(client)
         }
     }
 
@@ -187,7 +218,7 @@ final class AppModel {
         guard let client else { return }
         await perform {
             try await client.disconnect(connection)
-            connections = try await client.connections()
+            try await loadConnections(client)
         }
     }
 

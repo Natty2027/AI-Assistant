@@ -40,10 +40,18 @@ struct APIClient: Sendable {
 
     /* ---------------- the assistant ---------------- */
 
-    func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool) async throws -> AgentRunResponse {
-        struct Body: Encodable { let request: String; let mode: CreateMode; let allowWebSearch: Bool }
+    func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil) async throws -> AgentRunResponse {
+        struct Body: Encodable { let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String? }
         // A run can take several model turns, so it gets a much longer timeout than other calls.
-        return try await send("POST", "agent/run", body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch), timeout: 300)
+        return try await send("POST", "agent/run",
+                              body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID), timeout: 300)
+    }
+
+    /// Uploads a JPEG for the next posts run and returns its id.
+    func uploadPhoto(jpeg: Data) async throws -> String {
+        struct Body: Encodable { let data: String }
+        let out: PhotoUploadResponse = try await send("POST", "agent/media", body: Body(data: jpeg.base64EncodedString()), timeout: 120)
+        return out.id
     }
 
     func proposals() async throws -> [Proposal] {
@@ -89,9 +97,15 @@ struct APIClient: Sendable {
 
     /* ---------------- accounts ---------------- */
 
-    func connections() async throws -> [Connection] {
-        let out: ConnectionsResponse = try await send("GET", "agent/connections")
-        return out.connections
+    func connections() async throws -> ConnectionsResponse {
+        try await send("GET", "agent/connections")
+    }
+
+    /// The platform's own sign-in page, to open in a secure browser sheet.
+    func signInPage(for provider: SignInProvider) async throws -> URL {
+        let out: SignInStartResponse = try await send("GET", "agent/connections/oauth/\(provider.rawValue)")
+        guard let url = URL(string: out.authUrl), url.scheme == "https" else { throw APIError.invalidResponse }
+        return url
     }
 
     func connectNetlify(token netlifyToken: String) async throws -> Connection {

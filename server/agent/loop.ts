@@ -40,6 +40,8 @@ const MAX_TOTAL_TOKENS = 600_000;
 export interface Draft {
   id: string; connectionId: string | null; platform: Platform | null;
   text: string; link: string | null; sponsored: boolean;
+  /** The attached photo's id, if this post carries it. */
+  mediaRefs: string[];
   problems: Array<{ id: string; level: string; message: string }>;
 }
 
@@ -71,6 +73,8 @@ export interface AgentDeps {
   context: () => Context;
   /** Let the assistant search the web. Off by default: outside content is the main injection route. */
   allowWebSearch?: boolean;
+  /** A photo the person attached to this run (already checked to be theirs). */
+  photoId?: string | null;
 }
 
 export interface AgentResult {
@@ -101,6 +105,7 @@ const TOOLS = [
       text: { type: "string" },
       link: { type: ["string", "null"], description: "An https link, or null" },
       sponsored: { type: "boolean", description: "True if this is paid or sponsored promotion" },
+      attach_photo: { type: "boolean", description: "True to attach the photo the person added. Instagram posts need it." },
     }) },
   { name: "write_post", description: "Write a social post for the person to share themselves on a platform where no account is connected. Nothing is posted; the app lets them copy or share it. Returns a draft id and any problems found.", strict: true,
     input_schema: obj({
@@ -122,14 +127,14 @@ const INPUTS = {
   read_site_file: z.object({ path: z.string() }).strict(),
   write_site_file: z.object({ path: z.string(), contents: z.string() }).strict(),
   check_site: z.object({}).strict(),
-  draft_post: z.object({ connection_id: z.string(), text: z.string(), link: z.string().nullable(), sponsored: z.boolean() }).strict(),
+  draft_post: z.object({ connection_id: z.string(), text: z.string(), link: z.string().nullable(), sponsored: z.boolean(), attach_photo: z.boolean().default(false) }).strict(),
   write_post: z.object({ platform: z.enum(PLATFORMS), text: z.string().min(1).max(5000), link: z.string().nullable(), sponsored: z.boolean() }).strict(),
   propose_post: z.object({ draft_id: z.string(), summary: z.string() }).strict(),
   propose_site_deploy: z.object({ connection_id: z.string(), summary: z.string() }).strict(),
   ask_user: z.object({ question: z.string() }).strict(),
 } as const;
 
-function systemPrompt(ctx: Context, mode: AgentMode): string {
+function systemPrompt(ctx: Context, mode: AgentMode, hasPhoto: boolean): string {
   const kind = mode === "site" ? "hosting" : "social";
   const accounts = ctx.connections
     .filter((c) => c.kind === kind)
@@ -148,7 +153,9 @@ This session is only for posts. You can read the files of the person's website f
     ? `- Build plain static sites: no scripts from other websites, no forms that send answers to other websites, no password fields, no visitor tracking.
 - When the site is ready, check it with check_site, then propose publishing it to one of their hosting accounts.`
     : `- For a post to a connected account, use draft_post and then propose_post. For any other platform, use write_post: the person shares that one themselves. Fit each post to its platform's length and style.
-- If a post is paid or sponsored, set sponsored to true and say so in the text, for example #ad.`;
+- If a post is paid or sponsored, set sponsored to true and say so in the text, for example #ad.
+- ${hasPhoto ? "The person attached a photo. Attach it (attach_photo) to posts for connected accounts unless they said otherwise." : "The person attached no photo. An Instagram post needs one: if they want Instagram, ask them to add a photo with the photo button and send their request again."}
+- Links in Instagram captions can't be tapped, so for Instagram say where to find the link instead (for example, link in bio).`;
 
   return `${job}
 
@@ -189,7 +196,7 @@ export async function runAgent(deps: AgentDeps, request: string): Promise<AgentR
       // Route around a refusal with Anthropic's default fallback, rather than failing outright.
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-      system: systemPrompt(deps.context(), deps.mode),
+      system: systemPrompt(deps.context(), deps.mode, Boolean(deps.photoId)),
       tools,
       messages,
     };
@@ -261,13 +268,15 @@ async function runTool(
       case "draft_post": {
         const conn = ctx.connections.find((c) => c.id === input.connection_id && c.kind === "social");
         if (!conn) return { content: "That is not one of the person's connected social accounts.", error: true };
-        const draft: Draft = { id: `d_${randomBytes(6).toString("hex")}`, connectionId: conn.id, platform: conn.platform ?? null, text: input.text, link: input.link, sponsored: input.sponsored, problems: [] };
+        if (input.attach_photo && !deps.photoId) return { content: "The person didn't attach a photo to this request.", error: true };
+        const mediaRefs = input.attach_photo && deps.photoId ? [deps.photoId] : [];
+        const draft: Draft = { id: `d_${randomBytes(6).toString("hex")}`, connectionId: conn.id, platform: conn.platform ?? null, text: input.text, link: input.link, sponsored: input.sponsored, mediaRefs, problems: [] };
         draft.problems = evaluate("social.post", toPostPayload({ ...draft, connectionId: conn.id }), ctx);
         state.drafts.set(draft.id, draft);
         return { content: JSON.stringify({ draft_id: draft.id, problems: draft.problems }) };
       }
       case "write_post": {
-        const draft: Draft = { id: `d_${randomBytes(6).toString("hex")}`, connectionId: null, platform: input.platform, text: input.text, link: input.link, sponsored: input.sponsored, problems: [] };
+        const draft: Draft = { id: `d_${randomBytes(6).toString("hex")}`, connectionId: null, platform: input.platform, text: input.text, link: input.link, sponsored: input.sponsored, mediaRefs: [], problems: [] };
         // The person attaches photos when they share it themselves, so a missing image is a
         // reminder here rather than a reason to refuse the post.
         draft.problems = postContentChecks(input.platform, input.text, input.link, input.sponsored).map((c) =>
@@ -306,7 +315,7 @@ async function runTool(
 }
 
 function toPostPayload(d: Draft & { connectionId: string }) {
-  return { connectionId: d.connectionId, text: d.text, link: d.link, sponsored: d.sponsored, mediaRefs: [] as string[] };
+  return { connectionId: d.connectionId, text: d.text, link: d.link, sponsored: d.sponsored, mediaRefs: d.mediaRefs };
 }
 
 function proposalMessage(status: string, checks: Array<{ id: string; level: string; message: string }>): string {

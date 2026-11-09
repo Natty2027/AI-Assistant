@@ -49,16 +49,21 @@ enum Platform: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// The text exactly as it will appear. Bluesky has no separate link field, so the server appends
-    /// a link the text doesn't already contain (composedPostText in policy.ts).
+    /// The text exactly as it will appear. Bluesky and X have no separate link field, so the server
+    /// appends a link the text doesn't already contain (composedPostText in policy.ts).
     func composedText(_ text: String, link: String?) -> String {
-        guard self == .bluesky, let link, !link.isEmpty, !text.contains(link) else { return text }
+        guard self == .bluesky || self == .x, let link, !link.isEmpty, !text.contains(link) else { return text }
         return "\(text)\n\n\(link)"
     }
 
-    /// Counted the way the platform counts: graphemes for Bluesky, UTF-16 units elsewhere.
+    /// Counted the way the platform counts: graphemes for Bluesky, every link as 23 characters on
+    /// X, UTF-16 units elsewhere.
     func measuredLength(of text: String) -> Int {
-        self == .bluesky ? text.count : text.utf16.count
+        switch self {
+        case .bluesky: text.count
+        case .x: text.replacing(/https?:\/\/\S+/, with: String(repeating: "x", count: 23)).utf16.count
+        default: text.utf16.count
+        }
     }
 }
 
@@ -191,7 +196,37 @@ struct SiteResponse: Codable, Hashable, Sendable {
 
 /* ---------------- envelopes ---------------- */
 
-struct ConnectionsResponse: Decodable, Sendable { let connections: [Connection] }
+struct ConnectionsResponse: Decodable, Sendable {
+    let connections: [Connection]
+    /// Which platform sign-ins the server has set up. Absent on servers from before they existed.
+    let signIn: SignInAvailability?
+}
+
+/// Platforms connected by signing in on the platform's own page (OAuth), rather than with a token.
+enum SignInProvider: String, Codable, Identifiable, Sendable {
+    /// X (Twitter).
+    case x
+    /// One Meta sign-in covers a Facebook Page and the Instagram account linked to it.
+    case meta
+    var id: Self { self }
+}
+
+struct SignInAvailability: Codable, Hashable, Sendable {
+    let x: Bool
+    let meta: Bool
+
+    static let none = SignInAvailability(x: false, meta: false)
+
+    func isAvailable(_ provider: SignInProvider) -> Bool {
+        switch provider {
+        case .x: x
+        case .meta: meta
+        }
+    }
+}
+
+struct SignInStartResponse: Decodable, Sendable { let authUrl: String }
+struct PhotoUploadResponse: Decodable, Sendable { let id: String }
 struct ConnectionResponse: Decodable, Sendable { let connection: Connection }
 struct ProposalsResponse: Decodable, Sendable { let proposals: [Proposal] }
 struct ProposalResponse: Decodable, Sendable { let proposal: Proposal }

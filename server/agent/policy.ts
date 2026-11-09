@@ -76,17 +76,18 @@ export function isPlatform(p: unknown): p is Platform {
 export const TEXT_LIMITS: Record<Platform, number> = { x: 280, instagram: 2200, linkedin: 3000, facebook: 5000, bluesky: 300 };
 
 /**
- * The text exactly as it will appear. Bluesky has no separate link field, so a link the text
- * does not already contain is appended, and it counts toward the limit.
+ * The text exactly as it will appear. Bluesky and X have no separate link field, so a link the
+ * text does not already contain is appended, and it counts toward the limit.
  */
 export function composedPostText(platform: Platform, text: string, link: string | null): string {
-  if (platform !== "bluesky" || !link || text.includes(link)) return text;
+  if ((platform !== "bluesky" && platform !== "x") || !link || text.includes(link)) return text;
   return `${text}\n\n${link}`;
 }
 
-/** Bluesky counts graphemes (an emoji is one); the others are measured in UTF-16 units here,
- *  which never undercounts. */
+/** Bluesky counts graphemes (an emoji is one). X counts every link as 23 characters, however
+ *  long. The others are measured in UTF-16 units here, which never undercounts. */
 function measured(platform: Platform, text: string): number {
+  if (platform === "x") return text.replace(/https?:\/\/\S+/g, "x".repeat(23)).length;
   if (platform !== "bluesky") return text.length;
   let n = 0;
   for (const _ of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) n++;

@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// Type or speak a request: "make a website for my pottery class and write posts announcing it".
@@ -13,6 +14,11 @@ struct AssistantView: View {
     /// Website or posts: one at a time, never both in the same run.
     @State private var mode: CreateMode = .site
     @State private var allowWebSearch = false
+    /// A photo for the posts (Instagram needs one). Posts only.
+    @State private var photoItem: PhotosPickerItem?
+    @State private var photo: PostPhoto?
+    @State private var isLoadingPhoto = false
+    @State private var photoProblem: String?
     @State private var voice = VoiceInput()
     /// What was typed before the mic started, so dictation is added to it rather than replacing it.
     @State private var promptBeforeVoice = ""
@@ -153,7 +159,33 @@ struct AssistantView: View {
                 .textFieldStyle(.plain)
                 .disabled(voice.isListening)
 
+            if mode == .posts, let photo {
+                attachedPhoto(photo)
+            }
+            if mode == .posts, let photoProblem {
+                Label(photoProblem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+
             HStack(spacing: 10) {
+                if mode == .posts {
+                    // The label closure runs off the main actor, so it gets plain values.
+                    let loading = isLoadingPhoto
+                    let title = photo == nil ? "Photo" : "Change"
+                    PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                        if loading {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label(title, systemImage: "photo")
+                                .font(.footnote.weight(.semibold))
+                        }
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(model.isRunning || isLoadingPhoto)
+                    .help("Add a photo to your posts. Instagram posts need one.")
+                }
+
                 Toggle(isOn: $allowWebSearch) {
                     Label("Web search", systemImage: "globe")
                         .font(.footnote.weight(.semibold))
@@ -179,6 +211,48 @@ struct AssistantView: View {
         .padding(16)
         .glassEffect(.regular, in: shape)
         .overlay { SpectrumEdge(cornerRadius: 28, isActive: model.isRunning || voice.isListening) }
+        .onChange(of: photoItem) { _, item in
+            Task { await loadPhoto(item) }
+        }
+    }
+
+    private func attachedPhoto(_ photo: PostPhoto) -> some View {
+        HStack(spacing: 12) {
+            Image(decorative: photo.preview, scale: 1)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Text("Hera will add this photo to your posts.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Remove photo", systemImage: "xmark.circle.fill") {
+                photoItem = nil
+                self.photo = nil
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Reads the chosen photo and prepares it (JPEG, sized and shaped for Instagram) off the main thread.
+    private func loadPhoto(_ item: PhotosPickerItem?) async {
+        photoProblem = nil
+        guard let item else { return }
+        isLoadingPhoto = true
+        defer { isLoadingPhoto = false }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else { throw CocoaError(.fileReadCorruptFile) }
+            let jpeg = await Task.detached(priority: .userInitiated) { PostPhoto.prepare(from: data) }.value
+            guard let jpeg, let prepared = PostPhoto(jpeg: jpeg) else { throw CocoaError(.fileReadCorruptFile) }
+            photo = prepared
+        } catch {
+            photo = nil
+            photoItem = nil
+            photoProblem = "That photo couldn't be used. Try a different one."
+        }
     }
 
     private var suggestionChips: some View {
@@ -238,6 +312,9 @@ struct AssistantView: View {
             model.clearLastRun()
             prompt = ""
             promptBeforeVoice = ""
+            photoItem = nil
+            photo = nil
+            photoProblem = nil
             conversation = .none
         }
         proxy.scrollTo("top", anchor: .top)
@@ -251,7 +328,8 @@ struct AssistantView: View {
         promptFocused = false
         conversation = .none
         model.speech.stop()
-        await model.runAssistant(prompt: prompt, mode: mode, allowWebSearch: allowWebSearch)
+        await model.runAssistant(prompt: prompt, mode: mode, allowWebSearch: allowWebSearch,
+                                 photo: mode == .posts ? photo?.jpeg : nil)
     }
 
     /* ---------------- "Talk to Hera" ---------------- */

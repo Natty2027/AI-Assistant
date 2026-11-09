@@ -46,10 +46,27 @@ struct ModelsTests {
         #expect(p.isBlocked == false)
     }
 
-    @Test func blueskyAppendsALinkTheTextLacks() {
+    @Test func blueskyAndXAppendALinkTheTextLacks() {
         #expect(Platform.bluesky.composedText("Kiln day", link: "https://e.com") == "Kiln day\n\nhttps://e.com")
         #expect(Platform.bluesky.composedText("See https://e.com", link: "https://e.com") == "See https://e.com")
-        #expect(Platform.x.composedText("Kiln day", link: "https://e.com") == "Kiln day")
+        #expect(Platform.x.composedText("Kiln day", link: "https://e.com") == "Kiln day\n\nhttps://e.com")
+        #expect(Platform.facebook.composedText("Kiln day", link: "https://e.com") == "Kiln day")
+    }
+
+    /// X counts every link as 23 characters, however long (measured() in policy.ts).
+    @Test func xCountsALinkAs23Characters() {
+        let link = "https://claycorner.example/" + String(repeating: "a", count: 200)
+        #expect(Platform.x.measuredLength(of: "Hi \(link)") == 3 + 23)
+    }
+
+    @Test func readsWhichSignInsTheServerOffers() throws {
+        let json = #"{ "connections": [], "signIn": { "x": true, "meta": false } }"#
+        let out = try JSONDecoder().decode(ConnectionsResponse.self, from: Data(json.utf8))
+        #expect(out.signIn?.isAvailable(.x) == true)
+        #expect(out.signIn?.isAvailable(.meta) == false)
+        // Servers from before sign-in existed leave it out.
+        let old = try JSONDecoder().decode(ConnectionsResponse.self, from: Data(#"{ "connections": [] }"#.utf8))
+        #expect(old.signIn == nil)
     }
 
     @Test func blueskyCountsEmojiAsOneCharacter() {

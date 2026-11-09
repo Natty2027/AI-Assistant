@@ -7,11 +7,21 @@
  *
  * See .env.example for the full list and how to obtain each value.
  */
+import path from "node:path";
 
 function opt(name: string): string | undefined {
   const v = process.env[name];
   return v && v.length ? v : undefined;
 }
+
+/** An OAuth client (X, Meta): both halves or nothing, so a half-configured provider stays off. */
+export interface OAuthClient { clientId: string; clientSecret: string }
+function client(idName: string, secretName: string): OAuthClient | undefined {
+  const clientId = opt(idName), clientSecret = opt(secretName);
+  return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+}
+
+const sitesDir = opt("AGENT_SITES_DIR") ?? "data/sites";
 
 function bool(name: string, dflt = false): boolean {
   const v = opt(name);
@@ -69,5 +79,18 @@ export const config = {
 
   /** Where the assistant keeps each person's website files until they publish them. On a host
    *  with an ephemeral disk (Railway's default), point this at a mounted volume. */
-  sitesDir: opt("AGENT_SITES_DIR") ?? "data/sites",
+  sitesDir,
+  /** Photos people attach to posts (Instagram needs one). Next to the sites folder by default,
+   *  so it lands on the same Railway volume. */
+  mediaDir: opt("AGENT_MEDIA_DIR") ?? path.join(path.dirname(sitesDir), "media"),
+
+  /** This server's public https address, e.g. https://ai-assistant-production-e789.up.railway.app.
+   *  X and Meta sign-in send people back to <publicUrl>/oauth/callback/<provider>, and Instagram
+   *  fetches attached photos from <publicUrl>/media/... . Without it those features stay off. */
+  publicUrl: opt("PUBLIC_URL")?.replace(/\/+$/, ""),
+
+  /** X (Twitter) developer app: OAuth 2.0 client id and secret. */
+  x: client("X_CLIENT_ID", "X_CLIENT_SECRET"),
+  /** Meta developer app (Facebook Pages and Instagram): app id and app secret. */
+  meta: client("META_APP_ID", "META_APP_SECRET"),
 } as const;

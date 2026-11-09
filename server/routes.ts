@@ -15,6 +15,7 @@ import { AgentService } from "./agent/service.ts";
 import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
 import { ActionError } from "./agent/approvals.ts";
 import { SandboxError } from "./agent/sandbox.ts";
+import { isOAuthProvider } from "./agent/oauth.ts";
 
 const writeLimiter = createLimiter({ windowMs: 60_000, max: 20 });
 // Each assistant run can be many model calls, so it gets a much tighter budget.
@@ -28,6 +29,8 @@ function agent(): AgentService {
     run: (sql, params) => query(sql, params ?? []) as Promise<{ rows: any[] }>,
     fetch: (url, init) => fetch(url, init),
     sitesDir: config.sitesDir,
+    mediaDir: config.mediaDir,
+    oauth: { publicUrl: config.publicUrl, x: config.x, meta: config.meta },
     // maxRetries 0: the agent loop retries through withAiRetry, so the SDK must not retry too.
     client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 }) : null,
   });
@@ -37,7 +40,7 @@ function agent(): AgentService {
 /** Turns the agent's typed failures into HTTP answers a person can read. */
 function agentFailure(e: unknown): never {
   if (e instanceof ActionError) {
-    const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, ai_unavailable: 503, provider_unavailable: 502 };
+    const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, bad_media: 400, ai_unavailable: 503, provider_unavailable: 502 };
     throw new HttpError(status[e.code] ?? 409, e.message, true, e.code);
   }
   if (e instanceof SandboxError) throw new HttpError(400, e.message, true, `site_${e.code}`);
@@ -103,7 +106,31 @@ export function buildRouter(): Router {
       testToken: Boolean(config.testAccessToken && config.testUserId),
       devUser: Boolean(config.devUserId),
     },
+    // Which sign-ins for posting are configured (developer app keys plus PUBLIC_URL).
+    publishing: {
+      x: Boolean(config.publicUrl && config.x),
+      meta: Boolean(config.publicUrl && config.meta),
+    },
   }));
+
+  /* ---- photos attached to posts: public, because Meta downloads them to post on Instagram.
+     Addresses are unguessable (see agent/media.ts) and the file name is checked exactly. ---- */
+  r.get("/media/:file", async (ctx) => {
+    const bytes = await agent().media.read(ctx.params.file);
+    if (!bytes) throw new HttpError(404, "Not found.");
+    ctx.res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": bytes.length });
+    ctx.res.end(bytes);
+  });
+
+  /* ---- X and Meta send the browser back here after the person signs in. Public: the one-time
+     state in the address identifies whose sign-in it is (see agent/oauth.ts). ---- */
+  r.get("/oauth/callback/:provider", async (ctx) => {
+    const provider = ctx.params.provider;
+    if (!isOAuthProvider(provider)) throw new HttpError(404, "Not found.");
+    const next = await agent().finishOAuth(provider, ctx.url.searchParams, ensureSettings);
+    ctx.res.writeHead(302, { Location: next });
+    ctx.res.end();
+  });
 
   /* ---- AI consent: explicit, revocable, and checked server-side on every assistant run ---- */
   r.get("/consent/ai", async (ctx) => {
@@ -174,7 +201,24 @@ export function buildRouter(): Router {
 
   r.get("/agent/connections", async (ctx) => {
     const userId = requireAuth(ctx);
-    return { connections: await guarded(() => agent().connections(userId)) };
+    // `signIn` tells the app which Connect buttons can work on this server.
+    return { connections: await guarded(() => agent().connections(userId)), signIn: agent().oauthAvailable() };
+  });
+
+  /** Starts connecting X ("x") or Facebook and Instagram ("meta"): returns the platform's sign-in page. */
+  r.get("/agent/connections/oauth/:provider", async (ctx) => {
+    const userId = requireAuth(ctx);
+    const provider = ctx.params.provider;
+    if (!isOAuthProvider(provider)) throw new HttpError(404, "Not found.");
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    return { auth_url: await guarded(() => agent().beginOAuth(userId, provider)) };
+  });
+
+  /** A photo for the next posts run, as base64 JPEG. Returns its id for /agent/run. */
+  r.post("/agent/media", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    return { ok: true, id: await guarded(() => agent().savePhoto(userId, ctx.body.data)) };
   });
 
   r.post("/agent/connections/netlify", async (ctx) => {
@@ -211,7 +255,10 @@ export function buildRouter(): Router {
     await requireAiConsent(userId);
     // Counted only once the run can actually happen, so refused requests don't use up the hour.
     if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
-    const out = await guarded(() => agent().run(userId, request, { mode: mode as AgentMode, allowWebSearch: ctx.body.allow_web_search === true }));
+    const out = await guarded(() => agent().run(userId, request, {
+      mode: mode as AgentMode, allowWebSearch: ctx.body.allow_web_search === true,
+      photoId: mode === "posts" ? ctx.body.photo_id ?? null : null,
+    }));
     return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, tainted: out.tainted };
   });
 

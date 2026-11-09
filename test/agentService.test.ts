@@ -71,7 +71,7 @@ function siteBuilder(connectionId: string, html = "<h1>Clay Corner</h1><p>Potter
 }
 
 function service(f: FetchLike, client: any = null) {
-  return new AgentService({ run, fetch: f, sitesDir, client, sleep: async () => {} });
+  return new AgentService({ run, fetch: f, sitesDir, mediaDir: path.join(sitesDir, "..", "media"), client, sleep: async () => {} });
 }
 
 /* ---------------- connections ---------------- */
@@ -238,7 +238,7 @@ test("an approved post is published to Bluesky once, with the link made clickabl
   assert.equal(Buffer.from(record.text).subarray(facet.index.byteStart, facet.index.byteEnd).toString(), "https://claycorner.example/");
 
   // The same words again today, to the same account, are refused by the rules.
-  const repeat = new AgentService({ run, fetch: fake.f, sitesDir, store: svc.store, sleep: async () => {},
+  const repeat = new AgentService({ run, fetch: fake.f, sitesDir, mediaDir: path.join(sitesDir, "..", "media"), store: svc.store, sleep: async () => {},
     client: poster(conn.id, "Beginner pottery, Saturdays at 10. Sign up:", "https://claycorner.example/") });
   const again = (await repeat.run(U, "again", { mode: "posts" })).proposals[0];
   assert.equal(again.status, "blocked");

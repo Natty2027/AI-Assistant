@@ -64,7 +64,7 @@ struct NetworkingTests {
                                refreshAfterUnauthorized: { tokens.advance() },
                                session: StubProtocol.session, sleep: { _ in })
         let connections = try await client.connections()
-        #expect(connections.isEmpty)
+        #expect(connections.connections.isEmpty)
         #expect(StubProtocol.requests.count == 2)
     }
 
