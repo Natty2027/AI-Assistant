@@ -30,6 +30,8 @@ final class HeraVoice {
 
     private(set) var phase: Phase = .idle
     var isSpeaking: Bool { phase != .idle }
+    /// Whether any audio is actually playing right now, her own voice or the system's.
+    var isMakingSound: Bool { (player?.isPlaying ?? false) || systemVoice.isSpeaking }
     /// Why Hera last couldn't use her own voice, for the screen. Cleared when it works again.
     private(set) var problem: String?
 
@@ -95,7 +97,8 @@ final class HeraVoice {
         onFinished = nil
         speakTask?.cancel()
         speakTask = nil
-        if systemVoice.isSpeaking { systemVoice.stopSpeaking(at: .immediate) }
+        // Unconditionally: an utterance can be queued without isSpeaking being true yet.
+        systemVoice.stopSpeaking(at: .immediate)
         tearDownAudio()
         phase = .idle
     }

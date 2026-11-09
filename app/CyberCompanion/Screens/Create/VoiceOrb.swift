@@ -5,6 +5,8 @@ import SwiftUI
 struct VoiceOrb: View {
     let isListening: Bool
     let isBusy: Bool
+    /// Hera is talking: the orb becomes her Stop button.
+    var isHeraSpeaking = false
     /// 0...1, how loud the speaker is.
     let level: Double
     let action: () -> Void
@@ -19,7 +21,7 @@ struct VoiceOrb: View {
                 if isBusy {
                     ProgressView().controlSize(.large).tint(.white)
                 } else {
-                    Image(systemName: isListening ? "waveform" : "mic.fill")
+                    Image(systemName: isHeraSpeaking ? "stop.fill" : isListening ? "waveform" : "mic.fill")
                         .font(.system(size: 34, weight: .semibold))
                         .foregroundStyle(.white)
                         .symbolEffect(.variableColor.iterative, isActive: isListening && !reduceMotion)
@@ -32,8 +34,8 @@ struct VoiceOrb: View {
             .background { if isListening { ripples } }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isListening ? "Stop listening" : "Speak your request")
-        .accessibilityHint("Your voice is recognized on this device")
+        .accessibilityLabel(isHeraSpeaking ? "Stop Hera" : isListening ? "Stop listening" : "Speak your request")
+        .accessibilityHint(isHeraSpeaking ? "Ends what Hera is saying" : "Your voice is recognized on this device")
         .animation(.spring(duration: 0.35), value: isListening)
     }
 

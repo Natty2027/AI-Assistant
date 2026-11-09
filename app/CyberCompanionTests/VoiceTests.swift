@@ -34,6 +34,31 @@ struct VoiceTests {
         #expect(voice.problem == nil, "her own voice was used, not the system fallback")
     }
 
+    /// The Stop button: pressed while Hera is mid-sentence, she goes quiet at once and stays quiet,
+    /// and nothing she was going to say afterwards (the conversation's next step) runs.
+    @Test(.timeLimit(.minutes(2))) @MainActor func stopEndsWhatSheIsSaying() async throws {
+        let voice = HeraVoice()
+        var finishedAnyway = false
+        voice.speak(String(repeating: "Here is a long reply about your new website and the posts that go with it. ", count: 6)) {
+            finishedAnyway = true
+        }
+        // Wait until sound is actually coming out.
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(90)
+        while !voice.isMakingSound, clock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        try #require(voice.isMakingSound, "she never started speaking")
+
+        voice.stop()
+        #expect(voice.phase == .idle)
+        #expect(!voice.isMakingSound, "still making sound right after Stop")
+        // Synthesis of later sentences may still be finishing in the background: none of it may play.
+        for _ in 0..<30 {
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(!voice.isMakingSound && voice.phase == .idle, "she started talking again after Stop")
+        }
+        #expect(!finishedAnyway)
+    }
+
     /// "Talk to Hera" asks "website or posts?": one at a time, so both or neither means ask again.
     @Test func spokenAnswersPickWebsiteOrPosts() {
         #expect(ConversationReply.mode(from: "Let's make a website") == .site)

@@ -44,10 +44,12 @@ struct AssistantView: View {
                 hero
                     .id("top")
                 notices
-                VoiceOrb(isListening: voice.isListening, isBusy: isPreparingVoice, level: voice.level) {
-                    Task { await toggleVoice() }
+                VoiceOrb(isListening: voice.isListening, isBusy: isPreparingVoice,
+                         isHeraSpeaking: model.speech.isSpeaking, level: voice.level) {
+                    if model.speech.isSpeaking { stopHera() } else { Task { await toggleVoice() } }
                 }
-                .disabled(model.isRunning)
+                // While Hera is reading a reply out, the orb stays usable as her Stop button.
+                .disabled(model.isRunning && !model.speech.isSpeaking)
                 voiceStatus
                 composer
                 if prompt.isEmpty && model.lastRun == nil && !model.isRunning {
@@ -121,6 +123,10 @@ struct AssistantView: View {
     private var voiceStatus: some View {
         Group {
             switch voice.state {
+            case .idle where model.speech.isSpeaking:
+                Button("Hera is speaking · Stop", systemImage: "stop.fill", action: stopHera)
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
             case .idle:
                 Text("Tap to speak")
             case .listening:
@@ -296,6 +302,13 @@ struct AssistantView: View {
     private var canSend: Bool {
         model.isConfigured && !model.isRunning && !voice.isListening
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Ends what Hera is saying and, if she was in the middle of "Talk to Hera", the conversation
+    /// too, so she doesn't carry on to the next question.
+    private func stopHera() {
+        model.speech.stop()
+        conversation = .none
     }
 
     private func toggleVoice() async {
