@@ -38,6 +38,7 @@ struct AccountsView: View {
                     serviceRow(title: "Instagram & Facebook", subtitle: "Your Facebook Page and its Instagram account",
                                systemImage: "camera", connections: connections("facebook", "instagram"),
                                available: model.signInAvailability.meta, busy: signingIn == .meta) { signIn(.meta) }
+                    instagramBusinessNote
                     serviceRow(title: "X", subtitle: "Posts to your X account", systemImage: "xmark",
                                connections: connections("x"), available: model.signInAvailability.x, busy: signingIn == .x) { signIn(.x) }
                     serviceRow(title: "Bluesky", subtitle: "Posts to your Bluesky account", systemImage: "cloud.fill",
@@ -45,7 +46,7 @@ struct AccountsView: View {
                 } header: {
                     SectionLabel("Your posts")
                 } footer: {
-                    Text("Nothing is published until you approve it in Review. Instagram needs a Business or Creator account linked to a Facebook Page. Disconnecting deletes the saved login; anything already published stays up.")
+                    Text("Nothing is published until you approve it in Review. Disconnecting deletes the saved login; anything already published stays up.")
                 }
 
                 Section {
@@ -92,6 +93,19 @@ struct AccountsView: View {
                 Text("The saved login is deleted. Anything already published stays up.")
             }
         }
+    }
+
+    /// Instagram's own rule, explained before someone tries to connect a personal account.
+    private var instagramBusinessNote: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Instagram needs a Business or Creator account", systemImage: "info.circle")
+                .font(.footnote.weight(.semibold))
+            Text("Instagram only lets apps post to Business or Creator accounts that are linked to a Facebook Page. Personal accounts can't be connected.")
+            Text("Switching is free and takes a minute: in Instagram, go to Settings → Account type and tools → Switch to professional account. Then link it to your Facebook Page from Edit profile → Page. When you connect here, choose that Page.")
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
     }
 
     private func connections(_ providers: String...) -> [Connection] {
