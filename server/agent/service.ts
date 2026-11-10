@@ -18,7 +18,7 @@ import { parseCredential, publishPost, verifyCredential, type BlueskyCredential 
 import * as x from "./x.ts";
 import * as meta from "./meta.ts";
 import { MediaError, MediaStore } from "./media.ts";
-import { appReturnUrl, OAuthStates, redirectUri, type OAuthProvider } from "./oauth.ts";
+import { appReturnUrl, OAuthStates, PendingConnections, redirectUri, type OAuthProvider } from "./oauth.ts";
 import type { OAuthClient } from "../config.ts";
 import { ProviderError, type FetchLike, type Run } from "../shared.ts";
 import { decryptToken, encryptToken, newDataKeyId } from "../crypto/envelope.ts";
@@ -71,6 +71,7 @@ export class AgentService {
   readonly media: MediaStore;
   readonly memory: MemoryStore;
   private readonly oauthStates = new OAuthStates();
+  private readonly pendingConnections = new PendingConnections<{ x: x.XCredential } | { meta: meta.MetaPage[] }>();
 
   constructor(private readonly d: ServiceDeps) {
     this.store = d.store ?? new ActionStore();
@@ -92,6 +93,7 @@ export class AgentService {
   async forget(userId: string): Promise<void> {
     this.store.forget(userId);
     this.oauthStates.forget(userId);
+    this.pendingConnections.forget(userId);
     this.memory.forgetAll(userId);
     await SiteSandbox.remove(this.d.sitesDir, this.siteIdFor(userId));
     await this.media.removeAll(this.siteIdFor(userId));
@@ -186,13 +188,11 @@ export class AgentService {
   }
 
   /**
-   * The platform sent the browser back. Returns where to send it next (the app's hera:// address,
-   * with the outcome) and whose sign-in it was, so the caller can make sure their settings row
-   * exists first. Never throws: every failure becomes a message the app shows.
+   * The platform sent the browser back. Trades the code for tokens and holds the result for the
+   * app to confirm (confirmOAuth); nothing is saved here. Returns where to send the browser next
+   * (the app's hera:// address). Never throws: every failure becomes a message the app shows.
    */
-  async finishOAuth(
-    provider: OAuthProvider, query: URLSearchParams, beforeSave: (userId: string) => Promise<void> = async () => {},
-  ): Promise<string> {
+  async finishOAuth(provider: OAuthProvider, query: URLSearchParams): Promise<string> {
     const fail = (message: string) => appReturnUrl(provider, { ok: false, message });
     const pending = this.oauthStates.finish(query.get("state") ?? "", provider);
     if (!pending) return fail("That sign-in expired. Please try connecting again.");
@@ -204,26 +204,62 @@ export class AgentService {
     if (!code || !o?.publicUrl || !client) return fail("Something went wrong signing in. Please try again.");
     const back = redirectUri(o.publicUrl, provider);
     try {
-      await beforeSave(pending.userId);
       if (provider === "x") {
-        await this.saveX(pending.userId, await x.exchangeCode(client, code, pending.verifier, back, this.d.fetch));
-      } else {
-        const pages = await meta.exchangeCode(client, code, back, this.d.fetch);
-        if (!pages.length) {
-          return fail("No Facebook Page was shared. Hera posts to Facebook Pages (not personal profiles) and to Instagram Business or Creator accounts linked to a Page. Create or pick a Page, then connect again.");
-        }
-        await this.saveMeta(pending.userId, pages);
-        // Business accounts only: Instagram connects through a Page it's linked to, never on its own.
-        if (!pages.some((p) => p.instagram)) {
-          return appReturnUrl(provider, { ok: true, note: "Your Facebook Page is connected, but no Instagram Business or Creator account is linked to it, so Instagram isn't. Switch Instagram to a professional account, link it to this Page, then connect again." });
-        }
+        const cred = await x.exchangeCode(client, code, pending.verifier, back, this.d.fetch);
+        return appReturnUrl(provider, { ok: true, pending: this.pendingConnections.hold(pending.userId, provider, { x: cred }) });
       }
-      return appReturnUrl(provider, { ok: true });
+      const pages = await meta.exchangeCode(client, code, back, this.d.fetch);
+      if (!pages.length) {
+        return fail("No Facebook Page was shared. Hera posts to Facebook Pages (not personal profiles) and to Instagram Business or Creator accounts linked to a Page. Create or pick a Page, then connect again.");
+      }
+      return appReturnUrl(provider, { ok: true, pending: this.pendingConnections.hold(pending.userId, provider, { meta: pages }) });
     } catch (e) {
       if (e instanceof ProviderError && e.kind === "unauthorized") return fail("The sign-in wasn't accepted. Please try again.");
       if (e instanceof ProviderError) return fail("Couldn't finish connecting right now. Try again shortly.");
       console.error(`[oauth] ${provider} sign-in failed`, e instanceof Error ? e.message : e);
       return fail("Something went wrong signing in. Please try again.");
+    }
+  }
+
+  /**
+   * The app, signed in, confirms a finished sign-in. Saved only if it's the same person who
+   * started it. Returns a note when there's something they should know.
+   */
+  async confirmOAuth(userId: string, pendingId: unknown): Promise<{ note: string | null }> {
+    const held = typeof pendingId === "string" ? this.pendingConnections.take(pendingId, userId) : null;
+    if (!held) throw new ActionError("not_found", "That sign-in expired or wasn't started from this account. Please connect again.");
+    if ("x" in held.value) {
+      await this.saveX(userId, held.value.x);
+      return { note: null };
+    }
+    await this.saveMeta(userId, held.value.meta);
+    // Business accounts only: Instagram connects through a Page it's linked to, never on its own.
+    return { note: held.value.meta.some((p) => p.instagram) ? null
+      : "Your Facebook Page is connected, but no Instagram Business or Creator account is linked to it, so Instagram isn't. Switch Instagram to a professional account, link it to this Page, then connect again." };
+  }
+
+  /** One refresh at a time per X connection: X replaces the refresh token on every use, so two
+   *  posts refreshing at once would leave one holding a dead token. Reads the latest saved
+   *  credential inside the lock, and saves the new one before anything else. */
+  private readonly xRefreshes = new Map<string, Promise<unknown>>();
+  private async freshXCredential(connectionId: string, client: OAuthClient): Promise<x.XCredential> {
+    const previous = this.xRefreshes.get(connectionId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(async () => {
+      const { rows } = await this.d.run(`select token_ct, data_key_id from action_connections where id = $1`, [connectionId]);
+      const before = JSON.parse(decryptToken(Buffer.from(rows[0].token_ct), rows[0].data_key_id)) as x.XCredential;
+      const cred = await x.freshCredential(client, before, this.d.fetch);
+      if (cred !== before) {
+        const keyId = newDataKeyId();
+        await this.d.run(`update action_connections set token_ct = $2, data_key_id = $3 where id = $1`,
+          [connectionId, encryptToken(JSON.stringify(cred), keyId), keyId]);
+      }
+      return cred;
+    });
+    this.xRefreshes.set(connectionId, next);
+    try {
+      return await next;
+    } finally {
+      if (this.xRefreshes.get(connectionId) === next) this.xRefreshes.delete(connectionId);
     }
   }
 
@@ -363,10 +399,10 @@ export class AgentService {
     if (!c) return { ok: false, detail: "That hosting connection is no longer there." };
 
     const sandbox = await this.sandbox(userId);
-    // The rules already compared fingerprints a moment ago; compare once more immediately
-    // before the upload, so nothing written in between can reach the public.
-    if ((await sandbox.digest()) !== payload.contentHash) return { ok: false, detail: "The site changed after it was approved." };
-    const files = await sandbox.bundle();
+    // The rules already compared fingerprints a moment ago. Read the files once more, compare
+    // that exact copy with what was approved, and upload that same copy.
+    const { digest, files } = await sandbox.publishable();
+    if (digest !== payload.contentHash) return { ok: false, detail: "The site changed after it was approved." };
 
     const token = decryptToken(Buffer.from(c.token_ct), c.data_key_id);
     try {
@@ -413,14 +449,7 @@ export class AgentService {
         case "x": {
           const client = this.d.oauth?.x;
           if (!client) return { ok: false, detail: "Posting to X isn't set up on this server." };
-          const before = JSON.parse(secret) as x.XCredential;
-          const cred = await x.freshCredential(client, before, this.d.fetch);
-          // X replaces the refresh token on every use, so save the new one before anything else.
-          if (cred !== before) {
-            const keyId = newDataKeyId();
-            await this.d.run(`update action_connections set token_ct = $2, data_key_id = $3 where id = $1`,
-              [c.id, encryptToken(JSON.stringify(cred), keyId), keyId]);
-          }
+          const cred = await this.freshXCredential(c.id, client);
           url = (await x.publishPost(cred, { text, link }, this.d.fetch)).url;
           break;
         }

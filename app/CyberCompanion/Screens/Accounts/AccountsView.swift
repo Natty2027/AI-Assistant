@@ -124,7 +124,10 @@ struct AccountsView: View {
             }
             let callback: URL
             do {
-                callback = try await webAuthenticationSession.authenticate(using: page, callbackURLScheme: "hera")
+                // Ephemeral: Safari's saved X or Facebook login isn't reused, so the person always
+                // sees and chooses which account they're connecting.
+                callback = try await webAuthenticationSession.authenticate(using: page, callbackURLScheme: "hera",
+                                                                           preferredBrowserSession: .ephemeral)
             } catch {
                 // Closing the sheet is a choice, not an error; nothing to show.
                 return

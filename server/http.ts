@@ -35,7 +35,11 @@ interface Route {
   handler: Handler;
 }
 
-const MAX_BODY_BYTES = 8 * 1024 * 1024; // capture uploads base64 images; keep in step with 5MB raw
+/** Request bodies are small JSON, except photo uploads (base64 JPEG, up to 5 MB raw). A smaller
+ *  default limit keeps an unauthenticated flood of large bodies from exhausting memory. */
+const MAX_BODY_BYTES = 512 * 1024;
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+const UPLOAD_PATHS = new Set(["/agent/media"]);
 
 /** Thrown by handlers to return a specific status with a plain-language message. */
 export class HttpError extends Error {
@@ -71,7 +75,10 @@ export class Router {
       let ok = true;
       for (let i = 0; i < route.segments.length; i++) {
         const seg = route.segments[i];
-        if (seg.startsWith(":")) params[seg.slice(1)] = decodeURIComponent(parts[i]);
+        if (seg.startsWith(":")) {
+          // A malformed escape (e.g. "%E0%A4%A") is a bad request, not a server error.
+          try { params[seg.slice(1)] = decodeURIComponent(parts[i]); } catch { ok = false; break; }
+        }
         else if (seg !== parts[i]) { ok = false; break; }
       }
       if (ok) return { route, params };
@@ -100,7 +107,7 @@ export class Router {
     }
 
     try {
-      const body = await readJsonBody(req);
+      const body = await readJsonBody(req, UPLOAD_PATHS.has(url.pathname) ? MAX_UPLOAD_BYTES : MAX_BODY_BYTES);
       const ctx: Ctx = { req, res, url, body, params: matched.params, requestId };
       const result = await matched.route.handler(ctx);
       if (!res.writableEnded) send(res, 200, result ?? { ok: true });
@@ -137,13 +144,15 @@ function setCors(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader("Vary", "Origin");
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record<string, unknown>> {
   if (req.method === "GET" || req.method === "DELETE") return {};
+  // Refuse an oversized body before reading any of it.
+  if (Number(req.headers["content-length"] ?? 0) > limit) throw new HttpError(413, "Request body too large");
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
-    if (total > MAX_BODY_BYTES) throw new HttpError(413, "Request body too large");
+    if (total > limit) throw new HttpError(413, "Request body too large");
     chunks.push(chunk as Buffer);
   }
   if (!chunks.length) return {};

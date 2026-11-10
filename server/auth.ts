@@ -45,8 +45,9 @@ function verifyJwt(token: string, secret: string): JwtClaims {
   } catch {
     throw new HttpError(401, "Token payload unreadable");
   }
-  if (claims.exp && claims.exp * 1000 < Date.now()) throw new HttpError(401, "Token expired");
-  if (!claims.sub) throw new HttpError(401, "Token has no subject");
+  // Same rules as the asymmetric path: an expiry is required, and only user sessions count.
+  checkClaims(claims);
+  if (claims.aud !== "authenticated") throw new HttpError(401, "Token is not a user session");
   return claims;
 }
 
@@ -100,7 +101,8 @@ function decodeSegment<T>(segment: string, what: string): T {
 }
 
 function checkClaims(claims: JwtClaims): JwtClaims {
-  if (claims.exp && claims.exp * 1000 < Date.now()) throw new HttpError(401, "Token expired");
+  // A token without an expiry would never expire, so it's refused outright.
+  if (typeof claims.exp !== "number" || claims.exp * 1000 < Date.now()) throw new HttpError(401, "Token expired");
   if (!claims.sub) throw new HttpError(401, "Token has no subject");
   return claims;
 }

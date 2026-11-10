@@ -382,6 +382,9 @@ create rule audit_log_no_delete as on delete to audit_log do instead nothing;
 -- Row level security
 -- ============================================================
 
+-- Server-only: no client role may read or change organizations.
+revoke all on organizations from anon, authenticated;
+alter table organizations        enable row level security;
 alter table user_settings        enable row level security;
 alter table oauth_connections    enable row level security;
 alter table proposed_events      enable row level security;

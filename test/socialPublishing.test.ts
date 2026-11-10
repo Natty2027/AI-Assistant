@@ -130,10 +130,15 @@ function service(f: FetchLike, client: any = null) {
 }
 
 /** Runs the whole sign-in: the app gets the sign-in page, the platform calls back with `code`. */
+/** Runs the whole sign-in: the app gets the sign-in page, the platform calls back with `code`,
+ *  and the app (signed in as the same person) confirms it. */
 async function signIn(svc: InstanceType<typeof AgentService>, provider: "x" | "meta", code = "good-code") {
   const authUrl = new URL(svc.beginOAuth(U, provider));
   const back = new URLSearchParams({ state: authUrl.searchParams.get("state")!, code });
-  return { authUrl, next: new URL(await svc.finishOAuth(provider, back)) };
+  const next = new URL(await svc.finishOAuth(provider, back));
+  const pending = next.searchParams.get("pending");
+  const note = pending ? (await svc.confirmOAuth(U, pending)).note : null;
+  return { authUrl, next, note };
 }
 
 async function approveAndPost(svc: InstanceType<typeof AgentService>, request: string, photoId?: string) {
@@ -173,7 +178,7 @@ test("connecting X: PKCE sign-in, tokens stored encrypted, and the account appea
   assert.equal(authUrl.origin + authUrl.pathname, "https://x.com/i/oauth2/authorize");
   assert.equal(authUrl.searchParams.get("redirect_uri"), `${PUBLIC}/oauth/callback/x`);
   assert.equal(authUrl.searchParams.get("code_challenge_method"), "S256");
-  assert.equal(next.href, "hera://connected?provider=x&status=ok");
+  assert.match(next.href, /^hera:\/\/connected\?provider=x&status=ok&pending=[\w-]{32}$/);
 
   const conns = await svc.connections(U);
   assert.deepEqual(conns.map((c) => [c.provider, c.platform, c.label]), [["x", "x", "X (@claycorner)"]]);
@@ -184,6 +189,21 @@ test("connecting X: PKCE sign-in, tokens stored encrypted, and the account appea
   await signIn(svc, "x");
   assert.equal((await svc.connections(U)).length, 1);
   await clearConnections();
+});
+
+test("a sign-in link sent to someone else can't attach their account to the sender's Hera", async () => {
+  const svc = service(fakes(fakeX().f, fakeMeta().f));
+  // The attacker (U) starts a sign-in and sends the link to a victim, who signs in at X.
+  const authUrl = new URL(svc.beginOAuth(U, "x"));
+  const next = new URL(await svc.finishOAuth("x", new URLSearchParams({ state: authUrl.searchParams.get("state")!, code: "good-code" })));
+  assert.equal((await svc.connections(U)).length, 0, "nothing is saved by the callback itself");
+  // The victim's own Hera (OTHER) receives the return link: the sign-in wasn't theirs.
+  const pending = next.searchParams.get("pending")!;
+  await assert.rejects(() => svc.confirmOAuth(OTHER, pending), { code: "not_found" });
+  // And the id is single use, so the attacker can't confirm it afterwards either.
+  await assert.rejects(() => svc.confirmOAuth(U, pending), { code: "not_found" });
+  assert.equal((await svc.connections(U)).length, 0);
+  assert.equal((await svc.connections(OTHER)).length, 0);
 });
 
 test("a cancelled, refused or replayed sign-in sends the app a message and stores nothing", async () => {
@@ -227,9 +247,9 @@ test("a business-type Meta app signs in with its Facebook Login for Business con
 
 test("a Page with no Instagram business account linked connects Facebook only, and says why", async () => {
   const svc = service(fakes(fakeX().f, fakeMeta({ pages: [{ id: "p1", name: "Clay Corner", access_token: "page-token" }] }).f));
-  const { next } = await signIn(svc, "meta");
+  const { next, note } = await signIn(svc, "meta");
   assert.equal(next.searchParams.get("status"), "ok");
-  assert.match(next.searchParams.get("message")!, /no Instagram Business or Creator account is linked/);
+  assert.match(note!, /no Instagram Business or Creator account is linked/);
   assert.deepEqual((await svc.connections(U)).map((c) => c.platform), ["facebook"]);
   await clearConnections();
 });

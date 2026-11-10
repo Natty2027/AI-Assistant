@@ -35,6 +35,12 @@ const server = createServer((req, res) => {
   });
 });
 
+// Slow clients can't hold connections open indefinitely. A whole assistant run can take a few
+// minutes, so the request timeout leaves room for that.
+server.headersTimeout = 20_000;
+server.requestTimeout = 6 * 60_000;
+server.keepAliveTimeout = 10_000;
+
 server.listen(config.port, "0.0.0.0", () => {
   console.log(`cyber-companion api listening on :${config.port}`);
 });

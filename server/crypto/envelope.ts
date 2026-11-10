@@ -51,10 +51,12 @@ export function encryptToken(plaintext: string, dataKeyId: string): Buffer {
 }
 
 export function decryptToken(blob: Buffer, dataKeyId: string): string {
+  // A blob too short to hold a full tag would let a shortened tag through.
+  if (blob.length < IV_LEN + TAG_LEN) throw new Error("Encrypted value is malformed");
   const iv = blob.subarray(0, IV_LEN);
   const tag = blob.subarray(IV_LEN, IV_LEN + TAG_LEN);
   const ct = blob.subarray(IV_LEN + TAG_LEN);
-  const decipher = createDecipheriv("aes-256-gcm", deriveDek(dataKeyId), iv);
+  const decipher = createDecipheriv("aes-256-gcm", deriveDek(dataKeyId), iv, { authTagLength: TAG_LEN });
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString("utf8");
 }

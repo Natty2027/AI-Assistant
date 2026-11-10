@@ -35,4 +35,19 @@ struct SecurityTests {
         Keychain.write("", for: account)
         #expect(Keychain.read(account) == nil)
     }
+
+    /// The website preview shows AI-written pages: it may only show the site's own files, and
+    /// every file carries a policy with no scripts, no outside connections and no forms.
+    @Test func sitePreviewStaysOnTheSitesOwnFiles() {
+        #expect(SitePreviewNavigation.allows(URL(string: "ccsite://site/index.html")))
+        #expect(SitePreviewNavigation.allows(URL(string: "ccsite://site/about/team.html")))
+        #expect(!SitePreviewNavigation.allows(URL(string: "https://hera-login.example/facebook")))
+        #expect(!SitePreviewNavigation.allows(URL(string: "mailto:someone@example.com")))
+        #expect(!SitePreviewNavigation.allows(URL(string: "ccsite://evil.example/index.html")))
+        #expect(!SitePreviewNavigation.allows(nil))
+        let policy = SiteSchemeHandler.contentSecurityPolicy
+        #expect(policy.contains("script-src 'none'"))
+        #expect(policy.contains("connect-src 'none'"))
+        #expect(policy.contains("form-action 'none'"))
+    }
 }

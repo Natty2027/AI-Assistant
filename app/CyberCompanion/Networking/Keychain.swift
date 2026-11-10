@@ -6,30 +6,33 @@ import Security
 enum Keychain {
     private static let service = "com.natty2027.hera"
 
+    /// The modern, per-app keychain on every platform. On a Mac, without this, items go to the
+    /// older file-based keychain, which ignores the accessibility setting below.
+    private static var base: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecUseDataProtectionKeychain as String: true]
+    }
+
     static func read(_ account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        var query = base
+        query[kSecAttrAccount as String] = account
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
-    static func write(_ value: String, for account: String) {
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var add = base
-        add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
+    /// Returns false if the value couldn't be saved.
+    @discardableResult
+    static func write(_ value: String, for account: String) -> Bool {
+        var item = base
+        item[kSecAttrAccount as String] = account
+        SecItemDelete(item as CFDictionary)
+        guard !value.isEmpty else { return true }
+        item[kSecValueData as String] = Data(value.utf8)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
     }
 }

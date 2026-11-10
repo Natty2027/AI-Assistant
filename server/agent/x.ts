@@ -37,13 +37,16 @@ function classify(status: number): ProviderError {
   return new ProviderError("unavailable", `X unavailable (${status})`, status);
 }
 
-async function call(f: FetchLike, url: string, init: RequestInit): Promise<any> {
+async function call(f: FetchLike, url: string, init: RequestInit, opts: { forbiddenIsRejection?: boolean } = {}): Promise<any> {
   let res: Response;
   try {
     res = await f(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
   } catch {
     throw new ProviderError("unavailable", "Could not reach X");
   }
+  // X answers some refusals of a post's content (a duplicate, for one) with 403. That says
+  // nothing about the connection, so it mustn't disconnect the account.
+  if (res.status === 403 && opts.forbiddenIsRejection) throw new ProviderError("rejected", "X didn't accept this post (403)", 403);
   if (!res.ok) throw classify(res.status);
   return res.json();
 }
@@ -94,7 +97,7 @@ export async function publishPost(
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${c.accessToken}` },
     body: JSON.stringify({ text: composedPostText("x", post.text, post.link) }),
-  });
+  }, { forbiddenIsRejection: true });
   const id = String(out?.data?.id ?? "");
   if (!id) throw new ProviderError("unavailable", "X sent an unexpected reply");
   return { id, url: `https://x.com/${c.username}/status/${id}` };

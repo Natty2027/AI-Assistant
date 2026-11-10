@@ -121,6 +121,10 @@ export interface ConversationState {
   drafts: Draft[];
   tainted: boolean;
   pending: { results: ToolResult[]; askId: string } | null;
+  /** Everything the person themselves typed or said in this conversation, kept apart from the
+   *  model's messages and tool output, which can contain text from websites, files and calendar
+   *  invitations. Email addresses and saved facts are checked against this. */
+  personWords?: string[];
 }
 
 export interface AgentResult {
@@ -338,6 +342,8 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     messages.push({ role: "user", content: request });
   }
   let pending: ConversationState["pending"] = null;
+  // Conversations saved before personWords existed: their plain user messages are the person's.
+  const personWords = [...(resume?.personWords ?? (resume ? plainUserText(resume.messages) : [])), request];
   const tools: Anthropic.Beta.Messages.BetaToolUnion[] = TOOLS.filter((t) => MODE_TOOLS[deps.mode].has(t.name));
   if (deps.allowWebSearch) tools.push({ type: "web_search_20260209", name: "web_search", max_uses: 5 });
 
@@ -346,7 +352,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     if (status === "done" && text) messages.push({ role: "assistant", content: text });
     return {
       status, text, proposalIds, drafts: [...drafts.values()], scheduleChanges, emailDrafts, tainted, turns,
-      state: { messages: compact(messages), drafts: [...drafts.values()], tainted, pending },
+      state: { messages: compact(messages), drafts: [...drafts.values()], tainted, pending, personWords: personWords.slice(-50) },
     };
   };
 
@@ -390,7 +396,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     let question: { text: string; askId: string } | null = null;
 
     for (const use of uses) {
-      const out = await runTool(deps, use, { drafts, proposalIds, scheduleChanges, emailDrafts, tainted, messages });
+      const out = await runTool(deps, use, { drafts, proposalIds, scheduleChanges, emailDrafts, tainted, personWords });
       results.push({ type: "tool_result", tool_use_id: use.id, content: out.content, ...(out.error ? { is_error: true } : {}) });
       if (out.question) question = { text: out.question, askId: use.id };
     }
@@ -409,7 +415,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
 async function runTool(
   deps: AgentDeps,
   use: ToolUse,
-  state: { drafts: Map<string, Draft>; proposalIds: string[]; scheduleChanges: ScheduleChange[]; emailDrafts: EmailDraft[]; tainted: boolean; messages: MessageParam[] },
+  state: { drafts: Map<string, Draft>; proposalIds: string[]; scheduleChanges: ScheduleChange[]; emailDrafts: EmailDraft[]; tainted: boolean; personWords: string[] },
 ): Promise<{ content: string; error?: boolean; question?: string }> {
   const schema = (INPUTS as Record<string, z.ZodType>)[use.name];
   if (!schema) return { content: `There is no tool called ${use.name}.`, error: true };
@@ -428,8 +434,11 @@ async function runTool(
     switch (use.name) {
       case "list_site_files":
         return { content: JSON.stringify(await deps.sandbox.files()) };
-      case "read_site_file":
-        return { content: await deps.sandbox.read(input.path) };
+      case "read_site_file": {
+        // One read can't fill the whole conversation (and its cost) with a huge file.
+        const text = await deps.sandbox.read(input.path);
+        return { content: text.length > 60_000 ? `${text.slice(0, 60_000)}\n[…file shortened: ${text.length} characters in all]` : text };
+      }
       case "write_site_file":
         await deps.sandbox.write(input.path, input.contents);
         return { content: `Saved ${input.path}.` };
@@ -486,9 +495,10 @@ async function runTool(
         if (to.length + cc.length > MAX_EMAIL_RECIPIENTS) {
           return { content: `At most ${MAX_EMAIL_RECIPIENTS} recipients: Hera writes personal emails, not mailings.`, error: true };
         }
-        // Addresses must come from the person, never from a web page or an invitation's text.
-        const known = personsOwnWords(state.messages, deps.memories).toLowerCase();
-        const unknown = [...to, ...cc].filter((a) => !known.includes(a.toLowerCase()));
+        // Addresses must come from the person, never from a web page, a file or an invitation's
+        // text, and must match exactly: jo@acme.co is not jo@acme.com.
+        const known = addressesIn([...state.personWords, ...(deps.memories ?? [])]);
+        const unknown = [...to, ...cc].filter((a) => !known.has(a.toLowerCase()));
         if (unknown.length) {
           return { content: `The person never gave you ${unknown.join(", ")}. Use only addresses they gave you or that you remember; otherwise leave the recipient out and they'll add it in their email app.`, error: true };
         }
@@ -500,6 +510,15 @@ async function runTool(
         // Content read from the web could try to plant a "fact"; nothing is saved after that.
         if (state.tainted) return { content: "Not saved: this session read outside content, so nothing new is remembered. Ask the person to tell you again in a new request.", error: true };
         if (!deps.remember) return { content: "Remembering isn't available right now.", error: true };
+        // A saved fact appears in every later task, so an address or link in it must be one the
+        // person gave, not one planted by a calendar invitation or a website file.
+        const own = addressesIn(state.personWords);
+        const ownLinks = linksIn(state.personWords.join(" "));
+        const planted = [...addressesIn([input.fact])].filter((a) => !own.has(a))
+          .concat([...linksIn(input.fact)].filter((l) => !ownLinks.has(l)));
+        if (planted.length) {
+          return { content: `Not saved: ${planted.join(", ")} didn't come from the person. Only save details they told you.`, error: true };
+        }
         return { content: await deps.remember(input.fact) };
       }
       case "add_event": case "change_event": case "cancel_event": case "add_reminder": case "complete_reminder": {
@@ -554,18 +573,28 @@ function compact(messages: MessageParam[]): MessageParam[] {
   });
 }
 
-/** Everything the person themselves said in this conversation, plus what Hera remembers about
- *  them: the only places an email address may come from. Tool output (web pages, files,
- *  calendar text) is excluded, except the person's own answers to Hera's questions. */
-function personsOwnWords(messages: MessageParam[], memories: string[] | undefined): string {
-  const parts: string[] = [...(memories ?? [])];
+/** The person's own words in a conversation saved before personWords was kept: plain user
+ *  messages only. Tool results are never included; they can carry outside text. */
+function plainUserText(messages: MessageParam[]): string[] {
+  const out: string[] = [];
   for (const m of messages) {
     if (m.role !== "user") continue;
-    if (typeof m.content === "string") { parts.push(m.content); continue; }
-    for (const b of m.content as any[]) {
-      if (b.type === "text") parts.push(b.text);
-      if (b.type === "tool_result" && typeof b.content === "string" && b.content.startsWith("The person answered: ")) parts.push(b.content);
-    }
+    if (typeof m.content === "string") out.push(m.content);
+    else for (const b of m.content as any[]) if (b.type === "text") out.push(b.text);
   }
-  return parts.join("\n");
+  return out;
+}
+
+/** Whole email addresses in some text, lower-cased. */
+export function addressesIn(texts: string[]): Set<string> {
+  const found = texts.join("\n").match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) ?? [];
+  return new Set(found.map((a) => a.toLowerCase().replace(/\.+$/, "")));
+}
+
+/** Web addresses in some text (scheme optional), lower-cased, without trailing punctuation. */
+function linksIn(text: string): Set<string> {
+  const found = text.match(/\b(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s)"']*)?/gi) ?? [];
+  return new Set(found
+    .filter((l) => !l.includes("@") && !/@/.test(text.slice(Math.max(0, text.indexOf(l) - 1), text.indexOf(l))))
+    .map((l) => l.toLowerCase().replace(/^https?:\/\//, "").replace(/[.,;:!?]+$/, "")));
 }

@@ -142,7 +142,8 @@ export class SiteSandbox {
       if (/<input\b[^>]*\btype\s*=\s*["']?password/i.test(html)) {
         add({ id: "password_field", level: "block", message: `${f.path} asks visitors for a password. Generated sites may not collect passwords.` });
       }
-      if (/<meta\b[^>]*http-equiv\s*=\s*["']?refresh[^>]*url\s*=/i.test(html)) {
+      // Any automatic refresh: "0;url=https://…" and "0;https://…" both redirect.
+      if (/<meta\b[^>]*http-equiv\s*=\s*["']?refresh/i.test(html)) {
         add({ id: "redirect", level: "block", message: `${f.path} automatically sends visitors to another page.` });
       }
       if (/\b(href|src|action)\s*=\s*["']?\s*javascript:/i.test(html)) {
@@ -155,23 +156,56 @@ export class SiteSandbox {
         add({ id: "tracking", level: "attest", message: "The site tracks visitors. You need a privacy policy that says so." });
       }
     }
+    // An SVG opened on its own runs its scripts, and the page's security policy doesn't cover it.
+    for (const f of files.filter((f) => f.path.endsWith(".svg"))) {
+      const svg = await this.read(f.path);
+      if (/<script\b|\bon[a-z]+\s*=|javascript:|<foreignObject\b/i.test(svg)) {
+        add({ id: "svg_script", level: "block", message: `${f.path} is an image with code in it. Images may only contain drawings.` });
+      }
+    }
+    // The site's own scripts can do at run time what the checks above look for in the page.
+    for (const f of files.filter((f) => f.path.endsWith(".js"))) {
+      const js = await this.read(f.path);
+      if (/type\s*[=:]\s*["']password["']|\.type\s*=\s*["']password/i.test(js)) {
+        add({ id: "password_field", level: "block", message: `${f.path} creates a password field. Generated sites may not collect passwords.` });
+      }
+      if (/\b(location\s*(\.href)?\s*=|location\.(assign|replace)\s*\(|window\.open\s*\()/i.test(js)) {
+        add({ id: "redirect", level: "block", message: `${f.path} sends visitors to another page by itself.` });
+      }
+    }
     return checks;
   }
 
   /** The files to publish, with the content-security policy added to every HTML page so a
    *  browser enforces the same rules the scan checked. */
   async bundle(): Promise<Array<{ path: string; contents: string }>> {
-    const out: Array<{ path: string; contents: string }> = [];
-    for (const f of await this.files()) {
-      let contents = await this.read(f.path);
-      if (f.path.endsWith(".html")) {
-        const meta = `<meta http-equiv="Content-Security-Policy" content="${CSP}">`;
-        contents = /<head[^>]*>/i.test(contents)
-          ? contents.replace(/<head[^>]*>/i, (m) => `${m}\n${meta}`)
-          : `${meta}\n${contents}`;
-      }
-      out.push({ path: f.path, contents });
-    }
-    return out;
+    return (await this.publishable()).files;
   }
+
+  /**
+   * What would be published, and the fingerprint of exactly those files, read once. Publishing
+   * compares this fingerprint with the approved one and uploads these same bytes, so nothing
+   * written in between can slip in.
+   */
+  async publishable(): Promise<{ digest: string; files: Array<{ path: string; contents: string }> }> {
+    const h = createHash("sha256");
+    const files: Array<{ path: string; contents: string }> = [];
+    for (const f of await this.files()) {
+      const raw = await this.read(f.path);
+      h.update(`${f.path}\0${createHash("sha256").update(raw, "utf8").digest("hex")}\n`);
+      files.push({ path: f.path, contents: f.path.endsWith(".html") ? withPolicy(raw) : raw });
+    }
+    return { digest: h.digest("hex"), files };
+  }
+}
+
+/** The page with the content-security policy as the first thing in its <head> (a <header>
+ *  element is not the head). A page without a <head> gets one. */
+function withPolicy(html: string): string {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${CSP}">`;
+  const head = /<head(\s[^>]*)?>/i;
+  if (head.test(html)) return html.replace(head, (m) => `${m}\n${meta}`);
+  const htmlTag = /<html(\s[^>]*)?>/i;
+  if (htmlTag.test(html)) return html.replace(htmlTag, (m) => `${m}\n<head>${meta}</head>`);
+  return `<head>${meta}</head>\n${html}`;
 }

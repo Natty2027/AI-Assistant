@@ -52,7 +52,14 @@ final class AppModel {
 
     init() {
         serverURLString = UserDefaults.standard.string(forKey: Self.serverURLKey) ?? ""
+        #if DEBUG
+        // The developer token bypasses Sign in with Apple, so only development builds use it. A
+        // release build ignores (and clears) any left in the Keychain by an earlier build.
         accessToken = Keychain.read(Self.tokenAccount) ?? ""
+        #else
+        accessToken = ""
+        Keychain.write("", for: Self.tokenAccount)
+        #endif
         #if DEBUG
         // Development only: launch already pointed at a server, e.g. scripts/mock-app-server.mjs.
         let env = ProcessInfo.processInfo.environment
@@ -292,13 +299,18 @@ final class AppModel {
     /// example, that a Page connected but no Instagram business account was linked to it).
     func finishSignIn(callback: URL) async -> (connected: Bool, note: String?) {
         let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        let message = items.first(where: { $0.name == "message" })?.value
-        guard items.first(where: { $0.name == "status" })?.value == "ok" else {
-            errorMessage = message ?? "Connecting didn't finish. Please try again."
+        guard items.first(where: { $0.name == "status" })?.value == "ok",
+              let pending = items.first(where: { $0.name == "pending" })?.value, let client else {
+            errorMessage = items.first(where: { $0.name == "message" })?.value ?? "Connecting didn't finish. Please try again."
             return (false, nil)
         }
+        // The server only saves the connection once this signed-in app confirms it, so a sign-in
+        // link sent to someone else can't attach their account to the sender's Hera.
+        var note: String?
+        let confirmed = await perform { note = try await client.confirmSignIn(pending: pending) }
+        guard confirmed else { return (false, nil) }
         await refreshConnections()
-        return (true, message)
+        return (true, note)
     }
 
     func connectNetlify(token: String) async -> Bool {

@@ -101,14 +101,9 @@ export function buildRouter(): Router {
     ok: true,
     db: dbConfigured() ? ((await dbReachable()) ? "reachable" : "unreachable") : "not_configured",
     ai: Boolean(config.anthropicApiKey),
-    auth: {
-      // Sign in with Apple tokens from current Supabase projects, verified with the project's keys.
-      supabaseKeys: Boolean(config.supabaseUrl),
-      // Older projects that sign with the legacy shared secret.
-      supabaseJwt: Boolean(config.supabaseJwtSecret),
-      testToken: Boolean(config.testAccessToken && config.testUserId),
-      devUser: Boolean(config.devUserId),
-    },
+    // Only whether sign-in is set up. Whether test or developer access is on is not advertised,
+    // so nobody learns that a shared secret would be worth guessing.
+    auth: { supabaseKeys: Boolean(config.supabaseUrl), supabaseJwt: Boolean(config.supabaseJwtSecret) },
     // Which sign-ins for posting are configured (developer app keys plus PUBLIC_URL).
     publishing: {
       x: Boolean(config.publicUrl && config.x),
@@ -130,7 +125,7 @@ export function buildRouter(): Router {
   r.get("/oauth/callback/:provider", async (ctx) => {
     const provider = ctx.params.provider;
     if (!isOAuthProvider(provider)) throw new HttpError(404, "Not found.");
-    const next = await agent().finishOAuth(provider, ctx.url.searchParams, ensureSettings);
+    const next = await agent().finishOAuth(provider, ctx.url.searchParams);
     ctx.res.writeHead(302, { Location: next });
     ctx.res.end();
   });
@@ -219,6 +214,16 @@ export function buildRouter(): Router {
     if (!isOAuthProvider(provider)) throw new HttpError(404, "Not found.");
     if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
     return { auth_url: await guarded(() => agent().beginOAuth(userId, provider)) };
+  });
+
+  /** Saves a finished sign-in. Only the person who started it can, so a sign-in link sent to
+   *  someone else can't attach their account to the sender's Hera. */
+  r.post("/agent/connections/oauth/confirm", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    await ensureSettings(userId);
+    const out = await guarded(() => agent().confirmOAuth(userId, ctx.body.pending));
+    return { ok: true, note: out.note };
   });
 
   /** A photo for the next posts run, as base64 JPEG. Returns its id for /agent/run. */

@@ -126,6 +126,15 @@ struct APIClient: Sendable {
         try await send("GET", "agent/connections")
     }
 
+    /// Saves a sign-in that finished on the platform's page. Returns a note, if there's something
+    /// the person should know (e.g. Instagram wasn't linked to the Page).
+    func confirmSignIn(pending: String) async throws -> String? {
+        struct Body: Encodable { let pending: String }
+        struct Reply: Decodable { let note: String? }
+        let out: Reply = try await send("POST", "agent/connections/oauth/confirm", body: Body(pending: pending))
+        return out.note
+    }
+
     /// The platform's own sign-in page, to open in a secure browser sheet.
     func signInPage(for provider: SignInProvider) async throws -> URL {
         let out: SignInStartResponse = try await send("GET", "agent/connections/oauth/\(provider.rawValue)")
