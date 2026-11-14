@@ -99,7 +99,7 @@ enum ConversationReply {
     /// one (Hera does one at a time, so she asks again).
     static func mode(from reply: String) -> CreateMode? {
         let said = reply.lowercased()
-        let posts = ["post", "social", "tweet", "instagram", "caption", "bluesky", "announce"].contains { said.contains($0) }
+        let posts = ["post", "social", "tweet", "instagram", "caption", "bluesky", "announce", "flyer", "studio"].contains { said.contains($0) }
         let site = ["website", "web site", "site", "web page", "webpage", "landing page"].contains { said.contains($0) }
         let schedule = ["schedule", "calendar", "meeting", "appointment", "remind", "plan my", "my day", "my week"].contains { said.contains($0) }
         let launch = ["launch", "everything", "all of it", "the works", "launch kit"].contains { said.contains($0) }

@@ -12,7 +12,7 @@ struct AssistantView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var prompt = ""
     /// Website or posts: one at a time, never both in the same run.
-    @State private var mode: CreateMode = .site
+    @State private var mode: CreateMode = .posts
     @State private var allowWebSearch = false
     /// A photo for the posts (Instagram needs one). Posts only.
     @State private var photoItem: PhotosPickerItem?
@@ -32,6 +32,7 @@ struct AssistantView: View {
     @State private var conversation: Conversation = .none
 
     private let suggestions: [(CreateMode, String, String)] = [
+        (.posts, "photo.artframe", "Make a poster and posts for Saturday's open house, 10 AM to 2 PM"),
         (.launch, "sparkles", "Launch my pottery workshop on the 20th at 6 PM: $40, 8 spots"),
         (.site, "globe", "Make a one-page website for my business"),
         (.posts, "calendar.badge.plus", "Announce my next event on social media"),
@@ -141,7 +142,7 @@ struct AssistantView: View {
                 .font(Theme.heading())
                 .foregroundStyle(Theme.spectrumGradient)
                 .multilineTextAlignment(.center)
-            Text("Speak or type. Nothing is published until you approve it.")
+            Text("Posters, posts, emails and your schedule. Speak or type; nothing goes out until you approve it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -180,7 +181,7 @@ struct AssistantView: View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
         return VStack(alignment: .leading, spacing: 12) {
             Picker("Create", selection: $mode) {
-                ForEach(CreateMode.allCases) { m in
+                ForEach(CreateMode.displayOrder) { m in
                     Label(m.title, systemImage: m.systemImage).tag(m)
                 }
             }
@@ -328,7 +329,7 @@ struct AssistantView: View {
         if model.isContinuing(mode) { return "Reply to Hera, or ask for a change…" }
         return switch mode {
         case .site: "Describe the website you'd like…"
-        case .posts: "Describe the posts you'd like…"
+        case .posts: "What should we promote? A poster, posts, a flyer…"
         case .schedule: "Tell Hera what to plan, move or remind you about…"
         case .launch: "What are you launching? The date, place, price and how to sign up…"
         }
@@ -337,7 +338,7 @@ struct AssistantView: View {
     private var workingMessage: String {
         switch mode {
         case .site: "Building your website. This can take a minute."
-        case .posts: "Writing your posts. This can take a minute."
+        case .posts: "Designing your posters and posts. This can take a minute."
         case .schedule: "Looking at your schedule. This can take a minute."
         case .launch: "Putting your launch together: website, posts, calendar and email. This can take a few minutes."
         }

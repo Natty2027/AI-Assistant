@@ -170,16 +170,20 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .site: "Website"
-        case .posts: "Posts"
+        // Posts, posters and flyers (the server's "posts" mode).
+        case .posts: "Studio"
         case .schedule: "Schedule"
         case .launch: "Launch"
         }
     }
 
+    /// The order on the Create screen: marketing first, then the website and the schedule.
+    static let displayOrder: [CreateMode] = [.launch, .posts, .site, .schedule]
+
     var systemImage: String {
         switch self {
         case .site: "globe"
-        case .posts: "text.bubble"
+        case .posts: "paintpalette"
         case .schedule: "calendar"
         case .launch: "sparkles"
         }
@@ -236,6 +240,8 @@ struct AgentRunResponse: Codable, Hashable, Sendable {
     let tainted: Bool
     /// Emails Hera wrote for the person to send from their own email app. Absent from older servers.
     var emailDrafts: [EmailDraft]?
+    /// Posters and flyers for the app to draw, share and print. Absent from older servers.
+    var posterDrafts: [PosterDraft]?
     /// Send with the next reply to continue this task. nil when it can't be continued (or from
     /// servers that predate it).
     var conversationId: String?
@@ -299,6 +305,27 @@ struct SignInStartResponse: Decodable, Sendable { let authUrl: String }
 struct PhotoUploadResponse: Decodable, Sendable { let id: String }
 struct ConnectionResponse: Decodable, Sendable { let connection: Connection }
 struct ProposalsResponse: Decodable, Sendable { let proposals: [Proposal] }
+
+/// A poster or flyer Hera wrote (server/agent/poster.ts). The app draws it with the brand kit, in
+/// every size; the person shares or prints it.
+struct PosterDraft: Codable, Hashable, Identifiable, Sendable {
+    enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
+        case bold, elegant, playful, minimal
+        var id: Self { self }
+        var title: String { rawValue.capitalized }
+    }
+
+    let id: String
+    var style: Style
+    var headline: String
+    var subheadline: String?
+    var details: [String]
+    var callToAction: String?
+    var footer: String?
+    var emoji: String?
+    var usePhoto: Bool
+    var problems: [Check]?
+}
 
 /// An email Hera wrote (server/agent/loop.ts). She never sends it: the person edits it here and
 /// sends it from their email app.

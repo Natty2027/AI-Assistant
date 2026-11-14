@@ -19,6 +19,10 @@ final class AppModel {
     let speech = HeraVoice()
     /// The person's calendar and reminders on this device, for Schedule.
     let schedule = ScheduleManager()
+    /// The business's name, colors and logo, used on every poster.
+    let brand = BrandKitStore()
+    /// The photo sent with the latest run, so its posters can use it.
+    private(set) var lastRunPhoto: Data?
 
     /// What happened to each proposed schedule change the person acted on, by change id.
     enum ChangeOutcome: Equatable {
@@ -173,6 +177,10 @@ final class AppModel {
                                                     photoID: photoID, schedule: snapshot, conversationID: continuing)
             lastRun = run
             conversation = run.conversationId.map { ($0, mode) }
+            // A new task uses its own photo; a reply keeps the task's photo unless it brings a new one.
+            if !mode.takesPhoto { lastRunPhoto = nil }
+            else if let photo { lastRunPhoto = photo }
+            else if continuing == nil { lastRunPhoto = nil }
             scheduleOutcomes = [:]
         scheduleUndos = [:]
             proposals = try await client.proposals()
@@ -183,6 +191,7 @@ final class AppModel {
     func clearLastRun() {
         lastRun = nil
         conversation = nil
+        lastRunPhoto = nil
         scheduleOutcomes = [:]
         scheduleUndos = [:]
         errorMessage = nil

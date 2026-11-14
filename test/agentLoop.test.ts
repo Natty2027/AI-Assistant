@@ -98,7 +98,7 @@ test("a posts run writes and proposes posts and is offered no way to change the 
   const req = calls[0];
   assertNoActingTools(req);
   assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
-    ["ask_user", "draft_email", "draft_post", "list_site_files", "propose_post", "read_site_file", "remember", "write_post"]);
+    ["ask_user", "design_poster", "draft_email", "draft_post", "list_site_files", "propose_post", "read_site_file", "remember", "write_post"]);
   assert.match(req.system, /only for posts/);
 });
 

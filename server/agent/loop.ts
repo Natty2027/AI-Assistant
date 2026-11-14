@@ -24,6 +24,7 @@ import { ActionError, type ActionStore } from "./approvals.ts";
 import { evaluate, NEVER_AUTOMATED, PLATFORMS, postContentChecks, TEXT_LIMITS, type Context, type Platform } from "./policy.ts";
 import { SandboxError, type SiteSandbox } from "./sandbox.ts";
 import { withAiRetry } from "./aiRetry.ts";
+import { makePoster, POSTER_INPUT, POSTER_TOOL, PosterError, type PosterDraft } from "./poster.ts";
 import { describeSchedule, SCHEDULE_INPUTS, SCHEDULE_TOOL_NAMES, SCHEDULE_TOOLS, ScheduleError, scheduleChange,
   type ScheduleChange, type ScheduleSnapshot } from "./schedule.ts";
 
@@ -70,13 +71,14 @@ export type AgentMode = (typeof AGENT_MODES)[number];
 const MODE_TOOLS: Record<AgentMode, ReadonlySet<string>> = {
   site: new Set(["list_site_files", "read_site_file", "write_site_file", "check_site", "propose_site_deploy", "ask_user", "remember", "draft_email"]),
   // Posts may read the site (for accurate details and its link) but never change or publish it.
-  posts: new Set(["list_site_files", "read_site_file", "draft_post", "write_post", "propose_post", "ask_user", "remember", "draft_email"]),
+  // "Studio" in the app: posts, posters and flyers.
+  posts: new Set(["list_site_files", "read_site_file", "draft_post", "write_post", "propose_post", "design_poster", "ask_user", "remember", "draft_email"]),
   // The person's calendar and reminders, as a snapshot from their device. Changes are only proposed.
   schedule: new Set([...SCHEDULE_TOOL_NAMES, "ask_user", "remember", "draft_email"]),
   // Launch Kit: everything at once for one event, class, product or opening. Still only proposals.
   launch: new Set([
     "list_site_files", "read_site_file", "write_site_file", "check_site", "propose_site_deploy",
-    "draft_post", "write_post", "propose_post", ...SCHEDULE_TOOL_NAMES, "ask_user", "remember", "draft_email",
+    "draft_post", "write_post", "propose_post", "design_poster", ...SCHEDULE_TOOL_NAMES, "ask_user", "remember", "draft_email",
   ]),
 };
 
@@ -136,6 +138,8 @@ export interface AgentResult {
   scheduleChanges: ScheduleChange[];
   /** Emails for the person to review and send from their own email app. */
   emailDrafts: EmailDraft[];
+  /** Posters and flyers for the app to draw, share and print. */
+  posterDrafts: PosterDraft[];
   tainted: boolean;
   turns: number;
   /** To save, so the next request in this conversation continues from here. */
@@ -183,6 +187,7 @@ const TOOLS = [
       subject: { type: "string" },
       body: { type: "string", description: "Plain text, signed with the person's name if you know it" },
     }) },
+  POSTER_TOOL,
   { name: "remember", description: "Save one lasting fact about the person or their business (name, hours, location, links, prices, preferred tone) so you won't need to ask again. They can see and delete what you saved.", strict: true,
     input_schema: obj({ fact: { type: "string", description: "One short fact in plain words, e.g. \"Clay Corner is open Tuesday to Saturday, 10 AM to 6 PM\"" } }) },
   ...SCHEDULE_TOOLS,
@@ -199,6 +204,7 @@ const INPUTS = {
   propose_site_deploy: z.object({ connection_id: z.string(), summary: z.string() }).strict(),
   ask_user: z.object({ question: z.string() }).strict(),
   remember: z.object({ fact: z.string().min(1).max(300) }).strict(),
+  design_poster: POSTER_INPUT,
   draft_email: z.object({ to: z.array(z.string().max(254)), cc: z.array(z.string().max(254)), subject: z.string().max(200), body: z.string().min(1).max(10_000) }).strict(),
   ...SCHEDULE_INPUTS,
 } as const;
@@ -252,7 +258,8 @@ function postRules(hasPhoto: boolean): string {
   return `- For a post to a connected account, use draft_post and then propose_post. For any other platform, use write_post: the person shares that one themselves. Fit each post to its platform's length and style.
 - If a post is paid or sponsored, set sponsored to true and say so in the text, for example #ad.
 - ${hasPhoto ? "The person attached a photo. Attach it (attach_photo) to posts for connected accounts unless they said otherwise." : "The person attached no photo. An Instagram post needs one: if they want Instagram, ask them to add a photo with the photo button and send their request again."}
-- Links in Instagram captions can't be tapped, so for Instagram say where to find the link instead (for example, link in bio).`;
+- Links in Instagram captions can't be tapped, so for Instagram say where to find the link instead (for example, link in bio).
+- When a poster or flyer would help (an event, a sale, a class, an opening), design one with design_poster as well, even if they only asked for posts. Keep poster words short; the details go in its own lines.`;
 }
 
 const PROPOSE_ONLY = `You cannot publish, post, send, or spend anything. When something is ready, propose it: the person reviews the exact content and approves it in the app, and only their approval makes it happen. Say this plainly when you hand something over.`;
@@ -275,7 +282,8 @@ Then build all of it:
 2. Posts: an announcement for each connected social account (draft_post, then propose_post), and write_post versions for the main platforms they don't have connected. Link to the website page where it fits.
 3. Countdown: posts can't be scheduled for later yet, so for a reminder post a few days before and one on the day, add a reminder (add_reminder) due on that day, with the post's text in the notes, for them to share then.
 4. Calendar: add the event itself to their calendar, plus useful prep reminders (for example, buy supplies two days before), checking for clashes first.${schedule ? "" : " Their calendar wasn't shared with this request, so skip this step and say so."}
-5. Email: draft one announcement email (draft_email). Address it only if they gave you addresses; otherwise leave the recipients empty so they can add them.
+5. Poster: design one poster with design_poster; the app makes it in every size, including a printable flyer.
+6. Email: draft one announcement email (draft_email). Address it only if they gave you addresses; otherwise leave the recipients empty so they can add them.
 
 Finish with a short summary: what's ready, and that each piece waits for their approval in the app.
 
@@ -302,7 +310,7 @@ function modePrompt(ctx: Context, mode: AgentMode, hasPhoto: boolean, schedule?:
     ? `You help one person make a simple website for their own activity.
 
 This session is only for the website. You can create, edit and check the files of a static website and propose publishing it. You don't write social posts here: if the person asks for posts, finish the website and tell them to switch to Posts in the app.`
-    : `You write social posts that promote one person's own activity.
+    : `You write social posts and design posters and flyers that promote one person's own activity.
 
 This session is only for posts. You can read the files of the person's website for accurate details and its link, but you can't change or publish the website here: if the person asks for website changes, tell them to switch to Website in the app.`;
 
@@ -326,6 +334,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
   const proposalIds: string[] = [];
   const scheduleChanges: ScheduleChange[] = [];
   const emailDrafts: EmailDraft[] = [];
+  const posterDrafts: PosterDraft[] = [];
   let tainted = resume?.tainted ?? false;
   let tokens = 0;
   const messages: MessageParam[] = resume ? structuredClone(resume.messages) : [];
@@ -351,7 +360,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     // A finished answer is part of the conversation too, so a follow-up can refer to it.
     if (status === "done" && text) messages.push({ role: "assistant", content: text });
     return {
-      status, text, proposalIds, drafts: [...drafts.values()], scheduleChanges, emailDrafts, tainted, turns,
+      status, text, proposalIds, drafts: [...drafts.values()], scheduleChanges, emailDrafts, posterDrafts, tainted, turns,
       state: { messages: compact(messages), drafts: [...drafts.values()], tainted, pending, personWords: personWords.slice(-50) },
     };
   };
@@ -396,7 +405,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     let question: { text: string; askId: string } | null = null;
 
     for (const use of uses) {
-      const out = await runTool(deps, use, { drafts, proposalIds, scheduleChanges, emailDrafts, tainted, personWords });
+      const out = await runTool(deps, use, { drafts, proposalIds, scheduleChanges, emailDrafts, posterDrafts, tainted, personWords });
       results.push({ type: "tool_result", tool_use_id: use.id, content: out.content, ...(out.error ? { is_error: true } : {}) });
       if (out.question) question = { text: out.question, askId: use.id };
     }
@@ -415,7 +424,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
 async function runTool(
   deps: AgentDeps,
   use: ToolUse,
-  state: { drafts: Map<string, Draft>; proposalIds: string[]; scheduleChanges: ScheduleChange[]; emailDrafts: EmailDraft[]; tainted: boolean; personWords: string[] },
+  state: { drafts: Map<string, Draft>; proposalIds: string[]; scheduleChanges: ScheduleChange[]; emailDrafts: EmailDraft[]; posterDrafts: PosterDraft[]; tainted: boolean; personWords: string[] },
 ): Promise<{ content: string; error?: boolean; question?: string }> {
   const schema = (INPUTS as Record<string, z.ZodType>)[use.name];
   if (!schema) return { content: `There is no tool called ${use.name}.`, error: true };
@@ -487,6 +496,12 @@ async function runTool(
       }
       case "ask_user":
         return { content: "Question sent to the person.", question: input.question };
+      case "design_poster": {
+        if (state.posterDrafts.length >= 6) return { content: "That's plenty of posters for one request.", error: true };
+        const poster = makePoster(input, Boolean(deps.photoId));
+        state.posterDrafts.push(poster);
+        return { content: JSON.stringify({ poster_id: poster.id, problems: poster.problems }) };
+      }
       case "draft_email": {
         const to = [...new Set((input.to as string[]).map((a) => a.trim()).filter(Boolean))];
         const cc = [...new Set((input.cc as string[]).map((a) => a.trim()).filter(Boolean))].filter((a) => !to.includes(a));
@@ -529,7 +544,7 @@ async function runTool(
       }
     }
   } catch (e) {
-    if (e instanceof SandboxError || e instanceof ActionError || e instanceof ScheduleError) return { content: e.message, error: true };
+    if (e instanceof SandboxError || e instanceof ActionError || e instanceof ScheduleError || e instanceof PosterError) return { content: e.message, error: true };
     throw e;
   }
   return { content: "Unhandled tool.", error: true };

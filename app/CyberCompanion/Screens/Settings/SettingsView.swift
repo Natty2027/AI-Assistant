@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 struct SettingsView: View {
@@ -9,6 +10,7 @@ struct SettingsView: View {
     @State private var status: String?
     @State private var showDelete = false
     @State private var newMemory = ""
+    @State private var logoItem: PhotosPickerItem?
     @State private var memoryNote: String?
     @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
 
@@ -17,6 +19,7 @@ struct SettingsView: View {
             Form {
                 account
                 if model.isConfigured { aiSection }
+                brandSection
                 if model.isConfigured { memorySection }
                 if HeraVoice.isAvailable { voiceSection }
                 legal
@@ -77,6 +80,45 @@ struct SettingsView: View {
             SectionLabel("AI")
         } footer: {
             Text("What you ask Hera is sent to Claude, by Anthropic, to make your website and posts. When you use Schedule, your upcoming events and open reminders are sent with that request. Your voice is recognized on this device; only the finished text is sent. You can turn this off at any time.")
+        }
+    }
+
+    /// The business's name, colors and logo, used on every poster. Kept on this device.
+    private var brandSection: some View {
+        let brand = model.brand
+        return Section {
+            TextField("Business name", text: Binding(
+                get: { brand.kit.businessName },
+                set: { name in brand.update { $0.businessName = String(name.prefix(60)) } }))
+            ColorPicker("Main color", selection: Binding(
+                get: { brand.kit.primary },
+                set: { color in brand.update { $0.primaryHex = color.hexString() } }), supportsOpacity: false)
+            ColorPicker("Accent color", selection: Binding(
+                get: { brand.kit.accent },
+                set: { color in brand.update { $0.accentHex = color.hexString() } }), supportsOpacity: false)
+            HStack(spacing: 12) {
+                if let data = brand.kit.logo, let image = PosterView.image(from: data) {
+                    Image(decorative: image, scale: 1).resizable().scaledToFit().frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                PhotosPicker(brand.kit.logo == nil ? "Add your logo" : "Change logo", selection: $logoItem, matching: .images)
+                Spacer()
+                if brand.kit.logo != nil {
+                    Button("Remove", role: .destructive) { brand.removeLogo() }
+                        .buttonStyle(.borderless)
+                }
+            }
+            .onChange(of: logoItem) { _, item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self) { brand.setLogo(from: data) }
+                    logoItem = nil
+                }
+            }
+        } header: {
+            SectionLabel("Brand kit")
+        } footer: {
+            Text("Used on every poster and flyer Hera makes. Kept on this device.")
         }
     }
 

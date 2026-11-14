@@ -28,6 +28,13 @@ struct RunResultView: View {
                 ScheduleChangesView(changes: changes)
             }
 
+            if let posters = run.posterDrafts, !posters.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionLabel(posters.count == 1 ? "Your poster" : "Your posters")
+                    ForEach(posters) { PosterCard(poster: $0) }
+                }
+            }
+
             if let emails = run.emailDrafts, !emails.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionLabel(emails.count == 1 ? "Email to send" : "Emails to send")
@@ -181,6 +188,8 @@ struct LaunchKitSummary: Equatable {
         let emails = run.emailDrafts?.count ?? 0
 
         var items: [Item] = []
+        let posters = run.posterDrafts?.count ?? 0
+        if posters > 0 { items.append(.init(text: plural(posters, "A poster in every size", "posters in every size"), systemImage: "photo.artframe")) }
         if site > 0 { items.append(.init(text: "Website ready to publish", systemImage: "globe")) }
         if posts > 0 { items.append(.init(text: plural(posts, "A post ready to approve", "posts ready to approve"), systemImage: "text.bubble.fill")) }
         if sharing > 0 { items.append(.init(text: plural(sharing, "A post to share yourself", "posts to share yourself"), systemImage: "square.and.arrow.up")) }
