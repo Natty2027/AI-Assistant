@@ -19,6 +19,8 @@ final class AppModel {
     let speech = HeraVoice()
     /// The person's calendar and reminders on this device, for Schedule.
     let schedule = ScheduleManager()
+    /// Alerts before calendar events, with Hera saying what's coming up.
+    let reminders = EventReminders()
     /// The business's name, colors and logo, used on every poster.
     let brand = BrandKitStore()
     /// The photo sent with the latest run, so its posters can use it.
@@ -243,6 +245,18 @@ final class AppModel {
         } catch {
             scheduleOutcomes[change.id] = .failed("Couldn't undo: \(error.localizedDescription)")
         }
+    }
+
+    /// Brings event reminders in line with the calendar. `mayAsk` lets the notification permission
+    /// prompt appear; it can't in the background.
+    func refreshReminders(mayAsk: Bool = true) async {
+        await reminders.update(schedule: schedule, voice: speech, mayAsk: mayAsk)
+    }
+
+    /// "Turn on" in Settings when Hera can't see the calendar yet: asks for it, then schedules.
+    func allowRemindersCalendar() async {
+        _ = try? await schedule.today()
+        await refreshWidget()
     }
 
     func skip(_ change: ScheduleChange) {

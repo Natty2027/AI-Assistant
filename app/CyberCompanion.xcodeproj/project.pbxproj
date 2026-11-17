@@ -61,11 +61,21 @@
 			);
 			target = F16886CC30A185A9000D33C3 /* HeraTodayExtension */;
 		};
+		F1AA921B30AC118C0004C05F /* Exceptions for "CyberCompanion" folder in "CyberCompanion" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A10000000000000000000008 /* CyberCompanion */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A10000000000000000000004 /* CyberCompanion */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				F1AA921B30AC118C0004C05F /* Exceptions for "CyberCompanion" folder in "CyberCompanion" target */,
+			);
 			path = CyberCompanion;
 			sourceTree = "<group>";
 		};
@@ -387,6 +397,7 @@
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CyberCompanion/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Hera;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -430,6 +441,7 @@
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CyberCompanion/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Hera;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";

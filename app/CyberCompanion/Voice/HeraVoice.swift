@@ -202,6 +202,37 @@ final class HeraVoice {
         finish()
     }
 
+    /* ---------------- recorded clips ---------------- */
+
+    /// Records `text` in Hera's voice to a sound file the system can play with a notification:
+    /// 16-bit PCM in a CAF file, cut to under 30 seconds (longer sounds are replaced by the
+    /// default one). Throws if her voice isn't available on this device.
+    func record(_ text: String, to url: URL) async throws {
+        guard let directory = Self.modelDirectory else { throw KokoroError.modelsNotAvailable(URL(filePath: "/")) }
+        let engine = try await loadingTask(directory).value
+        let spoken = Self.spokenText(from: text)
+        try await Task.detached(priority: .utility) {
+            let samples = try engine.synthesize(text: spoken, voice: Self.voiceName).samples
+            let clip = Array(samples.prefix(KokoroEngine.sampleRate * 28))
+            guard let buffer = KokoroEngine.makePCMBuffer(from: clip, format: KokoroEngine.audioFormat) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: KokoroEngine.sampleRate,
+                AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
+            ]
+            // Written beside the final name and moved into place, so a half-written file is never played.
+            let partial = url.deletingLastPathComponent().appending(path: "." + url.lastPathComponent)
+            do {
+                let file = try AVAudioFile(forWriting: partial, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+                try file.write(from: buffer)
+            }
+            try? FileManager.default.removeItem(at: url)
+            try FileManager.default.moveItem(at: partial, to: url)
+        }.value
+    }
+
     /* ---------------- the system voice, as a last resort ---------------- */
 
     private func speakWithSystemVoice(_ text: String, generation current: Int) {

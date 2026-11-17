@@ -118,6 +118,19 @@ final class ScheduleManager {
         return DayAgenda(events: events, reminders: reminders)
     }
 
+    /// Timed events starting in the next `days` days, for event reminders. Never asks for access:
+    /// this runs in the background too, where a permission prompt can't appear.
+    func upcoming(days: Int, now: Date = .now) -> [UpcomingEvent] {
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess,
+              let end = Calendar.current.date(byAdding: .day, value: days, to: now) else { return [] }
+        return store.events(matching: store.predicateForEvents(withStart: now, end: end, calendars: nil))
+            .compactMap { e -> UpcomingEvent? in
+                guard !e.isAllDay, let id = Self.occurrenceID(e), let start = e.startDate else { return nil }
+                return UpcomingEvent(id: id, title: e.title ?? "", start: start, location: e.location)
+            }
+            .sorted { $0.start < $1.start }
+    }
+
     /// Calendar names as Hera sees them. Two accounts can both have a calendar called "Calendar",
     /// so repeated names get their account added: "Calendar (Gmail)".
     private static func displayNames(for calendars: [EKCalendar]) -> [String: String] {

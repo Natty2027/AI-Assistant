@@ -41,5 +41,7 @@ extension AppModel {
         TodayWidgetData(updated: .now, calendarAllowed: allowed,
                         events: agenda?.events ?? [], remindersDue: agenda?.reminders.count ?? 0,
                         pendingApprovals: pendingCount).save()
+        // Event reminders follow the calendar too, so they're brought up to date at the same times.
+        await refreshReminders()
     }
 }

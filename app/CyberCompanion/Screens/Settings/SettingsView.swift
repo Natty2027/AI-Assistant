@@ -13,6 +13,9 @@ struct SettingsView: View {
     @State private var logoItem: PhotosPickerItem?
     @State private var memoryNote: String?
     @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
+    @AppStorage(EventReminders.enabledKey) private var eventReminders = true
+    @AppStorage(EventReminders.leadKey) private var reminderLead = 15
+    @AppStorage(EventReminders.spokenKey) private var spokenReminders = true
 
     var body: some View {
         NavigationStack {
@@ -21,6 +24,7 @@ struct SettingsView: View {
                 if model.isConfigured { aiSection }
                 brandSection
                 if model.isConfigured { memorySection }
+                remindersSection
                 if HeraVoice.isAvailable { voiceSection }
                 legal
                 // Server addresses and the staging token are for development only. Release builds
@@ -164,6 +168,42 @@ struct SettingsView: View {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         newMemory = ""
         Task { memoryNote = await model.addMemory(text) }
+    }
+
+    private var remindersSection: some View {
+        Section {
+            Toggle("Remind me before events", isOn: $eventReminders)
+            if eventReminders {
+                Picker("How early", selection: $reminderLead) {
+                    ForEach(EventReminders.leadChoices, id: \.self) { minutes in
+                        Text("\(EventReminderPlanner.leadPhrase(minutes)) before").tag(minutes)
+                    }
+                }
+                if HeraVoice.isAvailable {
+                    Toggle("Hera says the reminder out loud", isOn: $spokenReminders)
+                }
+                switch model.reminders.status {
+                case .noCalendar:
+                    Button("Let Hera see your calendar", systemImage: "calendar") {
+                        Task { await model.allowRemindersCalendar() }
+                    }
+                case .notificationsDenied:
+                    Label("Notifications are off for Hera. Turn them on in Settings → Apps → Hera → Notifications.",
+                          systemImage: "bell.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                default:
+                    EmptyView()
+                }
+            }
+        } header: {
+            SectionLabel("Event reminders")
+        } footer: {
+            Text("Before each event on your calendar, Hera sends an alert and says what it is and when it starts. Her voice is recorded on this device ahead of time, so you hear it even when Hera is closed, unless your phone is on silent.")
+        }
+        .onChange(of: eventReminders) { Task { await model.refreshReminders() } }
+        .onChange(of: reminderLead) { Task { await model.refreshReminders() } }
+        .onChange(of: spokenReminders) { Task { await model.refreshReminders() } }
     }
 
     private var voiceSection: some View {
