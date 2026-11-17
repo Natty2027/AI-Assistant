@@ -163,7 +163,8 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case launch
 
     /// Modes that can carry a photo for posts.
-    var takesPhoto: Bool { self == .posts || self == .launch }
+    /// A photo can go on posts, on the website, or both in a launch.
+    var takesPhoto: Bool { self != .schedule }
 
     var id: Self { self }
 
@@ -347,7 +348,18 @@ struct Memory: Codable, Hashable, Identifiable, Sendable {
 struct MemoriesResponse: Decodable, Sendable { let memories: [Memory] }
 struct MemoryAddResponse: Decodable, Sendable { let memory: Memory?; let message: String }
 struct ProposalResponse: Decodable, Sendable { let proposal: Proposal }
-struct FileResponse: Decodable, Sendable { let contents: String }
+struct FileResponse: Decodable, Sendable {
+    let contents: String
+    /// "base64" for pictures; text otherwise (older servers send no encoding).
+    let encoding: String?
+}
+
+/// The brand kit's name and colors, sent with a run so the website matches the posters.
+struct RunBrand: Encodable, Sendable {
+    let businessName: String?
+    let primaryColor: String
+    let accentColor: String
+}
 struct ConsentResponse: Decodable, Sendable { let granted: Bool }
 struct OKResponse: Decodable, Sendable { let ok: Bool }
 

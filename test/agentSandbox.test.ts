@@ -75,7 +75,8 @@ test("size and count limits hold", async () => {
 
 test("a clean site passes the scan", async () => {
   const s = await site();
-  await s.write("index.html", '<html><head><link rel="stylesheet" href="site.css"></head><body><a href="about.html">About</a><script src="app.js"></script></body></html>');
+  await s.write("index.html", '<html><head><title>Home</title><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="site.css"></head><body><a href="about.html">About</a><script src="app.js"></script></body></html>');
+  await s.write("about.html", '<html><head><title>About</title><meta name="viewport" content="width=device-width"></head><body><a href="./">Home</a></body></html>');
   await s.write("site.css", "body{}");
   await s.write("app.js", "console.log('hi')");
   assert.deepEqual(await s.scan(), []);
@@ -84,7 +85,7 @@ test("a clean site passes the scan", async () => {
 test("a site needs a home page", async () => {
   const s = await site();
   await s.write("about.html", "<p>about</p>");
-  assert.deepEqual((await s.scan()).map((c) => c.id), ["no_index"]);
+  assert.deepEqual((await s.scan()).filter((c) => c.level !== "warn").map((c) => c.id), ["no_index"]);
 });
 
 test("each way a page can hurt its visitors is caught", async () => {
@@ -109,7 +110,7 @@ test("each way a page can hurt its visitors is caught", async () => {
 test("a form that posts to the site itself is fine", async () => {
   const s = await site();
   await s.write("index.html", '<form action="/thanks.html"><input name="q"></form>');
-  assert.deepEqual(await s.scan(), []);
+  assert.deepEqual((await s.scan()).filter((c) => c.level !== "warn"), []);
 });
 
 test("problems on any page are found, not just the home page", async () => {

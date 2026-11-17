@@ -56,11 +56,12 @@ export function encodeFilePath(p: string): string {
   return p.split("/").map(encodeURIComponent).join("/");
 }
 
-const sha1 = (s: string) => createHash("sha1").update(s, "utf8").digest("hex");
+const bytesOf = (contents: string | Buffer) => typeof contents === "string" ? Buffer.from(contents, "utf8") : contents;
+const sha1 = (contents: string | Buffer) => createHash("sha1").update(bytesOf(contents)).digest("hex");
 
 export async function publish(
   token: string,
-  files: Array<{ path: string; contents: string }>,
+  files: Array<{ path: string; contents: string | Buffer }>,
   existingSiteId: string | null,
   opts: { fetch?: FetchLike; sleep?: (ms: number) => Promise<void>; maxPolls?: number } = {},
 ): Promise<PublishedSite> {
@@ -86,7 +87,7 @@ export async function publish(
   if (!site?.id) throw new ProviderError("unavailable", "Netlify did not return a site");
 
   const digests: Record<string, string> = {};
-  const bySha = new Map<string, { path: string; contents: string }>();
+  const bySha = new Map<string, { path: string; contents: string | Buffer }>();
   for (const file of files) {
     const d = sha1(file.contents);
     digests[`/${file.path}`] = d;
@@ -103,7 +104,7 @@ export async function publish(
     const file = bySha.get(d);
     if (!file) throw new ProviderError("unavailable", "Netlify asked for a file that is not part of this site");
     await call(f, token, `/deploys/${encodeURIComponent(deploy.id)}/files/${encodeFilePath(file.path)}`, {
-      method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: Buffer.from(file.contents, "utf8"),
+      method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: bytesOf(file.contents) as unknown as BodyInit,  // a Buffer is a valid fetch body; the DOM types disagree
     });
   }
 

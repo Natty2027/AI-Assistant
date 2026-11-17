@@ -84,6 +84,38 @@ struct NetworkingTests {
         #expect(calls == 1, "a POST is never repeated automatically")
     }
 
+    @Test func longRunsAreStartedThenCheckedUntilTheyFinish() async throws {
+        var checks = 0
+        StubProtocol.handler = { request in
+            if request.httpMethod == "POST" { return (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-000000000001"}"#) }
+            checks += 1
+            return checks < 3 ? (200, #"{"status":"running"}"#)
+                : (200, #"{"status":"finished","result":{"status":"done","text":"Your site is ready.","tainted":false,"drafts":[],"proposals":[]}}"#)
+        }
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        let run = try await client.runAssistant(request: "Make my website", mode: .site, allowWebSearch: false,
+                                                brand: RunBrand(businessName: "Clay Corner", primaryColor: "#1F6F5C", accentColor: "#F2A541"))
+        #expect(run.text == "Your site is ready.")
+        #expect(checks == 3)
+        let start = try #require(StubProtocol.requests.first)
+        #expect(start.url?.path() == "/agent/runs")
+        #expect(StubProtocol.requests.last?.url?.path() == "/agent/runs/6f1c2d3e-0000-4000-8000-000000000001")
+    }
+
+    @Test func aRunThatFailsOnTheServerSaysWhy() async throws {
+        StubProtocol.handler = { request in
+            request.httpMethod == "POST" ? (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-000000000002"}"#)
+                : (404, #"{"error":"Hera lost track of that request.","code":"run_lost"}"#)
+        }
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        do {
+            _ = try await client.runAssistant(request: "Make my website", mode: .site, allowWebSearch: false)
+            Issue.record("expected the run to fail")
+        } catch let error as APIClient.APIError {
+            #expect(error.code == "run_lost")
+        }
+    }
+
     @Test func requestsCarryTheTokenAndLanguage() async throws {
         StubProtocol.handler = { _ in (200, #"{"granted":true}"#) }
         let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "abc" }, session: StubProtocol.session)

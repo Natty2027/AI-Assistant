@@ -145,10 +145,11 @@ struct SiteSchemeHandler: URLSchemeHandler {
                     while path.hasPrefix("/") { path.removeFirst() }
                     if path.isEmpty || path.hasSuffix("/") { path += "index.html" }
 
-                    let data = Data(try await client.siteFile(path).utf8)
+                    let data = try await client.siteFile(path)
+                    let type = Self.mimeType(for: path)
                     // A real HTTP response, so the security policy header applies to every file.
                     let headers = [
-                        "Content-Type": "\(Self.mimeType(for: path)); charset=utf-8",
+                        "Content-Type": type.hasPrefix("image/") && type != "image/svg+xml" ? type : "\(type); charset=utf-8",
                         "Content-Security-Policy": Self.contentSecurityPolicy,
                     ]
                     let response: URLResponse = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)
@@ -176,6 +177,11 @@ struct SiteSchemeHandler: URLSchemeHandler {
         case "svg": "image/svg+xml"
         case "txt": "text/plain"
         case "xml": "application/xml"
+        case "jpg", "jpeg": "image/jpeg"
+        case "png": "image/png"
+        case "gif": "image/gif"
+        case "webp": "image/webp"
+        case "ico": "image/x-icon"
         default: "application/octet-stream"
         }
     }

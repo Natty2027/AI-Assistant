@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { ActionError, type ActionStore } from "./approvals.ts";
 import { evaluate, NEVER_AUTOMATED, PLATFORMS, postContentChecks, TEXT_LIMITS, type Context, type Platform } from "./policy.ts";
-import { SandboxError, type SiteSandbox } from "./sandbox.ts";
+import { isBinaryPath, SandboxError, type SiteSandbox } from "./sandbox.ts";
 import { withAiRetry } from "./aiRetry.ts";
 import { makePoster, POSTER_INPUT, POSTER_TOOL, PosterError, type PosterDraft } from "./poster.ts";
 import { describeSchedule, SCHEDULE_INPUTS, SCHEDULE_TOOL_NAMES, SCHEDULE_TOOLS, ScheduleError, scheduleChange,
@@ -36,8 +36,16 @@ export const AGENT_MODEL = "claude-opus-5-5";
 /** Steps and tokens per request. A launch does the work of several requests in one, so it gets more. */
 const LIMITS: Record<string, { turns: number; tokens: number }> = {
   default: { turns: 20, tokens: 600_000 },
+  // A website is written a whole page per step, and a multi-page site takes many of them.
+  site: { turns: 40, tokens: 1_200_000 },
   launch: { turns: 40, tokens: 1_200_000 },
 };
+/** Room for one step's thinking plus what it writes. A full web page with its styles can run past
+ *  16k tokens on its own, which cut site builds off mid-file ("ran out of room mid-step"). */
+const OUTPUT_TOKENS: Record<string, number> = { default: 16_000, site: 32_000, launch: 32_000 };
+/** A step that writes 32k tokens takes several minutes. The SDK refuses a non-streaming request
+ *  that long unless it's given a timeout of its own; the attempt timeout stops it a bit sooner. */
+const STEP_TIMEOUT_MS = { sdk: 12 * 60_000, attempt: 11 * 60_000 } as const;
 
 /**
  * A post the assistant wrote. With a connectionId it can be proposed for publishing; without
@@ -69,7 +77,7 @@ export const AGENT_MODES = ["site", "posts", "schedule", "launch"] as const;
 export type AgentMode = (typeof AGENT_MODES)[number];
 
 const MODE_TOOLS: Record<AgentMode, ReadonlySet<string>> = {
-  site: new Set(["list_site_files", "read_site_file", "write_site_file", "check_site", "propose_site_deploy", "ask_user", "remember", "draft_email"]),
+  site: new Set(["list_site_files", "read_site_file", "write_site_file", "add_photo_to_site", "check_site", "propose_site_deploy", "ask_user", "remember", "draft_email"]),
   // Posts may read the site (for accurate details and its link) but never change or publish it.
   // "Studio" in the app: posts, posters and flyers.
   posts: new Set(["list_site_files", "read_site_file", "draft_post", "write_post", "propose_post", "design_poster", "ask_user", "remember", "draft_email"]),
@@ -77,7 +85,7 @@ const MODE_TOOLS: Record<AgentMode, ReadonlySet<string>> = {
   schedule: new Set([...SCHEDULE_TOOL_NAMES, "ask_user", "remember", "draft_email"]),
   // Launch Kit: everything at once for one event, class, product or opening. Still only proposals.
   launch: new Set([
-    "list_site_files", "read_site_file", "write_site_file", "check_site", "propose_site_deploy",
+    "list_site_files", "read_site_file", "write_site_file", "add_photo_to_site", "check_site", "propose_site_deploy",
     "draft_post", "write_post", "propose_post", "design_poster", ...SCHEDULE_TOOL_NAMES, "ask_user", "remember", "draft_email",
   ]),
 };
@@ -93,7 +101,7 @@ export interface AgentDeps {
   /** Website or posts; see AGENT_MODES. */
   mode: AgentMode;
   /** Only the beta messages surface is used; tests pass a scripted fake. */
-  client: { beta: { messages: { create: (params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, options?: { signal?: AbortSignal }) => Promise<Anthropic.Beta.Messages.BetaMessage> } } };
+  client: { beta: { messages: { create: (params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, options?: { signal?: AbortSignal; timeout?: number }) => Promise<Anthropic.Beta.Messages.BetaMessage> } } };
   /** Injected in tests so retry backoff costs nothing. */
   sleep?: (ms: number) => Promise<void>;
   store: ActionStore;
@@ -105,6 +113,10 @@ export interface AgentDeps {
   allowWebSearch?: boolean;
   /** A photo the person attached to this run (already checked to be theirs). */
   photoId?: string | null;
+  /** The attached photo's bytes, for putting it on the website. */
+  photoBytes?: () => Promise<Buffer | null>;
+  /** Their brand kit from the app: business name and colors, for the website and posters. */
+  brand?: Brand | null;
   /** Schedule mode: their calendar and reminders, read on their device for this request. */
   schedule?: ScheduleSnapshot;
   /** Lasting facts the person told Hera before (see agent_memories). */
@@ -158,7 +170,9 @@ const TOOLS = [
     input_schema: obj({ path: { type: "string", description: "Relative path, e.g. index.html or css/site.css" } }) },
   { name: "write_site_file", description: "Create or replace one file of the static website (HTML, CSS, JS, images as SVG, etc.).", strict: true,
     input_schema: obj({ path: { type: "string" }, contents: { type: "string" } }) },
-  { name: "check_site", description: "Run the publishing checks on the website and return any problems to fix.", strict: true, input_schema: obj({}) },
+  { name: "add_photo_to_site", description: "Put the photo the person attached into the website as a file, then show it with <img src=\"…\" alt=\"…\">. Only works when they attached a photo.", strict: true,
+    input_schema: obj({ path: { type: "string", description: "Where to save it, ending in .jpg, e.g. images/storefront.jpg" } }) },
+  { name: "check_site", description: "Run the publishing and quality checks on the website (safety, broken links, page titles, phone layout, picture descriptions) and return any problems to fix.", strict: true, input_schema: obj({}) },
   { name: "draft_post", description: "Save a draft social post for one of the person's connected accounts. Returns a draft id and any problems found.", strict: true,
     input_schema: obj({
       connection_id: { type: "string", description: "Id of one of the person's connected social accounts" },
@@ -197,6 +211,7 @@ const INPUTS = {
   list_site_files: z.object({}).strict(),
   read_site_file: z.object({ path: z.string() }).strict(),
   write_site_file: z.object({ path: z.string(), contents: z.string() }).strict(),
+  add_photo_to_site: z.object({ path: z.string().regex(/\.jpe?g$/i) }).strict(),
   check_site: z.object({}).strict(),
   draft_post: z.object({ connection_id: z.string(), text: z.string(), link: z.string().nullable(), sponsored: z.boolean(), attach_photo: z.boolean().default(false) }).strict(),
   write_post: z.object({ platform: z.enum(PLATFORMS), text: z.string().min(1).max(5000), link: z.string().nullable(), sponsored: z.boolean() }).strict(),
@@ -228,6 +243,27 @@ How to work:
 }
 
 /** What Hera remembers, and when to save more. Quoted, because these are facts, not instructions. */
+/** The business's look, from the brand kit in the app. Checked by readBrand before it gets here. */
+export interface Brand { businessName: string | null; primaryColor: string; accentColor: string }
+
+/** The brand kit as the app sends it, or null if it's missing or malformed. */
+export function readBrand(raw: unknown): Brand | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Record<string, unknown>;
+  const hex = (v: unknown) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v.toUpperCase() : null;
+  const primary = hex(b.primary_color), accent = hex(b.accent_color);
+  if (!primary || !accent) return null;
+  const name = typeof b.business_name === "string" ? b.business_name.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+  return { businessName: name || null, primaryColor: primary, accentColor: accent };
+}
+
+function brandPrompt(brand: Brand | null | undefined): string {
+  if (!brand) return "";
+  return `
+
+Their brand kit: ${brand.businessName ? `business name ${JSON.stringify(brand.businessName)}, ` : ""}main color ${brand.primaryColor}, accent color ${brand.accentColor}. Use these colors on the website (main for headings, the header and links; accent for buttons and highlights), with enough contrast to read easily.`;
+}
+
 function memoryPrompt(memories: string[] | undefined): string {
   const known = memories?.length ? memories.map((m) => `- ${JSON.stringify(m)}`).join("\n") : "- (nothing yet)";
   return `
@@ -240,8 +276,8 @@ When the person asks for an email, write it with draft_email; they send it thems
 Use these instead of asking again. When they tell you something lasting about themselves or their business, such as its name, hours, location, links, prices or the tone they like, save it with remember, one short fact per call. Don't save passwords, codes, card or account numbers, or health details, and don't save anything they ask you not to keep. This conversation continues across their replies: when they answer or ask for a change, carry on from where you were.`;
 }
 
-function systemPrompt(ctx: Context, mode: AgentMode, hasPhoto: boolean, schedule?: ScheduleSnapshot, memories?: string[]): string {
-  return modePrompt(ctx, mode, hasPhoto, schedule) + memoryPrompt(memories);
+function systemPrompt(ctx: Context, mode: AgentMode, hasPhoto: boolean, schedule?: ScheduleSnapshot, memories?: string[], brand?: Brand | null): string {
+  return modePrompt(ctx, mode, hasPhoto, schedule) + memoryPrompt(memories) + (mode === "site" || mode === "launch" ? brandPrompt(brand) : "");
 }
 
 function accountList(ctx: Context, kind: "hosting" | "social"): string {
@@ -252,7 +288,14 @@ function accountList(ctx: Context, kind: "hosting" | "social"): string {
 }
 
 const SITE_RULES = `- Build plain static sites: no scripts from other websites, no forms that send answers to other websites, no password fields, no visitor tracking.
-- When the site is ready, check it with check_site, then propose publishing it to one of their hosting accounts.`;
+- Make it look professionally designed and work well on phones first: a viewport meta tag, a responsive layout, readable type, generous spacing, and one shared stylesheet (css/site.css) for every page. Use system fonts; don't load fonts or icons from other websites.
+- Every page has a clear <title>, a meta description, Open Graph tags (og:title, og:description, og:image when there's a picture) so links shared on social media show a preview, and the same navigation, so visitors can reach every page.
+- Write one file per write_site_file call. Before changing a page, read it with read_site_file, then write the whole updated page.
+- Pictures: put the person's attached photo on the site with add_photo_to_site. Draw logos, icons and simple illustrations as SVG files (drawings only, no scripts). Every <img> has alt text.
+- For contact, use links that open the visitor's own apps: mailto: for email, tel: for phone, and a link to a map for the address. Don't build forms.
+- A multi-page site is fine when it helps (for example, home, services, about, contact). Link pages with relative links, like about.html.
+- Add a favicon.svg and link it from every page.
+- When the site is ready, check it with check_site and fix every problem it finds, including warnings, then propose publishing it to one of their hosting accounts.`;
 
 function postRules(hasPhoto: boolean): string {
   return `- For a post to a connected account, use draft_post and then propose_post. For any other platform, use write_post: the person shares that one themselves. Fit each post to its platform's length and style.
@@ -322,7 +365,7 @@ The person's connected ${kind} accounts:
 ${accountList(ctx, kind)}
 
 How to work:
-${mode === "site" ? SITE_RULES : postRules(hasPhoto)}
+${mode === "site" ? SITE_RULES + (hasPhoto ? "\n- The person attached a photo: put it on the site with add_photo_to_site where it fits best." : "") : postRules(hasPhoto)}
 ${COMMON_RULES}`;
 }
 
@@ -370,18 +413,19 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     // Typed against the SDK, so a misnamed field fails the build rather than the request.
     const params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming = {
       model: AGENT_MODEL,
-      max_tokens: 16000,
+      max_tokens: OUTPUT_TOKENS[deps.mode] ?? OUTPUT_TOKENS.default,
       thinking: { type: "adaptive" },
       output_config: { effort: "high" },
       // Route around a refusal with Anthropic's default fallback, rather than failing outright.
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-      system: systemPrompt(deps.context(), deps.mode, Boolean(deps.photoId), deps.schedule, deps.memories),
+      system: systemPrompt(deps.context(), deps.mode, Boolean(deps.photoId), deps.schedule, deps.memories, deps.brand),
       tools,
       messages,
     };
     // A transient failure on one turn is retried rather than throwing away the turns before it.
-    const res = await withAiRetry((signal) => deps.client.beta.messages.create(params, { signal }), { sleep: deps.sleep });
+    const res = await withAiRetry((signal) => deps.client.beta.messages.create(params, { signal, timeout: STEP_TIMEOUT_MS.sdk }),
+      { sleep: deps.sleep, attemptTimeoutMs: STEP_TIMEOUT_MS.attempt });
     tokens += (res.usage?.input_tokens ?? 0) + (res.usage?.output_tokens ?? 0);
     const text = res.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
 
@@ -444,6 +488,10 @@ async function runTool(
       case "list_site_files":
         return { content: JSON.stringify(await deps.sandbox.files()) };
       case "read_site_file": {
+        if (isBinaryPath(input.path)) {
+          const bytes = (await deps.sandbox.readBytes(input.path)).length;
+          return { content: `${input.path} is a picture (${bytes} bytes). Show it with <img src="${input.path}" alt="…">.` };
+        }
         // One read can't fill the whole conversation (and its cost) with a huge file.
         const text = await deps.sandbox.read(input.path);
         return { content: text.length > 60_000 ? `${text.slice(0, 60_000)}\n[…file shortened: ${text.length} characters in all]` : text };
@@ -451,6 +499,12 @@ async function runTool(
       case "write_site_file":
         await deps.sandbox.write(input.path, input.contents);
         return { content: `Saved ${input.path}.` };
+      case "add_photo_to_site": {
+        const bytes = deps.photoId && deps.photoBytes ? await deps.photoBytes() : null;
+        if (!bytes) return { content: "The person didn't attach a photo to this request. Ask them to add one with the photo button.", error: true };
+        await deps.sandbox.writeBytes(input.path, bytes);
+        return { content: `Saved the photo as ${input.path}.` };
+      }
       case "check_site": {
         const checks = await deps.sandbox.scan();
         return { content: checks.length ? JSON.stringify(checks) : "No problems found." };

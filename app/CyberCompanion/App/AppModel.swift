@@ -159,7 +159,7 @@ final class AppModel {
 
     /* ---------------- the assistant ---------------- */
 
-    /// `photo` is a JPEG to attach to the posts (Posts only); it's uploaded first.
+    /// `photo` is a JPEG for the posts or the website; it's uploaded first.
     func runAssistant(prompt: String, mode: CreateMode, allowWebSearch: Bool, photo: Data? = nil) async {
         let request = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !request.isEmpty else { return }
@@ -175,8 +175,11 @@ final class AppModel {
             default: nil
             }
             let continuing = conversation?.mode == mode ? conversation?.id : nil
+            let kit = brand.kit
+            let brandInfo = RunBrand(businessName: kit.businessName.isEmpty ? nil : kit.businessName,
+                                     primaryColor: kit.primaryHex, accentColor: kit.accentHex)
             let run = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
-                                                    photoID: photoID, schedule: snapshot, conversationID: continuing)
+                                                    photoID: photoID, schedule: snapshot, conversationID: continuing, brand: brandInfo)
             lastRun = run
             conversation = run.conversationId.map { ($0, mode) }
             // A new task uses its own photo; a reply keeps the task's photo unless it brings a new one.

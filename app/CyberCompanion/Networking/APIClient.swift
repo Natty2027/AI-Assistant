@@ -40,20 +40,57 @@ struct APIClient: Sendable {
 
     /* ---------------- the assistant ---------------- */
 
+    /// How often the app checks on a run, and how long it waits for one at most.
+    static let runCheckInterval: TimeInterval = 3
+    static let longestRun: TimeInterval = 30 * 60
+
+    /// Asks Hera to do something and waits for her answer. The run happens in the background on
+    /// the server: building a website can take her ten minutes or more, longer than a phone keeps
+    /// one request open, so the app starts it and checks back every few seconds.
     func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil,
-                      schedule: ScheduleSnapshot? = nil, conversationID: String? = nil) async throws -> AgentRunResponse {
+                      schedule: ScheduleSnapshot? = nil, conversationID: String? = nil, brand: RunBrand? = nil) async throws -> AgentRunResponse {
         struct Body: Encodable {
             let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String?
             /// Schedule runs only: the person's calendar and reminders for this one request.
             let schedule: ScheduleSnapshot?
             /// Continues an earlier task, from the previous answer's conversationId.
             let conversationId: String?
+            /// The brand kit's name and colors, for the website.
+            let brand: RunBrand?
         }
-        // A run can take several model turns, so it gets a much longer timeout than other calls.
-        return try await send("POST", "agent/run",
-                              body: Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID,
-                                         schedule: schedule, conversationId: conversationID),
-                              timeout: 300)
+        struct Started: Decodable {
+            let runId: String
+            enum CodingKeys: String, CodingKey { case runId = "run_id" }
+        }
+        struct Progress: Decodable {
+            let status: String
+            let result: AgentRunResponse?
+        }
+        let body = Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID,
+                        schedule: schedule, conversationId: conversationID, brand: brand)
+        let started: Started
+        do {
+            started = try await send("POST", "agent/runs", body: body, timeout: 60)
+        } catch APIError.server(status: 404, _, _, _) {
+            // A server from before background runs: ask and wait, as before.
+            return try await send("POST", "agent/run", body: body, timeout: 300)
+        }
+
+        let deadline = Date.now.addingTimeInterval(Self.longestRun)
+        var missedChecks = 0
+        while Date.now < deadline {
+            try await sleep(Self.runCheckInterval)
+            do {
+                let progress: Progress = try await send("GET", "agent/runs/\(started.runId)")
+                if progress.status == "finished", let result = progress.result { return result }
+                missedChecks = 0
+            } catch is URLError where missedChecks < 20 {
+                // A dropped connection (a lift, a tunnel) doesn't stop the run on the server.
+                missedChecks += 1
+            }
+        }
+        throw APIError.server(status: 504, message: "Hera is taking unusually long. Check back in a few minutes, or try again.",
+                              code: "run_slow", requestID: nil)
     }
 
     /// Uploads a JPEG for the next posts run and returns its id.
@@ -115,9 +152,12 @@ struct APIClient: Sendable {
         try await send("GET", "agent/site")
     }
 
-    func siteFile(_ path: String) async throws -> String {
+    /// One file of the website, for the preview. Pictures arrive as base64.
+    func siteFile(_ path: String) async throws -> Data {
         let out: FileResponse = try await send("GET", "agent/site/file", query: [URLQueryItem(name: "path", value: path)])
-        return out.contents
+        guard out.encoding == "base64" else { return Data(out.contents.utf8) }
+        guard let data = Data(base64Encoded: out.contents) else { throw APIError.invalidResponse }
+        return data
     }
 
     /* ---------------- accounts ---------------- */

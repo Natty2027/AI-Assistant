@@ -16,6 +16,7 @@ import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
 import { ActionError } from "./agent/approvals.ts";
 import { SandboxError } from "./agent/sandbox.ts";
 import { isOAuthProvider } from "./agent/oauth.ts";
+import { RunJobs, type RunFailure } from "./agent/runs.ts";
 
 const writeLimiter = createLimiter({ windowMs: 60_000, max: 20 });
 // Each assistant run can be many model calls, so it gets a much tighter budget.
@@ -48,6 +49,14 @@ function agentFailure(e: unknown): never {
   throw e;
 }
 const guarded = <T>(fn: () => Promise<T> | T): Promise<T> => Promise.resolve().then(fn).catch(agentFailure);
+
+/** What the app is told when a background run fails: the same answers as a direct request. */
+function runFailure(e: unknown): RunFailure {
+  if (e instanceof HttpError && e.expose) return { status: e.status, message: e.message, code: e.code };
+  console.error("[run failed]", e instanceof Error ? `${e.name}: ${e.message.slice(0, 300)}` : "unknown error");
+  return { status: 500, message: "Something went wrong on our side. Please try again.", code: "run_failed" };
+}
+const runJobs = new RunJobs(runFailure);
 
 /** user_settings is created lazily; every table keys on it, so make sure the row exists. */
 async function ensureSettings(userId: string): Promise<void> {
@@ -254,28 +263,58 @@ export function buildRouter(): Router {
     return { ok: true };
   });
 
-  r.post("/agent/run", async (ctx) => {
-    const userId = requireAuth(ctx);
-    const request = typeof ctx.body.request === "string" ? ctx.body.request.trim() : "";
+  /**
+   * Checks a request to Hera and returns the work that answers it. Shared by /agent/run (waits for
+   * the answer) and /agent/runs (answers later), so both apply the same rules and limits.
+   */
+  async function prepareRun(userId: string, body: Record<string, any>): Promise<() => Promise<unknown>> {
+    const request = typeof body.request === "string" ? body.request.trim() : "";
     if (!request || request.length > 4000) throw new HttpError(400, "Describe what you'd like, in up to 4000 characters.");
     // Website and posts are separate runs. Builds from before the split send no mode; they get
     // the website, which is what they were opened for most often.
-    const mode = ctx.body.mode ?? "site";
+    const mode = body.mode ?? "site";
     if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'site', 'posts', 'schedule' or 'launch'.");
     await ensureSettings(userId);
     // What the person writes is sent to the model provider, so the AI consent switch applies.
     await requireAiConsent(userId);
     // Counted only once the run can actually happen, so refused requests don't use up the hour.
     if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
-    const out = await guarded(() => agent().run(userId, request, {
-      mode: mode as AgentMode, allowWebSearch: ctx.body.allow_web_search === true,
-      photoId: mode === "posts" || mode === "launch" ? ctx.body.photo_id ?? null : null,
-      // Their calendar and reminders as their device sees them, for this request; never stored on its own.
-      schedule: mode === "schedule" || mode === "launch" ? ctx.body.schedule : undefined,
-      // Continue an earlier task: the id from the previous answer.
-      conversationId: ctx.body.conversation_id,
-    }));
-    return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, emailDrafts: out.emailDrafts, posterDrafts: out.posterDrafts, tainted: out.tainted, conversationId: out.conversationId };
+    return async () => {
+      const out = await guarded(() => agent().run(userId, request, {
+        mode: mode as AgentMode, allowWebSearch: body.allow_web_search === true,
+        // A photo goes on posts, on the website, or both in a launch.
+        photoId: mode === "posts" || mode === "launch" || mode === "site" ? body.photo_id ?? null : null,
+        // Their calendar and reminders as their device sees them, for this request; never stored on its own.
+        schedule: mode === "schedule" || mode === "launch" ? body.schedule : undefined,
+        // Continue an earlier task: the id from the previous answer.
+        conversationId: body.conversation_id,
+        // The brand kit from the app: business name and colors for the website.
+        brand: body.brand,
+      }));
+      return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, emailDrafts: out.emailDrafts, posterDrafts: out.posterDrafts, tainted: out.tainted, conversationId: out.conversationId };
+    };
+  }
+
+  r.post("/agent/run", async (ctx) => {
+    const userId = requireAuth(ctx);
+    return await (await prepareRun(userId, ctx.body))();
+  });
+
+  /** Starts a request in the background and returns its id; the app checks /agent/runs/:id. */
+  r.post("/agent/runs", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (runJobs.isRunning(userId)) throw new HttpError(409, "Hera is still working on your last request. Wait for it to finish, then try again.", true, "run_in_progress");
+    const work = await prepareRun(userId, ctx.body);
+    return { run_id: runJobs.start(userId, work) };
+  });
+
+  r.get("/agent/runs/:id", async (ctx) => {
+    const userId = requireAuth(ctx);
+    assertUuid(ctx.params.id);
+    const state = runJobs.get(userId, ctx.params.id);
+    if (!state) throw new HttpError(404, "Hera lost track of that request, probably because the server restarted. Please send it again.", true, "run_lost");
+    if (state.status === "failed") throw new HttpError(state.failure.status, state.failure.message, true, state.failure.code);
+    return state.status === "running" ? { status: "running" } : { status: "finished", result: state.result };
   });
 
   /* ---- what Hera remembers: the person sees, adds and deletes these in Settings ---- */
@@ -336,7 +375,7 @@ export function buildRouter(): Router {
 
   r.get("/agent/site/file", async (ctx) => {
     const userId = requireAuth(ctx);
-    return { contents: await guarded(() => agent().siteFile(userId, ctx.url.searchParams.get("path"))) };
+    return await guarded(() => agent().siteFile(userId, ctx.url.searchParams.get("path")));
   });
 
   return r;

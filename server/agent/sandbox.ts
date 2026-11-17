@@ -19,6 +19,25 @@ import { createHash } from "node:crypto";
 import type { Check } from "./policy.ts";
 
 const ALLOWED_EXT = new Set([".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".txt", ".xml", ".json", ".webmanifest"]);
+/** Pictures stored as bytes. Everything else on a site is text. */
+const BINARY_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"]);
+
+/** True for files kept as bytes (photos), which are never read or written as text. */
+export function isBinaryPath(rel: string): boolean {
+  return BINARY_EXT.has(path.extname(rel).toLowerCase());
+}
+
+/** The first bytes each picture type starts with, so a file is what its name says. */
+function looksLike(ext: string, b: Buffer): boolean {
+  switch (ext) {
+    case ".jpg": case ".jpeg": return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+    case ".png": return b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    case ".gif": return b.subarray(0, 4).toString("latin1") === "GIF8";
+    case ".webp": return b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP";
+    case ".ico": return b.length > 4 && b[0] === 0 && b[1] === 0 && b[2] === 1 && b[3] === 0;
+    default: return false;
+  }
+}
 export const LIMITS = { fileBytes: 2 * 1024 * 1024, files: 60, totalBytes: 10 * 1024 * 1024 } as const;
 
 /** The policy injected into every published page: only this site's own scripts and styles. */
@@ -69,13 +88,30 @@ export class SiteSandbox {
     const target = this.resolve(rel);
     const ext = path.extname(target).toLowerCase();
     if (!ALLOWED_EXT.has(ext)) throw new SandboxError("type", `file type ${ext || "(none)"} is not allowed on a static site`);
-    const bytes = Buffer.byteLength(contents, "utf8");
+    if (BINARY_EXT.has(ext)) {
+      throw new SandboxError("type", "Pictures can't be written as text. Use add_photo_to_site for the person's photo, or draw the picture as an .svg file.");
+    }
+    await this.put(target, Buffer.from(contents, "utf8"));
+  }
+
+  /** Saves a picture (the person's photo). Its bytes must match its type. */
+  async writeBytes(rel: string, bytes: Buffer): Promise<void> {
+    const target = this.resolve(rel);
+    const ext = path.extname(target).toLowerCase();
+    if (!BINARY_EXT.has(ext)) throw new SandboxError("type", "pictures must be .jpg, .png, .gif, .webp or .ico");
+    if (!looksLike(ext, bytes)) throw new SandboxError("type", `that file isn't a ${ext.slice(1)} picture`);
+    await this.put(target, bytes);
+  }
+
+  private async put(target: string, data: Buffer): Promise<void> {
+    const bytes = data.length;
     if (bytes > LIMITS.fileBytes) throw new SandboxError("size", "file is too large");
 
     const existing = await this.files();
     const isNew = !existing.some((f) => f.path === path.relative(this.root, target).split(path.sep).join("/"));
     if (isNew && existing.length >= LIMITS.files) throw new SandboxError("count", "too many files in this site");
-    const total = existing.reduce((n, f) => n + f.bytes, 0) + bytes;
+    const replaced = existing.find((f) => f.path === path.relative(this.root, target).split(path.sep).join("/"))?.bytes ?? 0;
+    const total = existing.reduce((n, f) => n + f.bytes, 0) - replaced + bytes;
     if (total > LIMITS.totalBytes) throw new SandboxError("size", "the site is too large");
 
     await mkdir(path.dirname(target), { recursive: true });
@@ -87,14 +123,18 @@ export class SiteSandbox {
     try {
       if ((await lstat(target)).isSymbolicLink()) throw new SandboxError("path", "refusing to write through a link");
     } catch (e) { if (e instanceof SandboxError) throw e; /* does not exist yet: fine */ }
-    await writeFile(target, contents, "utf8");
+    await writeFile(target, data);
   }
 
   async read(rel: string): Promise<string> {
+    return (await this.readBytes(rel)).toString("utf8");
+  }
+
+  async readBytes(rel: string): Promise<Buffer> {
     const target = this.resolve(rel);
     const real = await realpath(target).catch(() => { throw new SandboxError("missing", "no such file"); });
     if (real !== this.root && !real.startsWith(this.root + path.sep)) throw new SandboxError("path", "path escapes the site folder");
-    return readFile(real, "utf8");
+    return readFile(real);
   }
 
   async files(): Promise<Array<{ path: string; bytes: number }>> {
@@ -115,7 +155,7 @@ export class SiteSandbox {
   async digest(): Promise<string> {
     const h = createHash("sha256");
     for (const f of await this.files()) {
-      const body = createHash("sha256").update(await this.read(f.path), "utf8").digest("hex");
+      const body = createHash("sha256").update(await this.readBytes(f.path)).digest("hex");
       h.update(`${f.path}\0${body}\n`);
     }
     return h.digest("hex");
@@ -156,6 +196,24 @@ export class SiteSandbox {
         add({ id: "tracking", level: "attest", message: "The site tracks visitors. You need a privacy policy that says so." });
       }
     }
+    // Quality, not safety: these don't stop publishing, but Hera fixes them when she checks.
+    const paths = new Set(files.map((f) => f.path));
+    for (const f of files.filter((f) => f.path.endsWith(".html"))) {
+      const html = await this.read(f.path);
+      if (!/<title>\s*[^<\s][^<]*<\/title>/i.test(html)) {
+        add({ id: "no_title", level: "warn", message: `${f.path} has no page title, which search results and browser tabs show.` });
+      }
+      if (!/<meta\b[^>]*name\s*=\s*["']?viewport/i.test(html)) {
+        add({ id: "no_viewport", level: "warn", message: `${f.path} isn't set up for phones (it needs a viewport meta tag), so it will look tiny on them.` });
+      }
+      if (/<img\b(?![^>]*\balt\s*=)[^>]*>/i.test(html)) {
+        add({ id: "img_alt", level: "warn", message: `${f.path} has pictures without a description (alt text) for people using screen readers.` });
+      }
+      const broken = brokenLinks(f.path, html, paths);
+      if (broken.length) {
+        add({ id: "broken_link", level: "warn", message: `${f.path} links to files the site doesn't have: ${broken.slice(0, 5).join(", ")}.` });
+      }
+    }
     // An SVG opened on its own runs its scripts, and the page's security policy doesn't cover it.
     for (const f of files.filter((f) => f.path.endsWith(".svg"))) {
       const svg = await this.read(f.path);
@@ -178,7 +236,7 @@ export class SiteSandbox {
 
   /** The files to publish, with the content-security policy added to every HTML page so a
    *  browser enforces the same rules the scan checked. */
-  async bundle(): Promise<Array<{ path: string; contents: string }>> {
+  async bundle(): Promise<Array<{ path: string; contents: string | Buffer }>> {
     return (await this.publishable()).files;
   }
 
@@ -187,16 +245,37 @@ export class SiteSandbox {
    * compares this fingerprint with the approved one and uploads these same bytes, so nothing
    * written in between can slip in.
    */
-  async publishable(): Promise<{ digest: string; files: Array<{ path: string; contents: string }> }> {
+  async publishable(): Promise<{ digest: string; files: Array<{ path: string; contents: string | Buffer }> }> {
     const h = createHash("sha256");
-    const files: Array<{ path: string; contents: string }> = [];
+    const files: Array<{ path: string; contents: string | Buffer }> = [];
     for (const f of await this.files()) {
-      const raw = await this.read(f.path);
-      h.update(`${f.path}\0${createHash("sha256").update(raw, "utf8").digest("hex")}\n`);
-      files.push({ path: f.path, contents: f.path.endsWith(".html") ? withPolicy(raw) : raw });
+      const raw = await this.readBytes(f.path);
+      h.update(`${f.path}\0${createHash("sha256").update(raw).digest("hex")}\n`);
+      const contents = isBinaryPath(f.path) ? raw : raw.toString("utf8");
+      files.push({ path: f.path, contents: f.path.endsWith(".html") ? withPolicy(contents as string) : contents });
     }
     return { digest: h.digest("hex"), files };
   }
+}
+
+/** Links and pictures in `page` that point at files this site doesn't have. Other websites,
+ *  email and phone links, and links within the page aren't checked. */
+export function brokenLinks(page: string, html: string, paths: Set<string>): string[] {
+  const missing = new Set<string>();
+  const dir = path.posix.dirname(page);
+  for (const m of html.matchAll(/\b(?:href|src)\s*=\s*["']([^"']+)["']/gi)) {
+    const raw = m[1].trim();
+    if (!raw || /^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(raw)) continue;
+    let target = raw.split(/[?#]/)[0];
+    try { target = decodeURIComponent(target); } catch { /* leave it as written */ }
+    if (!target) continue;
+    const resolved = path.posix.normalize(target.startsWith("/") ? target.slice(1) : path.posix.join(dir, target));
+    const candidates = resolved.endsWith("/") || resolved === "."
+      ? [path.posix.join(resolved, "index.html")]
+      : [resolved, `${resolved}/index.html`, `${resolved}.html`];
+    if (!candidates.some((c) => paths.has(c.replace(/^\.\//, "")))) missing.add(raw);
+  }
+  return [...missing];
 }
 
 /** The page with the content-security policy as the first thing in its <head> (a <header>

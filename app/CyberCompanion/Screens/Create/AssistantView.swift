@@ -328,7 +328,7 @@ struct AssistantView: View {
     private var placeholder: String {
         if model.isContinuing(mode) { return "Reply to Hera, or ask for a change…" }
         return switch mode {
-        case .site: "Describe the website you'd like…"
+        case .site: "Describe the website you'd like. Add a photo to put it on the site…"
         case .posts: "What should we promote? A poster, posts, a flyer…"
         case .schedule: "Tell Hera what to plan, move or remind you about…"
         case .launch: "What are you launching? The date, place, price and how to sign up…"
@@ -337,7 +337,7 @@ struct AssistantView: View {
 
     private var workingMessage: String {
         switch mode {
-        case .site: "Building your website. This can take a minute."
+        case .site: "Building your website, page by page. This can take several minutes; you can leave the app and come back."
         case .posts: "Designing your posters and posts. This can take a minute."
         case .schedule: "Looking at your schedule. This can take a minute."
         case .launch: "Putting your launch together: website, posts, calendar and email. This can take a few minutes."

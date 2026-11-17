@@ -9,8 +9,8 @@
 import { createHash } from "node:crypto";
 import { ActionError, ActionStore, type ExecutionResult, type Proposal } from "./approvals.ts";
 import { ACTIONS, isPlatform, type ActionKind, type Context, type Platform } from "./policy.ts";
-import { SiteSandbox } from "./sandbox.ts";
-import { runAgent, type AgentDeps, type AgentMode, type AgentResult } from "./loop.ts";
+import { isBinaryPath, SiteSandbox } from "./sandbox.ts";
+import { readBrand, runAgent, type AgentDeps, type AgentMode, type AgentResult } from "./loop.ts";
 import { ScheduleSnapshot } from "./schedule.ts";
 import { MemoryStore } from "./memory.ts";
 import { publish, verifyToken } from "./netlify.ts";
@@ -324,7 +324,7 @@ export class AgentService {
    * (an answer to her question, or a follow-up like "make the header blue"); otherwise it starts a
    * new one. Returns the id to send with the next reply, or null if the task can't continue.
    */
-  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
+  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown; brand?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     let schedule: ScheduleSnapshot | undefined;
     // Schedule needs the calendar; a launch uses it when the person allowed access and skips it otherwise.
@@ -348,6 +348,8 @@ export class AgentService {
     const out = await runAgent({
       mode: opts.mode, client: this.d.client, store: this.store, sandbox, userId, context: () => ctx,
       allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId, schedule, memories,
+      photoBytes: photoId ? () => this.media.read(`${photoId}.jpg`) : undefined,
+      brand: readBrand(opts.brand),
       remember: async (fact) => (await this.memory.remember(userId, fact)).message,
     }, request, resume);
     // A conversation that expired or was never this person's starts fresh under a new id.
@@ -484,7 +486,10 @@ export class AgentService {
     return { files: await sandbox.files(), checks: await sandbox.scan(), contentHash: await sandbox.digest() };
   }
 
-  async siteFile(userId: string, path: unknown): Promise<string> {
-    return (await this.sandbox(userId)).read(String(path ?? ""));
+  /** One file for the preview in the app. Pictures come as base64, everything else as text. */
+  async siteFile(userId: string, path: unknown): Promise<{ contents: string; encoding: "utf8" | "base64" }> {
+    const rel = String(path ?? "");
+    const bytes = await (await this.sandbox(userId)).readBytes(rel);
+    return isBinaryPath(rel) ? { contents: bytes.toString("base64"), encoding: "base64" } : { contents: bytes.toString("utf8"), encoding: "utf8" };
   }
 }
