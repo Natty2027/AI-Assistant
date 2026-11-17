@@ -39,6 +39,9 @@ final class AppModel {
     var briefing: String?
     /// The task in progress: a reply continues it until "Start something new".
     private(set) var conversation: (id: String, mode: CreateMode)?
+    /// A text message the person pasted or shared to Hera: read aloud, and sent with the next
+    /// request so Hera can explain it or write the reply.
+    var receivedText: String?
     /// Lasting facts Hera remembers, shown in Settings.
     var memories: [Memory] = []
 
@@ -178,8 +181,12 @@ final class AppModel {
             let kit = brand.kit
             let brandInfo = RunBrand(businessName: kit.businessName.isEmpty ? nil : kit.businessName,
                                      primaryColor: kit.primaryHex, accentColor: kit.accentHex)
+            let shared = receivedText
             let run = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
-                                                    photoID: photoID, schedule: snapshot, conversationID: continuing, brand: brandInfo)
+                                                    photoID: photoID, schedule: snapshot, conversationID: continuing, brand: brandInfo,
+                                                    receivedText: shared)
+            // Hera has it now, in this conversation; it isn't sent again with the next reply.
+            if shared != nil { receivedText = nil }
             lastRun = run
             conversation = run.conversationId.map { ($0, mode) }
             // A new task uses its own photo; a reply keeps the task's photo unless it brings a new one.
@@ -190,6 +197,21 @@ final class AppModel {
         scheduleUndos = [:]
             proposals = try await client.proposals()
         }
+    }
+
+    /* ---------------- texts the person received ---------------- */
+
+    /// A text pasted or shared to Hera: kept for the next request and read out.
+    func receive(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        receivedText = String(trimmed.prefix(4000))
+        speech.speak("Here's the text: \(receivedText ?? "")")
+    }
+
+    /// Picks up a text shared from Messages while the app was closed.
+    func collectSharedText() {
+        if let text = SharedTexts.takeLatest() { receive(text: text) }
     }
 
     /// "Start something new" on Create. Proposals stay waiting on the Review tab.

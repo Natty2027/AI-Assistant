@@ -18,7 +18,7 @@ struct RunResultView: View {
             }
 
             if run.tainted {
-                Label("This used content from the web. Check everything carefully before approving.", systemImage: "exclamationmark.shield.fill")
+                Label("This used content from the web or a message you shared. Check everything carefully before approving.", systemImage: "exclamationmark.shield.fill")
                     .font(.callout)
                     .foregroundStyle(.orange)
                     .glowCard(padding: 14)
@@ -32,6 +32,13 @@ struct RunResultView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionLabel(posters.count == 1 ? "Your poster" : "Your posters")
                     ForEach(posters) { PosterCard(poster: $0) }
+                }
+            }
+
+            if let texts = run.textDrafts, !texts.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionLabel(texts.count == 1 ? "Text to send" : "Texts to send")
+                    ForEach(texts) { TextDraftCard(draft: $0) }
                 }
             }
 
@@ -187,6 +194,7 @@ struct LaunchKitSummary: Equatable {
         let events = calendar.filter { [.addEvent, .changeEvent, .cancelEvent].contains($0.kind) }.count
         let reminders = calendar.count - events
         let emails = run.emailDrafts?.count ?? 0
+        let texts = run.textDrafts?.count ?? 0
 
         var items: [Item] = []
         let posters = run.posterDrafts?.count ?? 0
@@ -197,6 +205,7 @@ struct LaunchKitSummary: Equatable {
         if events > 0 { items.append(.init(text: plural(events, "A calendar change", "calendar changes"), systemImage: "calendar")) }
         if reminders > 0 { items.append(.init(text: plural(reminders, "A reminder", "reminders"), systemImage: "checklist")) }
         if emails > 0 { items.append(.init(text: plural(emails, "An email to send", "emails to send"), systemImage: "envelope.fill")) }
+        if texts > 0 { items.append(.init(text: plural(texts, "A text to send", "texts to send"), systemImage: "message.fill")) }
         guard items.count > 1 else { return nil }
         self.items = items
     }

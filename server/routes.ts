@@ -290,8 +290,10 @@ export function buildRouter(): Router {
         conversationId: body.conversation_id,
         // The brand kit from the app: business name and colors for the website.
         brand: body.brand,
+        // A text message the person received and shared, to explain or help answer.
+        receivedText: body.received_text,
       }));
-      return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, emailDrafts: out.emailDrafts, posterDrafts: out.posterDrafts, tainted: out.tainted, conversationId: out.conversationId };
+      return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, emailDrafts: out.emailDrafts, textDrafts: out.textDrafts, posterDrafts: out.posterDrafts, tainted: out.tainted, conversationId: out.conversationId };
     };
   }
 

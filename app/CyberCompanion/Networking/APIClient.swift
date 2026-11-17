@@ -48,7 +48,8 @@ struct APIClient: Sendable {
     /// the server: building a website can take her ten minutes or more, longer than a phone keeps
     /// one request open, so the app starts it and checks back every few seconds.
     func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil,
-                      schedule: ScheduleSnapshot? = nil, conversationID: String? = nil, brand: RunBrand? = nil) async throws -> AgentRunResponse {
+                      schedule: ScheduleSnapshot? = nil, conversationID: String? = nil, brand: RunBrand? = nil,
+                      receivedText: String? = nil) async throws -> AgentRunResponse {
         struct Body: Encodable {
             let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String?
             /// Schedule runs only: the person's calendar and reminders for this one request.
@@ -57,6 +58,8 @@ struct APIClient: Sendable {
             let conversationId: String?
             /// The brand kit's name and colors, for the website.
             let brand: RunBrand?
+            /// A text message the person received and shared, to explain or help answer.
+            let receivedText: String?
         }
         struct Started: Decodable {
             let runId: String
@@ -67,7 +70,8 @@ struct APIClient: Sendable {
             let result: AgentRunResponse?
         }
         let body = Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID,
-                        schedule: schedule, conversationId: conversationID, brand: brand)
+                        schedule: schedule, conversationId: conversationID, brand: brand,
+                        receivedText: receivedText)
         let started: Started
         do {
             started = try await send("POST", "agent/runs", body: body, timeout: 60)

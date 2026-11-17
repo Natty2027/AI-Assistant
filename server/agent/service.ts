@@ -324,7 +324,7 @@ export class AgentService {
    * (an answer to her question, or a follow-up like "make the header blue"); otherwise it starts a
    * new one. Returns the id to send with the next reply, or null if the task can't continue.
    */
-  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown; brand?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
+  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown; brand?: unknown; receivedText?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     let schedule: ScheduleSnapshot | undefined;
     // Schedule needs the calendar; a launch uses it when the person allowed access and skips it otherwise.
@@ -350,6 +350,7 @@ export class AgentService {
       allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId, schedule, memories,
       photoBytes: photoId ? () => this.media.read(`${photoId}.jpg`) : undefined,
       brand: readBrand(opts.brand),
+      receivedText: typeof opts.receivedText === "string" && opts.receivedText.trim() ? opts.receivedText.trim().slice(0, 4000) : null,
       remember: async (fact) => (await this.memory.remember(userId, fact)).message,
     }, request, resume);
     // A conversation that expired or was never this person's starts fresh under a new id.

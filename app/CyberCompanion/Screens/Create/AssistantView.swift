@@ -59,7 +59,14 @@ struct AssistantView: View {
                     briefingCard(briefing)
                         .transition(.opacity)
                 }
+                if let text = model.receivedText {
+                    receivedTextCard(text)
+                        .transition(.opacity)
+                }
                 composer
+                if model.receivedText == nil && model.lastRun == nil && !model.isRunning {
+                    pasteATextRow
+                }
                 if prompt.isEmpty && model.lastRun == nil && !model.isRunning {
                     suggestionChips
                 }
@@ -353,6 +360,7 @@ struct AssistantView: View {
     /* ---------------- actions ---------------- */
 
     private var placeholder: String {
+        if model.receivedText != nil { return "How should Hera reply? For example: say yes, 7 works for me" }
         if model.isContinuing(mode) { return "Reply to Hera, or ask for a change…" }
         return switch mode {
         case .site: "Describe the website you'd like. Add a photo to put it on the site…"
@@ -378,7 +386,7 @@ struct AssistantView: View {
 
     private var canSend: Bool {
         model.isConfigured && !model.isRunning && !voice.isListening
-            && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.receivedText != nil)
     }
 
     /// Ends what Hera is saying and, if she was in the middle of "Talk to Hera", the conversation
@@ -419,6 +427,10 @@ struct AssistantView: View {
         conversation = .none
         model.speech.stop()
         let continuing = model.isContinuing(mode)
+        // A shared text with nothing typed: Hera helps reply to it.
+        if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, model.receivedText != nil {
+            prompt = "Help me reply to this text."
+        }
         await model.runAssistant(prompt: prompt, mode: mode, allowWebSearch: allowWebSearch,
                                  photo: mode.takesPhoto ? photo?.jpeg : nil)
         // In a conversation the box is for the next reply, so it starts empty again.
@@ -426,6 +438,66 @@ struct AssistantView: View {
             prompt = ""
             promptBeforeVoice = ""
         }
+    }
+
+    /* ---------------- texts the person received ---------------- */
+
+    /// "Got a text?": paste one in and Hera reads it aloud. PasteButton reads the clipboard only
+    /// when tapped, so there's no "allow paste" prompt.
+    private var pasteATextRow: some View {
+        HStack(spacing: 12) {
+            PasteButton(payloadType: String.self) { strings in
+                let text = strings.joined(separator: "\n")
+                Task { @MainActor in model.receive(text: text) }
+            }
+            .buttonBorderShape(.capsule)
+            .labelStyle(.titleAndIcon)
+            .disabled(model.isRunning)
+            Text("Got a text? Copy it in Messages, then paste it here. Hera reads it to you and helps you reply.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func receivedTextCard(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionLabel("Text you received")
+                Spacer()
+                Button("Close", systemImage: "xmark") {
+                    model.speech.stop()
+                    withAnimation { model.receivedText = nil }
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            Text(text)
+                .font(.callout)
+                .textSelection(.enabled)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            HStack(spacing: 10) {
+                Button("Help me reply", systemImage: "arrowshape.turn.up.left.fill") {
+                    Task { await send() }
+                }
+                .buttonStyle(.glassProminent)
+                .disabled(!canSend)
+                Button("Read it again", systemImage: "speaker.wave.2.fill") {
+                    model.speech.speak("Here's the text: \(text)")
+                }
+                .buttonStyle(.glass)
+            }
+            .controlSize(.small)
+            .lineLimit(1)
+            Text("Type how you'd like to answer above, or just tap Help me reply.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .glowCard()
     }
 
     /* ---------------- "What's on my day?" ---------------- */

@@ -241,6 +241,8 @@ struct AgentRunResponse: Codable, Hashable, Sendable {
     let tainted: Bool
     /// Emails Hera wrote for the person to send from their own email app. Absent from older servers.
     var emailDrafts: [EmailDraft]?
+    /// Text messages Hera wrote for the person to send from Messages. Absent from older servers.
+    var textDrafts: [TextDraft]?
     /// Posters and flyers for the app to draw, share and print. Absent from older servers.
     var posterDrafts: [PosterDraft]?
     /// Send with the next reply to continue this task. nil when it can't be continued (or from
@@ -335,6 +337,21 @@ struct EmailDraft: Codable, Hashable, Identifiable, Sendable {
     var to: [String]
     var cc: [String]
     var subject: String
+    var body: String
+}
+
+/// A text message Hera wrote (server/agent/loop.ts). She never sends it: the app finds each person
+/// in Contacts on this device, and the person sends it from Messages.
+struct TextDraft: Codable, Hashable, Identifiable, Sendable {
+    struct Recipient: Codable, Hashable, Sendable {
+        /// The name as the person said it ("Sarah", "Mom"), looked up in Contacts here.
+        let name: String?
+        /// A number the person gave Hera, if any.
+        let number: String?
+    }
+
+    let id: String
+    let to: [Recipient]
     var body: String
 }
 

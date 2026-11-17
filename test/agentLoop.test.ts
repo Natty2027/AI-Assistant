@@ -49,9 +49,9 @@ async function setup(opts: { allowWebSearch?: boolean; mode?: "site" | "posts" }
 function assertNoActingTools(req: any) {
   const names = req.tools.map((t: any) => t.name);
   assert.deepEqual(names.filter((x: string) => /publish|post_now|send|deploy_now|execute|approve|spend|buy/.test(x)), [], `no acting tools: ${names}`);
-  // draft_email only writes text the person sends from their own email app (like write_post for
-  // sharing). Anything that could send email, or propose texts, ads or purchases, stays out.
-  assert.ok(!names.some((x: string) => /email|sms|ads|domain/.test(x) && x !== "draft_email"), "the agent cannot send or propose email, texts, ads or purchases");
+  // draft_email and draft_text only write words the person sends from their own email or Messages
+  // app (like write_post for sharing). Anything that could send them, or ads or purchases, stays out.
+  assert.ok(!names.some((x: string) => /email|sms|text|ads|domain/.test(x) && x !== "draft_email" && x !== "draft_text"), "the agent cannot send email or texts, or propose ads or purchases");
   assert.ok(req.tools.every((t: any) => t.strict === true), "every tool is strict");
 }
 
@@ -78,7 +78,7 @@ test("a website run builds the site and ends with a proposal the user must appro
   assert.equal(req.fallbacks, "default");
   assertNoActingTools(req);
   assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
-    ["add_photo_to_site", "ask_user", "check_site", "draft_email", "list_site_files", "propose_site_deploy", "read_site_file", "remember", "write_site_file"]);
+    ["add_photo_to_site", "ask_user", "check_site", "draft_email", "draft_text", "list_site_files", "propose_site_deploy", "read_site_file", "remember", "write_site_file"]);
   assert.match(req.system, /only for the website/);
   assert.match(req.system, /Never write reviews, testimonials/);
 });
@@ -98,7 +98,7 @@ test("a posts run writes and proposes posts and is offered no way to change the 
   const req = calls[0];
   assertNoActingTools(req);
   assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
-    ["ask_user", "design_poster", "draft_email", "draft_post", "list_site_files", "propose_post", "read_site_file", "remember", "write_post"]);
+    ["ask_user", "design_poster", "draft_email", "draft_post", "draft_text", "list_site_files", "propose_post", "read_site_file", "remember", "write_post"]);
   assert.match(req.system, /only for posts/);
 });
 

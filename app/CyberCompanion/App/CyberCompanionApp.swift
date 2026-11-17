@@ -39,7 +39,10 @@ struct CyberCompanionApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
-                    case .active: Task { await model.refreshWidget() }
+                    case .active:
+                        Task { await model.refreshWidget() }
+                        // A text shared to Hera from Messages while she was closed.
+                        model.collectSharedText()
                     case .background: EventReminders.scheduleBackgroundUpdate()
                     default: break
                     }
