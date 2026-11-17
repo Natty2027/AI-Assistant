@@ -58,6 +58,7 @@ struct EmailDraftCard: View {
                     .buttonStyle(.glass)
             }
             .controlSize(.small)
+            .lineLimit(1)
             Text("Nothing is sent until you press Send in your email app.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

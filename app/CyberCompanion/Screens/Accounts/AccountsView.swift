@@ -51,7 +51,7 @@ struct AccountsView: View {
 
                 Section {
                     HStack(spacing: 12) {
-                        IconTile(systemImage: Platform.linkedin.systemImage, size: 32)
+                        IconTile(systemImage: Platform.linkedin.systemImage, size: 34)
                         Text(Platform.linkedin.displayName)
                         Spacer()
                         Label("You share", systemImage: "square.and.arrow.up")
@@ -98,7 +98,9 @@ struct AccountsView: View {
     /// Instagram's own rule, explained before someone tries to connect a personal account.
     private var instagramBusinessNote: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // Icon and title in the same columns as the account rows around it.
             Label("Instagram needs a Business or Creator account", systemImage: "info.circle")
+                .labelStyle(AlignedIconLabelStyle(iconWidth: 34, spacing: 12))
                 .font(.footnote.weight(.semibold))
             Text("Instagram only lets apps post to Business or Creator accounts that are linked to a Facebook Page. Personal accounts can't be connected.")
             Text("Switching is free and takes a minute: in Instagram, go to Settings → Account type and tools → Switch to professional account. Then link it to your Facebook Page from Edit profile → Page. When you connect here, choose that Page.")

@@ -42,7 +42,6 @@ struct DraftCard: View {
             HStack(spacing: 10) {
                 ShareLink(item: draft.shareableText) {
                     Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.subheadline.weight(.semibold))
                 }
                 .buttonStyle(.glassProminent)
                 .disabled(hasBlockingProblem)
@@ -52,12 +51,14 @@ struct DraftCard: View {
                     withAnimation(.spring(duration: 0.3)) { copied = true }
                 } label: {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.subheadline.weight(.semibold))
                         .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(.glass)
                 .sensoryFeedback(.success, trigger: copied) { _, now in now }
             }
+            // The same size as the buttons on the poster and email cards.
+            .controlSize(.small)
+            .lineLimit(1)
             if hasBlockingProblem {
                 Text("Fix the problem above before posting, or ask Hera to rewrite it.")
                     .font(.caption)

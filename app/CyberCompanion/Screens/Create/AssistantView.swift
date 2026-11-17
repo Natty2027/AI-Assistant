@@ -186,6 +186,9 @@ struct AssistantView: View {
                 }
             }
             .pickerStyle(.segmented)
+            // The Mac shows a picker's label beside it; the modes speak for themselves.
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
             .disabled(model.isRunning)
 
             TextField(placeholder,
@@ -205,44 +208,12 @@ struct AssistantView: View {
                     .foregroundStyle(.orange)
             }
 
-            HStack(spacing: 10) {
-                if mode.takesPhoto {
-                    // The label closure runs off the main actor, so it gets plain values.
-                    let loading = isLoadingPhoto
-                    let title = photo == nil ? "Photo" : "Change"
-                    PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                        if loading {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Label(title, systemImage: "photo")
-                                .font(.footnote.weight(.semibold))
-                        }
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(model.isRunning || isLoadingPhoto)
-                    .help("Add a photo to your posts. Instagram posts need one.")
-                }
-
-                Toggle(isOn: $allowWebSearch) {
-                    Label("Web search", systemImage: "globe")
-                        .font(.footnote.weight(.semibold))
-                }
-                .toggleStyle(.button)
-                .buttonStyle(.glass)
-                .help("Lets Hera look things up. Anything it reads from the web is flagged before you approve.")
-
-                Spacer()
-
-                Button {
-                    Task { await send() }
-                } label: {
-                    Label(model.isContinuing(mode) ? "Send" : "Create", systemImage: "arrow.up")
-                        .font(.body.weight(.semibold))
-                        .padding(.horizontal, 4)
-                }
-                .buttonStyle(.glassProminent)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!canSend)
+            // Every button in the row is the same height and stays on one line. When the row is
+            // too narrow (a small phone, a narrow Mac window, large text), Photo and Web search
+            // become icon-only rather than wrapping.
+            ViewThatFits(in: .horizontal) {
+                composerActions(compact: false)
+                composerActions(compact: true)
             }
         }
         .padding(16)
@@ -253,6 +224,53 @@ struct AssistantView: View {
         }
     }
 
+    /// Photo, Web search and Create. `compact` shows Photo and Web search as icons only.
+    private func composerActions(compact: Bool) -> some View {
+        HStack(spacing: 10) {
+            if mode.takesPhoto {
+                // The label closure runs off the main actor, so it gets plain values.
+                let loading = isLoadingPhoto
+                let title = photo == nil ? "Photo" : "Change"
+                PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                    ZStack {
+                        // Kept in the layout while loading, so the button doesn't change size.
+                        Label(title, systemImage: "photo").opacity(loading ? 0 : 1)
+                        if loading { ProgressView().controlSize(.small) }
+                    }
+                    .composerButtonLabel()
+                }
+                .labelStyle(compact ? AnyLabelStyle(.iconOnly) : AnyLabelStyle(.titleAndIcon))
+                .buttonStyle(.glass)
+                .disabled(model.isRunning || isLoadingPhoto)
+                .help(mode == .site ? "Add a photo to put on your website." : "Add a photo to your posts. Instagram posts need one.")
+                .accessibilityLabel(title)
+            }
+
+            Toggle(isOn: $allowWebSearch) {
+                Label("Web search", systemImage: "globe")
+                    .composerButtonLabel()
+            }
+            .labelStyle(compact ? AnyLabelStyle(.iconOnly) : AnyLabelStyle(.titleAndIcon))
+            .toggleStyle(.button)
+            .buttonStyle(.glass)
+            .help("Lets Hera look things up. Anything it reads from the web is flagged before you approve.")
+
+            Spacer(minLength: 0)
+
+            Button {
+                Task { await send() }
+            } label: {
+                Label(model.isContinuing(mode) ? "Send" : "Create", systemImage: "arrow.up")
+                    .composerButtonLabel()
+                    .padding(.horizontal, 6)
+            }
+            .buttonStyle(.glassProminent)
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!canSend)
+        }
+        .controlSize(.regular)
+    }
+
     private func attachedPhoto(_ photo: PostPhoto) -> some View {
         HStack(spacing: 12) {
             Image(decorative: photo.preview, scale: 1)
@@ -260,7 +278,7 @@ struct AssistantView: View {
                 .scaledToFill()
                 .frame(width: 64, height: 64)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            Text("Hera will add this photo to your posts.")
+            Text(mode == .site ? "Hera will put this photo on your website." : "Hera will add this photo to your posts.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -301,11 +319,20 @@ struct AssistantView: View {
                     prompt = text
                     promptFocused = true
                 } label: {
+                    // Drawn here rather than by a button style: a Mac button keeps its title on one
+                    // line and centres it, which cut these off and broke their left edge.
                     Label(text, systemImage: icon)
+                        .labelStyle(.alignedIcon)
                         .font(.subheadline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .contentShape(.rect(cornerRadius: 18))
+                        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 18))
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -550,4 +577,21 @@ struct AssistantView: View {
     AssistantView(openSettings: {}, openReview: {})
         .environment(AppModel())
         .environment(ConversationRequests())
+}
+
+/// One look for the request box's buttons: the same text size and height, on one line.
+private extension View {
+    nonisolated func composerButtonLabel() -> some View {
+        font(.subheadline.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
+            .frame(minHeight: 22)
+    }
+}
+
+/// Lets one control switch between two label styles.
+private struct AnyLabelStyle: LabelStyle {
+    private let make: (Configuration) -> AnyView
+    init<S: LabelStyle>(_ style: S) { make = { configuration in AnyView(Label(configuration).labelStyle(style)) } }
+    func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }

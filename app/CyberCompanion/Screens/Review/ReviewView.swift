@@ -192,6 +192,8 @@ struct ProposalDetailView: View {
                     Text("Decline").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glass)
+                // The same size as Approve above it, so the two read as a pair.
+                .controlSize(.large)
                 .disabled(isWorking)
             }
             .glowCard()

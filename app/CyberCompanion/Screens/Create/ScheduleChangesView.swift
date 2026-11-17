@@ -66,6 +66,7 @@ struct ScheduleChangesView: View {
                     .buttonStyle(.glass)
             }
             .controlSize(.small)
+            .lineLimit(1)
         case .working:
             ProgressView().controlSize(.small)
         case .done:

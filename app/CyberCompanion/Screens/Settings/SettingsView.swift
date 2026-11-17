@@ -221,9 +221,9 @@ struct SettingsView: View {
     private var legal: some View {
         if let base = model.serverURL {
             Section {
-                Link(destination: base.appending(path: "privacy")) { Label("Privacy Policy", systemImage: "hand.raised") }
-                Link(destination: base.appending(path: "terms")) { Label("Terms of Use", systemImage: "doc.text") }
-                Link(destination: base.appending(path: "support")) { Label("Support", systemImage: "questionmark.circle") }
+                Link(destination: base.appending(path: "privacy")) { Label("Privacy Policy", systemImage: "hand.raised").labelStyle(.alignedIcon) }
+                Link(destination: base.appending(path: "terms")) { Label("Terms of Use", systemImage: "doc.text").labelStyle(.alignedIcon) }
+                Link(destination: base.appending(path: "support")) { Label("Support", systemImage: "questionmark.circle").labelStyle(.alignedIcon) }
             } header: {
                 SectionLabel("About")
             } footer: {

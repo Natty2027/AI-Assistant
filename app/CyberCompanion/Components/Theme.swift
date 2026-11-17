@@ -251,3 +251,23 @@ struct IconTile: View {
     }
     .auroraBackground()
 }
+
+/// A label whose icon sits in a fixed-width column, so the text of every row in a list starts at
+/// the same place however wide each symbol is.
+struct AlignedIconLabelStyle: LabelStyle {
+    var iconWidth: CGFloat = 22
+    var spacing: CGFloat = 10
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: spacing) {
+            configuration.icon
+                .frame(width: iconWidth)
+            configuration.title
+        }
+    }
+}
+
+extension LabelStyle where Self == AlignedIconLabelStyle {
+    static var alignedIcon: AlignedIconLabelStyle { AlignedIconLabelStyle() }
+    static func alignedIcon(width: CGFloat) -> AlignedIconLabelStyle { AlignedIconLabelStyle(iconWidth: width) }
+}

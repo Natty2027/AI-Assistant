@@ -59,6 +59,10 @@ struct RootView: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        #if os(macOS)
+        // Small enough for half a laptop screen, big enough that nothing is squeezed out of line.
+        .frame(minWidth: 640, minHeight: 560)
+        #endif
     }
 }
 

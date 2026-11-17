@@ -106,6 +106,7 @@ struct RunResultView: View {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(kit.items, id: \.text) { item in
                     Label(item.text, systemImage: item.systemImage)
+                        .labelStyle(.alignedIcon)
                         .font(.subheadline)
                 }
                 Text("Each piece waits for your approval below or in Review. Nothing goes out until you say so.")

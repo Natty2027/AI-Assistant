@@ -38,6 +38,7 @@ struct PosterCard: View {
                 .buttonStyle(.glass)
             }
             .controlSize(.small)
+            .lineLimit(1)
 
             if let problems = poster.problems, !problems.isEmpty {
                 CheckList(checks: problems)

@@ -46,6 +46,8 @@ struct CyberCompanionApp: App {
                 }
         }
         .defaultSize(width: 1000, height: 720)
+        // The window can't be made smaller than the app's own minimum size (RootView).
+        .windowResizability(.contentMinSize)
         #if os(iOS)
         .backgroundTask(.appRefresh(EventReminders.refreshTaskID)) { [model] in
             EventReminders.scheduleBackgroundUpdate()
