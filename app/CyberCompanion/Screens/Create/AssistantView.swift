@@ -39,6 +39,7 @@ struct AssistantView: View {
         (.posts, "sparkles", "Write a week of posts about what I do"),
         (.schedule, "calendar", "What's on my schedule tomorrow? Add a gym session in a free hour"),
         (.posts, "envelope", "Write an email to a customer confirming their Saturday booking"),
+        (.posts, "tag", "Sell this on eBay for $150. It ships from my ZIP code, 95819"),
     ]
 
     var body: some View {

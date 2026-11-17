@@ -96,4 +96,15 @@ export const config = {
   /** Business-type Meta apps sign in with "Facebook Login for Business", which takes the id of a
    *  login configuration (made in the Meta dashboard) instead of a list of permissions. */
   metaConfigId: opt("META_CONFIG_ID"),
+
+  /** eBay developer app (selling): the keyset's App ID and Cert ID. */
+  ebay: client("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"),
+  /** The keyset's "RuName" (eBay's name for the sign-in return address), whose accepted URL is
+   *  <publicUrl>/oauth/callback/ebay. */
+  ebayRuName: opt("EBAY_RUNAME"),
+  /** Proves to eBay that this server owns the account-deletion notice address (32-80 letters,
+   *  digits, _ or -). eBay won't issue live keys without that address working. */
+  ebayVerificationToken: opt("EBAY_VERIFICATION_TOKEN"),
+  /** "sandbox" uses eBay's test site, where nothing is really sold. */
+  ebaySandbox: opt("EBAY_ENV") === "sandbox",
 } as const;

@@ -49,7 +49,7 @@ struct ReviewView: View {
 
     private func row(_ p: Proposal) -> some View {
         HStack(spacing: 14) {
-            IconTile(systemImage: p.isSite ? "globe" : "text.bubble.fill", size: 42)
+            IconTile(systemImage: p.icon, size: 42)
             VStack(alignment: .leading, spacing: 6) {
                 Text(p.summary)
                     .font(.headline)
@@ -113,17 +113,19 @@ struct ProposalDetailView: View {
         #endif
         .overlay { if isWorking { ProgressView().controlSize(.large) } }
         .sensoryFeedback(.success, trigger: proposal.status) { _, status in status == "executed" }
-        .confirmationDialog("Publish this now?", isPresented: $showPublishConfirmation, titleVisibility: .visible) {
-            Button("Publish") { Task { await publish() } }
+        .confirmationDialog(proposal.isListing ? "List this on eBay now?" : "Publish this now?", isPresented: $showPublishConfirmation, titleVisibility: .visible) {
+            Button(proposal.isListing ? "List it" : "Publish") { Task { await publish() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Once published, anyone can see it.")
+            Text(proposal.isListing
+                 ? "It goes live on eBay at this price, and anyone can buy it. eBay's selling fees apply."
+                 : "Once published, anyone can see it.")
         }
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
-            IconTile(systemImage: proposal.isSite ? "globe" : "text.bubble.fill", size: 48)
+            IconTile(systemImage: proposal.icon, size: 48)
             VStack(alignment: .leading, spacing: 8) {
                 Text(proposal.summary).font(Theme.heading(.title2))
                 StatusPill(status: proposal.status)
@@ -133,9 +135,11 @@ struct ProposalDetailView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel(proposal.isSite ? "Website" : "Exactly what will be posted")
+            SectionLabel(proposal.isSite ? "Website" : proposal.isListing ? "Exactly what will be listed" : "Exactly what will be posted")
             VStack(alignment: .leading, spacing: 10) {
-                if proposal.isPost {
+                if proposal.isListing {
+                    listing
+                } else if proposal.isPost {
                     Text(proposal.postText ?? "")
                         .font(.body)
                         .textSelection(.enabled)
@@ -149,6 +153,40 @@ struct ProposalDetailView: View {
                 }
             }
             .glowCard()
+        }
+    }
+
+    /// An eBay listing as buyers will see it: title, price, condition, details and description.
+    @ViewBuilder
+    private var listing: some View {
+        Text(proposal.listingTitle ?? "")
+            .font(.headline)
+            .textSelection(.enabled)
+        if let price = proposal.listingPrice {
+            Text("$\(price)").font(Theme.heading(.title2))
+        }
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+            if let condition = proposal.listingCondition { detailRow("Condition", condition) }
+            if let note = proposal.listingConditionNote { detailRow("Condition notes", note) }
+            if let category = proposal.listingCategory { detailRow("Category", category) }
+            if let quantity = proposal.listingQuantity { detailRow("Quantity", "\(quantity)") }
+            ForEach(proposal.listingSpecifics, id: \.name) { detailRow($0.name, $0.value) }
+            if let zip = proposal.listingShipsFrom { detailRow("Ships from", zip) }
+        }
+        .font(.callout)
+        Divider()
+        Text(proposal.listingDescription ?? "")
+            .font(.body)
+            .textSelection(.enabled)
+        Text("Your attached photo goes on the listing. Shipping, payment and returns use your eBay business policies.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func detailRow(_ name: String, _ value: String) -> some View {
+        GridRow {
+            Text(name).foregroundStyle(.secondary)
+            Text(value)
         }
     }
 
@@ -173,7 +211,7 @@ struct ProposalDetailView: View {
                 Button {
                     showPublishConfirmation = true
                 } label: {
-                    Label("Approve and publish", systemImage: "checkmark.seal.fill")
+                    Label(proposal.isListing ? "Approve and list on eBay" : "Approve and publish", systemImage: "checkmark.seal.fill")
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity)
                 }
@@ -252,4 +290,9 @@ struct ProposalDetailView: View {
 #Preview {
     ReviewView()
         .environment(AppModel())
+}
+
+private extension Proposal {
+    /// The symbol for this kind of proposal, in lists and at the top of its page.
+    var icon: String { isSite ? "globe" : isListing ? "tag.fill" : "text.bubble.fill" }
 }

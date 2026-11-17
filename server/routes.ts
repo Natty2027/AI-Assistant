@@ -16,6 +16,7 @@ import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
 import { ActionError } from "./agent/approvals.ts";
 import { SandboxError } from "./agent/sandbox.ts";
 import { isOAuthProvider } from "./agent/oauth.ts";
+import { challengeResponse } from "./agent/ebay.ts";
 import { RunJobs, type RunFailure } from "./agent/runs.ts";
 
 const writeLimiter = createLimiter({ windowMs: 60_000, max: 20 });
@@ -31,7 +32,8 @@ function agent(): AgentService {
     fetch: (url, init) => fetch(url, init),
     sitesDir: config.sitesDir,
     mediaDir: config.mediaDir,
-    oauth: { publicUrl: config.publicUrl, x: config.x, meta: config.meta, metaConfigId: config.metaConfigId },
+    oauth: { publicUrl: config.publicUrl, x: config.x, meta: config.meta, metaConfigId: config.metaConfigId,
+      ebay: config.ebay, ebayRuName: config.ebayRuName, ebaySandbox: config.ebaySandbox },
     // maxRetries 0: the agent loop retries through withAiRetry, so the SDK must not retry too.
     client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 }) : null,
   });
@@ -117,6 +119,8 @@ export function buildRouter(): Router {
     publishing: {
       x: Boolean(config.publicUrl && config.x),
       meta: Boolean(config.publicUrl && config.meta),
+      ebay: Boolean(config.publicUrl && config.ebay && config.ebayRuName),
+      ebayDeletionNotices: Boolean(config.publicUrl && config.ebayVerificationToken),
     },
   }));
 
@@ -127,6 +131,25 @@ export function buildRouter(): Router {
     if (!bytes) throw new HttpError(404, "Not found.");
     ctx.res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": bytes.length });
     ctx.res.end(bytes);
+  });
+
+  /* ---- eBay's account-deletion notices. eBay requires this address before it issues live keys:
+     a GET with a challenge proves we own it; a POST says an eBay user deleted their account, and
+     their connection is removed. Public by design (eBay calls it). ---- */
+  r.get("/notifications/ebay/deletion", async (ctx) => {
+    const challenge = ctx.url.searchParams.get("challenge_code");
+    if (!challenge || !config.ebayVerificationToken || !config.publicUrl) throw new HttpError(404, "Not found.");
+    const endpoint = `${config.publicUrl}/notifications/ebay/deletion`;
+    return { challengeResponse: challengeResponse(challenge, config.ebayVerificationToken, endpoint) };
+  });
+
+  r.post("/notifications/ebay/deletion", async (ctx) => {
+    const data = (ctx.body as any)?.notification?.data;
+    const userId = typeof data?.userId === "string" ? data.userId : null;
+    if (userId && /^[\w.-]{1,128}$/.test(userId)) await agent().ebayAccountDeleted(userId);
+    // Acknowledged either way, so eBay doesn't keep resending.
+    ctx.res.writeHead(204);
+    ctx.res.end();
   });
 
   /* ---- X and Meta send the browser back here after the person signs in. Public: the one-time

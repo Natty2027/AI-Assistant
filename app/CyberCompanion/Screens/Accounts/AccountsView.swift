@@ -50,6 +50,17 @@ struct AccountsView: View {
                 }
 
                 Section {
+                    serviceRow(title: "eBay", subtitle: "List items for sale on your eBay account", systemImage: "tag.fill",
+                               connections: connections("ebay"), available: model.signInAvailability.isAvailable(.ebay),
+                               busy: signingIn == .ebay) { signIn(.ebay) }
+                    ebayPoliciesNote
+                } header: {
+                    SectionLabel("Selling")
+                } footer: {
+                    Text("Hera writes the listing; nothing goes on eBay until you approve it in Review. eBay's usual selling fees apply.")
+                }
+
+                Section {
                     HStack(spacing: 12) {
                         IconTile(systemImage: Platform.linkedin.systemImage, size: 34)
                         Text(Platform.linkedin.displayName)
@@ -110,6 +121,19 @@ struct AccountsView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// eBay's own rule for listings made by apps, explained before the first listing fails on it.
+    private var ebayPoliciesNote: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("eBay needs your shipping, payment and returns settings", systemImage: "info.circle")
+                .labelStyle(AlignedIconLabelStyle(iconWidth: 34, spacing: 12))
+                .font(.footnote.weight(.semibold))
+            Text("Apps can only list for sellers who use eBay's business policies. On eBay.com, go to Account settings → Business policies, turn them on, and create a shipping, a payment and a returns policy. Hera uses them on every listing.")
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+    }
+
     private func connections(_ providers: String...) -> [Connection] {
         model.connections.filter { providers.contains($0.provider) }
     }
@@ -138,8 +162,14 @@ struct AccountsView: View {
             if result.connected, let note = result.note {
                 outcome = SignInOutcome(title: "Facebook is connected", message: note)
             } else if result.connected {
-                outcome = SignInOutcome(title: provider == .x ? "X is connected" : "Facebook and Instagram are connected",
-                                        message: "Hera can now write posts for it. You approve each one before it goes out.")
+                switch provider {
+                case .ebay:
+                    outcome = SignInOutcome(title: "eBay is connected",
+                                            message: "Hera can now write listings for you. You approve each one before it goes on eBay.")
+                default:
+                    outcome = SignInOutcome(title: provider == .x ? "X is connected" : "Facebook and Instagram are connected",
+                                            message: "Hera can now write posts for it. You approve each one before it goes out.")
+                }
             } else {
                 outcome = SignInOutcome(title: "Not connected", message: model.errorMessage ?? "Please try again.")
             }

@@ -17,6 +17,7 @@ import { publish, verifyToken } from "./netlify.ts";
 import { parseCredential, publishPost, verifyCredential, type BlueskyCredential } from "./bluesky.ts";
 import * as x from "./x.ts";
 import * as meta from "./meta.ts";
+import * as ebay from "./ebay.ts";
 import { MediaError, MediaStore } from "./media.ts";
 import { appReturnUrl, OAuthStates, PendingConnections, redirectUri, type OAuthProvider } from "./oauth.ts";
 import type { OAuthClient } from "../config.ts";
@@ -26,7 +27,7 @@ import { decryptToken, encryptToken, newDataKeyId } from "../crypto/envelope.ts"
 /** What can actually be carried out today. Approving anything else is refused up front, so
  *  nobody approves something that has nowhere to go. A social post can only target a connected
  *  account, and Bluesky is the only social connection that can be made, so it is covered. */
-export const EXECUTABLE: ReadonlySet<ActionKind> = new Set<ActionKind>(["site.deploy", "social.post"]);
+export const EXECUTABLE: ReadonlySet<ActionKind> = new Set<ActionKind>(["site.deploy", "social.post", "marketplace.listing"]);
 
 /** Which platform each social provider posts to. */
 const SOCIAL_PROVIDERS: Record<string, Platform> = { bluesky: "bluesky", x: "x", facebook: "facebook", instagram: "instagram" };
@@ -45,7 +46,9 @@ export interface ServiceDeps {
   mediaDir: string;
   /** Sign-in with X and Meta. Each is off until this server's public address and that
    *  platform's developer app are configured. */
-  oauth?: { publicUrl?: string; x?: OAuthClient; meta?: OAuthClient; metaConfigId?: string };
+  oauth?: { publicUrl?: string; x?: OAuthClient; meta?: OAuthClient; metaConfigId?: string;
+    /** Selling on eBay: the developer keyset, its RuName, and whether to use eBay's test site. */
+    ebay?: OAuthClient; ebayRuName?: string; ebaySandbox?: boolean };
 }
 
 export interface ConnectionView { id: string; kind: string; provider: string; platform: Platform | null; label: string; publishesTo: string | null }
@@ -71,7 +74,8 @@ export class AgentService {
   readonly media: MediaStore;
   readonly memory: MemoryStore;
   private readonly oauthStates = new OAuthStates();
-  private readonly pendingConnections = new PendingConnections<{ x: x.XCredential } | { meta: meta.MetaPage[] }>();
+  private readonly pendingConnections = new PendingConnections<{ x: x.XCredential } | { meta: meta.MetaPage[] } | { ebay: ebay.EbayCredential }>();
+  private ebayAppTokens: ebay.AppTokens | null = null;
 
   constructor(private readonly d: ServiceDeps) {
     this.store = d.store ?? new ActionStore();
@@ -172,17 +176,19 @@ export class AgentService {
   /** Which sign-ins this server can offer, for the app. */
   oauthAvailable(): Record<OAuthProvider, boolean> {
     const o = this.d.oauth;
-    return { x: Boolean(o?.publicUrl && o.x), meta: Boolean(o?.publicUrl && o.meta) };
+    return { x: Boolean(o?.publicUrl && o.x), meta: Boolean(o?.publicUrl && o.meta), ebay: Boolean(o?.publicUrl && o.ebay && o.ebayRuName) };
   }
 
   /** The platform's sign-in page for this person; the app opens it in a secure browser sheet. */
   beginOAuth(userId: string, provider: OAuthProvider): string {
     const o = this.d.oauth;
     const client = o?.[provider];
-    if (!o?.publicUrl || !client) {
-      throw new ActionError("provider_unavailable", `Connecting ${provider === "x" ? "X" : "Facebook and Instagram"} isn't set up on this server yet.`);
+    if (!o?.publicUrl || !client || (provider === "ebay" && !o.ebayRuName)) {
+      const name = provider === "x" ? "X" : provider === "ebay" ? "eBay" : "Facebook and Instagram";
+      throw new ActionError("provider_unavailable", `Connecting ${name} isn't set up on this server yet.`);
     }
     const { state, challenge } = this.oauthStates.begin(userId, provider);
+    if (provider === "ebay") return ebay.authorizeUrl(client, o.ebayRuName!, state, this.ebayHosts);
     const back = redirectUri(o.publicUrl, provider);
     return provider === "x" ? x.authorizeUrl(client, back, state, challenge) : meta.authorizeUrl(client, back, state, o.metaConfigId);
   }
@@ -204,6 +210,10 @@ export class AgentService {
     if (!code || !o?.publicUrl || !client) return fail("Something went wrong signing in. Please try again.");
     const back = redirectUri(o.publicUrl, provider);
     try {
+      if (provider === "ebay") {
+        const cred = await ebay.exchangeCode(client, code, o.ebayRuName ?? "", this.d.fetch, this.ebayHosts);
+        return appReturnUrl(provider, { ok: true, pending: this.pendingConnections.hold(pending.userId, provider, { ebay: cred }) });
+      }
       if (provider === "x") {
         const cred = await x.exchangeCode(client, code, pending.verifier, back, this.d.fetch);
         return appReturnUrl(provider, { ok: true, pending: this.pendingConnections.hold(pending.userId, provider, { x: cred }) });
@@ -230,6 +240,10 @@ export class AgentService {
     if (!held) throw new ActionError("not_found", "That sign-in expired or wasn't started from this account. Please connect again.");
     if ("x" in held.value) {
       await this.saveX(userId, held.value.x);
+      return { note: null };
+    }
+    if ("ebay" in held.value) {
+      await this.saveEbay(userId, held.value.ebay);
       return { note: null };
     }
     await this.saveMeta(userId, held.value.meta);
@@ -275,6 +289,64 @@ export class AgentService {
   private async saveX(userId: string, cred: x.XCredential): Promise<void> {
     await this.d.run(`delete from action_connections where user_id = $1 and provider = 'x' and target_ref = $2`, [userId, cred.username]);
     await this.insertSocial(userId, "x", `X (@${cred.username})`, JSON.stringify(cred), cred.username);
+  }
+
+  /** One row per eBay account; signing in to the same account again replaces it. */
+  private async saveEbay(userId: string, cred: ebay.EbayCredential): Promise<void> {
+    await this.d.run(`delete from action_connections where user_id = $1 and provider = 'ebay' and target_ref = $2`, [userId, cred.userId]);
+    const keyId = newDataKeyId();
+    await this.d.run(
+      `insert into action_connections (user_id, kind, provider, label, token_ct, data_key_id, target_ref)
+       values ($1, 'marketplace', 'ebay', $2, $3, $4, $5)`,
+      [userId, `eBay (${cred.username})`, encryptToken(JSON.stringify(cred), keyId), keyId, cred.userId]);
+  }
+
+  /* ---------------- selling on eBay ---------------- */
+
+  private get ebayHosts(): ebay.EbayHosts { return ebay.hosts(Boolean(this.d.oauth?.ebaySandbox)); }
+
+  private ebayApp(): ebay.AppTokens {
+    const client = this.d.oauth?.ebay;
+    if (!client) throw new ActionError("provider_unavailable", "Selling on eBay isn't set up on this server yet.");
+    this.ebayAppTokens ??= new ebay.AppTokens(client, this.d.fetch, this.ebayHosts);
+    return this.ebayAppTokens;
+  }
+
+  /** A connected eBay account's credential, refreshed and saved if it was about to expire. */
+  private async freshEbayCredential(connectionId: string): Promise<ebay.EbayCredential> {
+    const client = this.d.oauth?.ebay;
+    if (!client) throw new ActionError("provider_unavailable", "Selling on eBay isn't set up on this server yet.");
+    const { rows } = await this.d.run(`select token_ct, data_key_id from action_connections where id = $1`, [connectionId]);
+    if (!rows[0]) throw new ActionError("not_found", "That eBay account is no longer connected.");
+    const before = JSON.parse(decryptToken(Buffer.from(rows[0].token_ct), rows[0].data_key_id)) as ebay.EbayCredential;
+    const cred = await ebay.freshCredential(client, before, this.d.fetch, this.ebayHosts);
+    if (cred !== before) {
+      const keyId = newDataKeyId();
+      await this.d.run(`update action_connections set token_ct = $2, data_key_id = $3 where id = $1`,
+        [connectionId, encryptToken(JSON.stringify(cred), keyId), keyId]);
+    }
+    return cred;
+  }
+
+  /** What Hera uses while writing a listing: eBay's categories and item details, and the
+   *  seller's own shipping, payment and returns presets. */
+  marketplaceFor(userId: string): NonNullable<AgentDeps["marketplace"]> {
+    return {
+      categories: async (query) => ebay.suggestCategories(await this.ebayApp().get(), query, this.d.fetch, this.ebayHosts),
+      specifics: async (categoryId) => ebay.itemSpecifics(await this.ebayApp().get(), categoryId, this.d.fetch, this.ebayHosts),
+      policies: async (connectionId) => {
+        const { rows } = await this.d.run(
+          `select id from action_connections where id = $1 and user_id = $2 and provider = 'ebay' and revoked_at is null`, [connectionId, userId]);
+        if (!rows[0]) throw new ActionError("not_found", "That isn't one of the person's connected eBay accounts.");
+        return ebay.sellerPolicies(await this.freshEbayCredential(connectionId), this.d.fetch, this.ebayHosts);
+      },
+      newSku: ebay.newSku,
+    };
+  }
+
+  /** eBay says a person deleted their eBay account: their connection, tokens included, goes. */
+  async ebayAccountDeleted(ebayUserId: string): Promise<void> {
+    await this.d.run(`delete from action_connections where provider = 'ebay' and target_ref = $1`, [ebayUserId]);
   }
 
   /** One row per Page and one per linked Instagram account. Connecting again replaces them all,
@@ -349,6 +421,7 @@ export class AgentService {
       mode: opts.mode, client: this.d.client, store: this.store, sandbox, userId, context: () => ctx,
       allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId, schedule, memories,
       photoBytes: photoId ? () => this.media.read(`${photoId}.jpg`) : undefined,
+      marketplace: this.d.oauth?.ebay ? this.marketplaceFor(userId) : undefined,
       brand: readBrand(opts.brand),
       receivedText: typeof opts.receivedText === "string" && opts.receivedText.trim() ? opts.receivedText.trim().slice(0, 4000) : null,
       remember: async (fact) => (await this.memory.remember(userId, fact)).message,
@@ -393,6 +466,7 @@ export class AgentService {
 
   private async carryOut(userId: string, kind: ActionKind, payload: Readonly<Record<string, unknown>>): Promise<ExecutionResult> {
     if (kind === "social.post") return this.carryOutPost(userId, payload);
+    if (kind === "marketplace.listing") return this.carryOutListing(userId, payload);
     if (kind !== "site.deploy") return { ok: false, detail: "No connection can carry this out yet." };
     const { rows } = await this.d.run(
       `select id, token_ct, data_key_id, target_ref from action_connections
@@ -420,6 +494,41 @@ export class AgentService {
         return { ok: false, detail: "Netlify no longer accepts this connection. Reconnect it in the app." };
       }
       if (e instanceof ProviderError) return { ok: false, detail: e.message };
+      throw e;
+    }
+  }
+
+  private async carryOutListing(userId: string, payload: Readonly<Record<string, unknown>>): Promise<ExecutionResult> {
+    const { rows } = await this.d.run(
+      `select id from action_connections where id = $1 and user_id = $2 and provider = 'ebay' and revoked_at is null`,
+      [payload.connectionId, userId]);
+    if (!rows[0]) return { ok: false, detail: "That eBay account is no longer connected." };
+    const owner = this.siteIdFor(userId);
+    const mediaRefs = (payload.mediaRefs as string[]) ?? [];
+    const imageUrls: string[] = [];
+    for (const id of mediaRefs) {
+      // eBay copies the photo from this address when the listing goes live.
+      if (!(await this.media.owns(owner, id))) return { ok: false, detail: "A photo for this listing is no longer available. Ask Hera for the listing again with the photo." };
+      const url = this.photoUrl(id);
+      if (!url) return { ok: false, detail: "Listing photos isn't set up on this server yet." };
+      imageUrls.push(url);
+    }
+    const p = payload as unknown as Omit<ebay.Listing, "imageUrls"> & { mediaRefs: string[] };
+    try {
+      const cred = await this.freshEbayCredential(rows[0].id);
+      const out = await ebay.publishListing(cred, {
+        sku: p.sku, title: p.title, description: p.description, categoryId: p.categoryId, condition: p.condition,
+        conditionNote: p.conditionNote, price: p.price, quantity: p.quantity, aspects: p.aspects, imageUrls,
+        postalCode: p.postalCode, policies: p.policies,
+      }, this.d.fetch, this.ebayHosts);
+      return { ok: true, ref: out.url, detail: `Listed on eBay at ${out.url}` };
+    } catch (e) {
+      if (e instanceof ProviderError && e.kind === "unauthorized") {
+        await this.d.run(`update action_connections set revoked_at = now() where id = $1`, [rows[0].id]);
+        return { ok: false, detail: "eBay no longer accepts this connection. Reconnect eBay in Accounts." };
+      }
+      if (e instanceof ProviderError) return { ok: false, detail: e.message };
+      if (e instanceof ActionError) return { ok: false, detail: e.message };
       throw e;
     }
   }

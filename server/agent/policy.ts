@@ -20,7 +20,7 @@ import { z } from "zod";
 export type Tier = "draft" | "publish" | "spend";
 
 export const ACTION_KINDS = [
-  "site.deploy", "social.post", "email.campaign", "sms.campaign", "ads.campaign", "domain.purchase",
+  "site.deploy", "social.post", "marketplace.listing", "email.campaign", "sms.campaign", "ads.campaign", "domain.purchase",
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -36,6 +36,7 @@ export interface ActionSpec {
 export const ACTIONS: Record<ActionKind, ActionSpec> = {
   "site.deploy":     { tier: "publish", label: "Publish a website",        connection: "hosting",   dailyLimit: 10 },
   "social.post":     { tier: "publish", label: "Publish a social post",    connection: "social",    dailyLimit: 5 },
+  "marketplace.listing": { tier: "publish", label: "List an item for sale", connection: "marketplace", dailyLimit: 10 },
   "email.campaign":  { tier: "publish", label: "Send an email campaign",   connection: "email",     dailyLimit: 1 },
   "sms.campaign":    { tier: "publish", label: "Send a text campaign",     connection: "sms",       dailyLimit: 1 },
   "ads.campaign":    { tier: "spend",   label: "Start a paid ad campaign", connection: "ads",       dailyLimit: 2 },
@@ -105,6 +106,25 @@ export const PAYLOADS = {
     sponsored: z.boolean(),
     mediaRefs: z.array(id).max(10),
   }).strict(),
+  // An eBay listing exactly as it will go live. The policy ids are the seller's own presets,
+  // looked up from their account when the listing is proposed, never written by the model.
+  "marketplace.listing": z.object({
+    connectionId: id,
+    sku: z.string().regex(/^hera-[a-f0-9]{16}$/),
+    title: z.string().min(1).max(80),
+    description: z.string().min(1).max(4000),
+    categoryId: z.string().regex(/^\d{1,12}$/),
+    categoryName: z.string().max(300),
+    condition: z.enum(["NEW", "LIKE_NEW", "NEW_OTHER", "NEW_WITH_DEFECTS", "CERTIFIED_REFURBISHED", "SELLER_REFURBISHED",
+      "USED_EXCELLENT", "USED_VERY_GOOD", "USED_GOOD", "USED_ACCEPTABLE", "FOR_PARTS_OR_NOT_WORKING"]),
+    conditionNote: z.string().max(1000).nullable(),
+    price: z.string().regex(/^\d{1,6}\.\d{2}$/),
+    quantity: z.number().int().min(1).max(99),
+    aspects: z.record(z.string().max(65), z.array(z.string().max(65)).max(10)),
+    mediaRefs: z.array(id).max(12),
+    postalCode: z.string().regex(/^\d{5}$/),
+    policies: z.object({ fulfillment: id, payment: id, returns: id }).strict(),
+  }).strict(),
   "email.campaign": z.object({
     connectionId: id, listId: id,
     subject: z.string().min(1).max(200), bodyText: z.string().min(1).max(50_000),
@@ -123,7 +143,7 @@ export type Payload<K extends ActionKind> = z.infer<(typeof PAYLOADS)[K]>;
 
 /* ------------------------------ the user's world ------------------------------ */
 
-export type ConnectionKind = "hosting" | "social" | "email" | "sms" | "ads" | "registrar";
+export type ConnectionKind = "hosting" | "social" | "marketplace" | "email" | "sms" | "ads" | "registrar";
 
 /** Everything an action may point at is one of these, owned by the user. The model never
  *  supplies a raw address, handle or URL as a destination, so injected text cannot redirect
@@ -273,6 +293,11 @@ export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, no
       break;
     }
 
+    case "marketplace.listing": {
+      out.push(...listingChecks(p as Payload<"marketplace.listing">));
+      break;
+    }
+
     case "email.campaign": {
       const list = ctx.lists.find((l) => l.id === p.listId && l.kind === "email");
       if (!list) { out.push({ id: "unknown_list", level: "block", message: "That is not one of your email lists." }); break; }
@@ -333,6 +358,51 @@ export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, no
       break;
     }
   }
+  return out;
+}
+
+/* ------------------------------ selling ------------------------------ */
+
+// Things eBay doesn't allow to be sold, or only under rules a quick listing can't meet.
+const PROHIBITED = /\b(guns?|firearms?|ammunition|ammo|pistols?|rifles?|silencers?|suppressors?|switchblades?|brass knuckles|explosives?|fireworks|cannabis|marijuana|thc|cbd|kratom|prescription|opioids?|oxycodone|adderall|steroids?|alcohol|liquor|vodka|whiskey|wine|beer|cigarettes?|tobacco|vapes?|e-cig\w*|nicotine|human remains|organs?|live animals?|ivory|counterfeit|fake id|stolen|lock ?picks?|radar jammers?)\b/i;
+// Copies of brand-name goods: "replica Rolex", "inspired by Chanel".
+const KNOCKOFF = /\b(replica|knock[- ]?off|inspired by|dupe|unbranded copy|1:1|aaa quality|mirror quality)\b/i;
+// Contact details and links: eBay forbids taking a sale, or the conversation, off eBay.
+const CONTACT = /(https?:\/\/|www\.|\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b|\b(venmo|paypal\.me|zelle|cash ?app|whatsapp|text me|call me|dm me)\b)/i;
+/** A phone number: ten or more digits written together, so "1980-1985" or a model number isn't one. */
+const hasPhoneNumber = (text: string) => (text.match(/\+?\(?\d[\d\s().-]{8,}\d/g) ?? []).some((m) => m.replace(/\D/g, "").length >= 10);
+
+/** eBay's rules for a listing, as far as they can be checked here. eBay has the final say. */
+export function listingChecks(p: Payload<"marketplace.listing">): Check[] {
+  const out: Check[] = [];
+  const all = `${p.title}\n${p.description}\n${p.conditionNote ?? ""}\n${Object.values(p.aspects).flat().join(" ")}`;
+  // Words like "wine" or "rifle" also appear in "wine glasses" or "rifle scope case", so these ask
+  // the person to confirm rather than refusing outright.
+  const banned = all.match(PROHIBITED)?.[0];
+  if (banned) {
+    out.push({ id: "prohibited_item", level: "attest", message: `This mentions "${banned}". eBay doesn't allow selling weapons, drugs, alcohol, tobacco, live animals and similar, or only under special rules. Confirm the item itself isn't one of those.` });
+  }
+  const copy = all.match(KNOCKOFF)?.[0];
+  if (copy) {
+    out.push({ id: "knockoff", level: "attest", message: `This says "${copy}". Copies of brand-name goods break eBay's rules and trademark law. Confirm it's genuine, or not made to look like a brand.` });
+  }
+  if (CONTACT.test(all) || hasPhoneNumber(all)) {
+    out.push({ id: "contact_details", level: "block", message: "eBay doesn't allow links, email addresses, phone numbers or other ways to pay or talk outside eBay in a listing." });
+  }
+  if (!p.mediaRefs.length) {
+    out.push({ id: "needs_photo", level: "block", message: "eBay listings need at least one photo. Add one with the photo button and ask again." });
+  }
+  const price = Number(p.price);
+  if (!(price >= 0.99)) out.push({ id: "price", level: "block", message: "eBay's lowest price is $0.99." });
+  if (price > 25_000) out.push({ id: "high_price", level: "attest", message: `This lists the item for $${p.price}. Confirm that's the price you want.` });
+  if (p.title !== p.title.trim() || /\s{2,}/.test(p.title)) out.push({ id: "title_spacing", level: "warn", message: "The title has extra spaces." });
+  if (/[A-Z]{12,}/.test(p.title.replace(/[^A-Za-z]/g, "")) && p.title === p.title.toUpperCase()) {
+    out.push({ id: "title_caps", level: "warn", message: "An all-capitals title is harder to read and can rank lower in eBay search." });
+  }
+  if (p.condition !== "NEW" && !p.conditionNote) {
+    out.push({ id: "condition_note", level: "warn", message: "Describing the condition (scratches, wear, what's missing) helps avoid returns." });
+  }
+  contentChecks(all, out);
   return out;
 }
 

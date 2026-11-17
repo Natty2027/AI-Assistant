@@ -23,6 +23,7 @@ import { z } from "zod";
 import { ActionError, type ActionStore } from "./approvals.ts";
 import { evaluate, NEVER_AUTOMATED, PLATFORMS, postContentChecks, TEXT_LIMITS, type Context, type Platform } from "./policy.ts";
 import { isBinaryPath, SandboxError, type SiteSandbox } from "./sandbox.ts";
+import { CONDITIONS, type CategorySuggestion, type ItemSpecific, type SellerPolicies } from "./ebay.ts";
 import { withAiRetry } from "./aiRetry.ts";
 import { makePoster, POSTER_INPUT, POSTER_TOOL, PosterError, type PosterDraft } from "./poster.ts";
 import { describeSchedule, SCHEDULE_INPUTS, SCHEDULE_TOOL_NAMES, SCHEDULE_TOOLS, ScheduleError, scheduleChange,
@@ -85,17 +86,21 @@ const EMAIL = /^[^\s@<>(),;:"\[\]]+@[^\s@<>(),;:"\[\]]+\.[a-z]{2,}$/i;
 export const AGENT_MODES = ["site", "posts", "schedule", "launch"] as const;
 export type AgentMode = (typeof AGENT_MODES)[number];
 
+/** Listing items for sale on eBay. Offered only when the server is set up for eBay. */
+const SELLING_TOOLS = ["ebay_categories", "ebay_item_specifics", "propose_listing"] as const;
+
 const MODE_TOOLS: Record<AgentMode, ReadonlySet<string>> = {
   site: new Set(["list_site_files", "read_site_file", "write_site_file", "add_photo_to_site", "check_site", "propose_site_deploy", "ask_user", "remember", "draft_email", "draft_text"]),
   // Posts may read the site (for accurate details and its link) but never change or publish it.
   // "Studio" in the app: posts, posters and flyers.
-  posts: new Set(["list_site_files", "read_site_file", "draft_post", "write_post", "propose_post", "design_poster", "ask_user", "remember", "draft_email", "draft_text"]),
+  posts: new Set(["list_site_files", "read_site_file", "draft_post", "write_post", "propose_post", "design_poster", "ask_user", "remember", "draft_email", "draft_text", ...SELLING_TOOLS]),
   // The person's calendar and reminders, as a snapshot from their device. Changes are only proposed.
   schedule: new Set([...SCHEDULE_TOOL_NAMES, "ask_user", "remember", "draft_email", "draft_text"]),
   // Launch Kit: everything at once for one event, class, product or opening. Still only proposals.
   launch: new Set([
     "list_site_files", "read_site_file", "write_site_file", "add_photo_to_site", "check_site", "propose_site_deploy",
     "draft_post", "write_post", "propose_post", "design_poster", ...SCHEDULE_TOOL_NAMES, "ask_user", "remember", "draft_email", "draft_text",
+    ...SELLING_TOOLS,
   ]),
 };
 
@@ -128,6 +133,13 @@ export interface AgentDeps {
   brand?: Brand | null;
   /** Schedule mode: their calendar and reminders, read on their device for this request. */
   schedule?: ScheduleSnapshot;
+  /** eBay: categories, item specifics and the seller's presets. Absent when eBay isn't set up. */
+  marketplace?: {
+    categories: (query: string) => Promise<CategorySuggestion[]>;
+    specifics: (categoryId: string) => Promise<ItemSpecific[]>;
+    policies: (connectionId: string) => Promise<SellerPolicies>;
+    newSku: () => string;
+  };
   /** A text message the person received and shared, for Hera to explain or help answer. */
   receivedText?: string | null;
   /** Lasting facts the person told Hera before (see agent_memories). */
@@ -223,6 +235,25 @@ const TOOLS = [
       body: { type: "string", description: "The text itself: short, conversational, plain text, no Markdown" },
     }) },
   POSTER_TOOL,
+  { name: "ebay_categories", description: "Find the best eBay categories for an item. Returns category ids and names; use the best match in propose_listing.", strict: true,
+    input_schema: obj({ item: { type: "string", description: "What the item is, e.g. \"Canon AE-1 35mm film camera\"" } }) },
+  { name: "ebay_item_specifics", description: "The details (item specifics) an eBay category asks for, such as Brand, Model or Size, with common values. Required ones must be filled in.", strict: true,
+    input_schema: obj({ category_id: { type: "string" } }) },
+  { name: "propose_listing", description: "Ask the person to review and approve listing an item for sale on their connected eBay account, at a fixed price. This does not list anything; their approval does.", strict: true,
+    input_schema: obj({
+      connection_id: { type: "string", description: "Id of the person's connected eBay account" },
+      title: { type: "string", description: "Up to 80 characters: brand, model, key features, size. No ALL CAPS, no hype words" },
+      description: { type: "string", description: "Plain text: what it is, condition in honest detail, what's included, measurements. No links or contact details" },
+      category_id: { type: "string" },
+      category_name: { type: "string" },
+      condition: { type: "string", enum: [...CONDITIONS] },
+      condition_note: { type: ["string", "null"], description: "Flaws, wear or missing parts, for anything not new" },
+      price: { type: "string", description: "US dollars, e.g. \"180.00\"" },
+      quantity: { type: "integer" },
+      item_specifics: { type: "array", items: obj({ name: { type: "string" }, value: { type: "string" } }) },
+      postal_code: { type: "string", description: "The 5-digit US ZIP code the item ships from" },
+      summary: { type: "string", description: "One line for the approval screen" },
+    }) },
   { name: "remember", description: "Save one lasting fact about the person or their business (name, hours, location, links, prices, preferred tone) so you won't need to ask again. They can see and delete what you saved.", strict: true,
     input_schema: obj({ fact: { type: "string", description: "One short fact in plain words, e.g. \"Clay Corner is open Tuesday to Saturday, 10 AM to 6 PM\"" } }) },
   ...SCHEDULE_TOOLS,
@@ -241,6 +272,16 @@ const INPUTS = {
   ask_user: z.object({ question: z.string() }).strict(),
   remember: z.object({ fact: z.string().min(1).max(300) }).strict(),
   design_poster: POSTER_INPUT,
+  ebay_categories: z.object({ item: z.string().min(2).max(350) }).strict(),
+  ebay_item_specifics: z.object({ category_id: z.string().regex(/^\d{1,12}$/) }).strict(),
+  propose_listing: z.object({
+    connection_id: z.string(), title: z.string().min(1).max(80), description: z.string().min(1).max(4000),
+    category_id: z.string().regex(/^\d{1,12}$/), category_name: z.string().max(300),
+    condition: z.enum(CONDITIONS), condition_note: z.string().max(1000).nullable(),
+    price: z.string().regex(/^\d{1,6}(\.\d{1,2})?$/), quantity: z.number().int().min(1).max(99),
+    item_specifics: z.array(z.object({ name: z.string().min(1).max(65), value: z.string().min(1).max(65) }).strict()).max(30),
+    postal_code: z.string().regex(/^\d{5}$/), summary: z.string().max(300),
+  }).strict(),
   draft_text: z.object({
     to: z.array(z.object({ name: z.string().max(80).nullable(), number: z.string().max(32).nullable() }).strict()),
     body: z.string().min(1).max(MAX_TEXT_LENGTH),
@@ -307,7 +348,7 @@ function systemPrompt(ctx: Context, mode: AgentMode, hasPhoto: boolean, schedule
   return modePrompt(ctx, mode, hasPhoto, schedule) + memoryPrompt(memories) + (mode === "site" || mode === "launch" ? brandPrompt(brand) : "");
 }
 
-function accountList(ctx: Context, kind: "hosting" | "social"): string {
+function accountList(ctx: Context, kind: "hosting" | "social" | "marketplace"): string {
   return ctx.connections
     .filter((c) => c.kind === kind)
     .map((c) => `- ${c.id}: ${c.label} (${c.kind}${c.platform ? `, ${c.platform}, max ${TEXT_LIMITS[c.platform]} characters` : ""})`)
@@ -329,7 +370,8 @@ function postRules(hasPhoto: boolean): string {
 - If a post is paid or sponsored, set sponsored to true and say so in the text, for example #ad.
 - ${hasPhoto ? "The person attached a photo. Attach it (attach_photo) to posts for connected accounts unless they said otherwise." : "The person attached no photo. An Instagram post needs one: if they want Instagram, ask them to add a photo with the photo button and send their request again."}
 - Links in Instagram captions can't be tapped, so for Instagram say where to find the link instead (for example, link in bio).
-- When a poster or flyer would help (an event, a sale, a class, an opening), design one with design_poster as well, even if they only asked for posts. Keep poster words short; the details go in its own lines.`;
+- When a poster or flyer would help (an event, a sale, a class, an opening), design one with design_poster as well, even if they only asked for posts. Keep poster words short; the details go in its own lines.
+- To sell an item on eBay: find its category with ebay_categories, get the details it asks for with ebay_item_specifics, fill in every required one you know (ask for any you don't), then propose it with propose_listing at a fixed price. Be honest about condition and flaws; use only facts the person gave you or that the photo clearly shows. Ask for the price and the ZIP code it ships from if they didn't say. eBay listings need a photo: if none is attached, ask them to add one. Never put links, email addresses, phone numbers or payment apps in a listing.`;
 }
 
 const PROPOSE_ONLY = `You cannot publish, post, send, or spend anything. When something is ready, propose it: the person reviews the exact content and approves it in the app, and only their approval makes it happen. Say this plainly when you hand something over.`;
@@ -362,6 +404,9 @@ ${accountList(ctx, "hosting")}
 
 Their connected social accounts:
 ${accountList(ctx, "social")}
+
+Their connected eBay accounts (for selling):
+${accountList(ctx, "marketplace")}
 ${schedule ? `\n${describeSchedule(schedule)}\n` : ""}
 How to work:
 ${SITE_RULES}
@@ -390,7 +435,7 @@ ${PROPOSE_ONLY}
 
 The person's connected ${kind} accounts:
 ${accountList(ctx, kind)}
-
+${mode === "posts" ? `\nTheir connected eBay accounts (for selling):\n${accountList(ctx, "marketplace")}\n` : ""}
 How to work:
 ${mode === "site" ? SITE_RULES + (hasPhoto ? "\n- The person attached a photo: put it on the site with add_photo_to_site where it fits best." : "") : postRules(hasPhoto)}
 ${COMMON_RULES}`;
@@ -430,7 +475,8 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
   let pending: ConversationState["pending"] = null;
   // Conversations saved before personWords existed: their plain user messages are the person's.
   const personWords = [...(resume?.personWords ?? (resume ? plainUserText(resume.messages) : [])), request];
-  const tools: Anthropic.Beta.Messages.BetaToolUnion[] = TOOLS.filter((t) => MODE_TOOLS[deps.mode].has(t.name));
+  const tools: Anthropic.Beta.Messages.BetaToolUnion[] = TOOLS.filter((t) => MODE_TOOLS[deps.mode].has(t.name)
+    && (deps.marketplace || !(SELLING_TOOLS as readonly string[]).includes(t.name)));
   if (deps.allowWebSearch) tools.push({ type: "web_search_20260209", name: "web_search", max_uses: 5 });
 
   const result = (status: AgentResult["status"], text: string, turns: number): AgentResult => {
@@ -608,6 +654,40 @@ async function runTool(
         const draft: EmailDraft = { id: `e_${randomBytes(6).toString("hex")}`, to, cc, subject: input.subject.trim(), body: input.body };
         state.emailDrafts.push(draft);
         return { content: `Email written (${draft.id}). The person will review it and send it from their own email app; nothing has been sent.` };
+      }
+      case "ebay_categories": {
+        if (!deps.marketplace) return { content: "Selling on eBay isn't set up on this server.", error: true };
+        const found = await deps.marketplace.categories(input.item);
+        return { content: found.length ? JSON.stringify(found) : "eBay found no category for that. Describe the item differently." };
+      }
+      case "ebay_item_specifics": {
+        if (!deps.marketplace) return { content: "Selling on eBay isn't set up on this server.", error: true };
+        return { content: JSON.stringify(await deps.marketplace.specifics(input.category_id)) };
+      }
+      case "propose_listing": {
+        if (!deps.marketplace) return { content: "Selling on eBay isn't set up on this server.", error: true };
+        const conn = ctx.connections.find((c) => c.id === input.connection_id && c.kind === "marketplace");
+        if (!conn) return { content: "That is not one of the person's connected eBay accounts. If they have none, tell them to connect eBay in Accounts.", error: true };
+        // The ZIP code is where the person's items ship from: it must come from them.
+        if (!state.personWords.join(" ").includes(input.postal_code) && !(deps.memories ?? []).some((m) => m.includes(input.postal_code))) {
+          return { content: "Ask the person for the ZIP code the item ships from; use only one they gave you.", error: true };
+        }
+        const policies = await deps.marketplace.policies(conn.id);
+        if (!policies.fulfillment || !policies.payment || !policies.returns) {
+          return { content: "The person's eBay account doesn't have shipping, payment and returns policies yet, which eBay requires for listings made by apps. Tell them: on eBay.com go to Account settings, then Business policies, opt in, and create a shipping, a payment and a returns policy; then ask again.", error: true };
+        }
+        const aspects: Record<string, string[]> = {};
+        for (const a of input.item_specifics as Array<{ name: string; value: string }>) (aspects[a.name] ??= []).push(a.value);
+        const payload = {
+          connectionId: conn.id, sku: deps.marketplace.newSku(), title: input.title, description: input.description,
+          categoryId: input.category_id, categoryName: input.category_name, condition: input.condition,
+          conditionNote: input.condition_note, price: Number(input.price).toFixed(2), quantity: input.quantity, aspects,
+          mediaRefs: deps.photoId ? [deps.photoId] : [], postalCode: input.postal_code,
+          policies: { fulfillment: policies.fulfillment, payment: policies.payment, returns: policies.returns },
+        };
+        const p = deps.store.propose({ userId: deps.userId, kind: "marketplace.listing", payload, summary: input.summary, tainted: state.tainted, ctx });
+        state.proposalIds.push(p.id);
+        return { content: proposalMessage(p.status, p.checks) };
       }
       case "draft_text": {
         const to = (input.to as Array<{ name: string | null; number: string | null }>)

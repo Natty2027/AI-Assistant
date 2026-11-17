@@ -143,9 +143,39 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
 
     var isPost: Bool { kind == "social.post" }
     var isSite: Bool { kind == "site.deploy" }
+    /// An item to list for sale on eBay.
+    var isListing: Bool { kind == "marketplace.listing" }
     var isPending: Bool { status == "pending" }
     var postText: String? { payload["text"]?.stringValue }
     var postLink: String? { payload["link"]?.stringValue }
+
+    /* An eBay listing, as it will go live (server/agent/policy.ts, marketplace.listing). */
+    var listingTitle: String? { payload["title"]?.stringValue }
+    var listingDescription: String? { payload["description"]?.stringValue }
+    var listingPrice: String? { payload["price"]?.stringValue }
+    var listingCategory: String? { payload["categoryName"]?.stringValue }
+    var listingConditionNote: String? { payload["conditionNote"]?.stringValue }
+    var listingShipsFrom: String? { payload["postalCode"]?.stringValue }
+    var listingQuantity: Int? {
+        if case .number(let n) = payload["quantity"] { return Int(n) }
+        return nil
+    }
+    /// "USED_VERY_GOOD" as people say it: "Used, very good".
+    var listingCondition: String? {
+        guard let raw = payload["condition"]?.stringValue else { return nil }
+        let words = raw.lowercased().split(separator: "_").map(String.init)
+        guard let first = words.first else { return nil }
+        let rest = words.dropFirst().joined(separator: " ")
+        return first.prefix(1).uppercased() + first.dropFirst() + (rest.isEmpty ? "" : ", \(rest)")
+    }
+    /// Brand, Model, Size… with their values.
+    var listingSpecifics: [(name: String, value: String)] {
+        guard case .object(let aspects) = payload["aspects"] else { return [] }
+        return aspects.keys.sorted().compactMap { key in
+            guard case .array(let values) = aspects[key] else { return nil }
+            return (key, values.compactMap(\.stringValue).joined(separator: ", "))
+        }
+    }
 
     /// The facts the person must confirm before the server will accept an approval.
     var requiredAttestations: [Check] { checks.filter { $0.level == .attest } }
@@ -287,19 +317,24 @@ enum SignInProvider: String, Codable, Identifiable, Sendable {
     case x
     /// One Meta sign-in covers a Facebook Page and the Instagram account linked to it.
     case meta
+    /// Selling: listing items on the person's eBay account.
+    case ebay
     var id: Self { self }
 }
 
 struct SignInAvailability: Codable, Hashable, Sendable {
     let x: Bool
     let meta: Bool
+    /// Absent from servers from before eBay selling.
+    var ebay: Bool?
 
-    static let none = SignInAvailability(x: false, meta: false)
+    static let none = SignInAvailability(x: false, meta: false, ebay: false)
 
     func isAvailable(_ provider: SignInProvider) -> Bool {
         switch provider {
         case .x: x
         case .meta: meta
+        case .ebay: ebay ?? false
         }
     }
 }

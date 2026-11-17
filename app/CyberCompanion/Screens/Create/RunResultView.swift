@@ -188,7 +188,8 @@ struct LaunchKitSummary: Equatable {
         func plural(_ n: Int, _ one: String, _ many: String) -> String { n == 1 ? one : "\(n) \(many)" }
         let pending = run.proposals.filter(\.isPending)
         let site = pending.filter(\.isSite).count
-        let posts = pending.count - site
+        let listings = pending.filter(\.isListing).count
+        let posts = pending.count - site - listings
         let sharing = run.drafts.filter(\.isForSharing).count
         let calendar = run.scheduleChanges ?? []
         let events = calendar.filter { [.addEvent, .changeEvent, .cancelEvent].contains($0.kind) }.count
@@ -201,6 +202,7 @@ struct LaunchKitSummary: Equatable {
         if posters > 0 { items.append(.init(text: plural(posters, "A poster in every size", "posters in every size"), systemImage: "photo.artframe")) }
         if site > 0 { items.append(.init(text: "Website ready to publish", systemImage: "globe")) }
         if posts > 0 { items.append(.init(text: plural(posts, "A post ready to approve", "posts ready to approve"), systemImage: "text.bubble.fill")) }
+        if listings > 0 { items.append(.init(text: plural(listings, "An eBay listing ready to approve", "eBay listings ready to approve"), systemImage: "tag.fill")) }
         if sharing > 0 { items.append(.init(text: plural(sharing, "A post to share yourself", "posts to share yourself"), systemImage: "square.and.arrow.up")) }
         if events > 0 { items.append(.init(text: plural(events, "A calendar change", "calendar changes"), systemImage: "calendar")) }
         if reminders > 0 { items.append(.init(text: plural(reminders, "A reminder", "reminders"), systemImage: "checklist")) }

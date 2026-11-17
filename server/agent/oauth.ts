@@ -20,7 +20,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 
-export const OAUTH_PROVIDERS = ["x", "meta"] as const;
+export const OAUTH_PROVIDERS = ["x", "meta", "ebay"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 export function isOAuthProvider(p: unknown): p is OAuthProvider {

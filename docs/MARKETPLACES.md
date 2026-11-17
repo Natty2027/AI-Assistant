@@ -1,51 +1,53 @@
-# Selling on marketplaces (plan)
+# Selling on marketplaces
 
-Not built yet. This is the plan for letting Hera create listings and ads on sites like eBay,
-in the same way she handles posts: she writes it, the person approves the exact listing in
-Review, and only then is it published.
+## eBay (built)
 
-## eBay first
+Hera writes a fixed-price eBay listing, the person approves the exact listing in Review, and only
+then does it go live on their own eBay account. Code: `server/agent/ebay.ts` (eBay's APIs),
+`marketplace.listing` in `server/agent/policy.ts` (the rules), the selling tools in
+`server/agent/loop.ts`, and Accounts → Selling and Review in the app.
 
-eBay has an official way for apps to list for a seller, so it's the place to start.
+### How it works for the person
 
-### What the person sees
+"Sell my Canon AE-1, works great, small scratch on top, $180, ships from 95819", with a photo.
+Hera finds the category (`ebay_categories`), the details it asks for (`ebay_item_specifics`), and
+proposes the listing (`propose_listing`). Before it can be approved it's checked: no links,
+emails, phone numbers or payment apps; a photo; a real price; likely banned items or copies of
+brands need the person to confirm. The ZIP code must come from the person. Shipping, payment and
+returns come from their eBay business policies, never from the model.
 
-"Sell my Canon AE-1 camera, works great, small scratch on the top, $180", with photos. Hera:
+### Setup (the owner)
 
-1. Writes a title (eBay allows 80 characters) and a description.
-2. Picks the category and fills in the details it asks for (brand, model, condition and so on).
-3. Suggests a price, and uses the shipping, payment and returns presets from their eBay account.
-4. Checks it against eBay's rules: nothing eBay bans, no copied brand claims, an honest
-   condition, and no outside contact details (eBay forbids them).
-5. Puts it in Review. Once approved it goes live, and the person gets the link.
+1. **eBay developer account** (free): developer.ebay.com → Join. Create a keyset; start with
+   **Sandbox** to test, then **Production**.
+2. **Sign-in return address**: in the keyset, User Tokens → Get a Token from eBay via Your
+   Application → add an eBay Redirect URL. Set **Auth accepted URL** and **Auth declined URL** to
+   `https://<PUBLIC_URL>/oauth/callback/ebay`, and turn on OAuth. The name eBay gives it is the
+   **RuName**.
+3. **Account deletion notices** (required before eBay issues Production keys): Alerts &
+   Notifications → Marketplace Account Deletion. Endpoint:
+   `https://<PUBLIC_URL>/notifications/ebay/deletion`. Verification token: any 32 to 80 letters,
+   digits, `_` or `-` (make one up). Save, and eBay checks the address.
+4. **Railway Variables** (never anywhere else):
+   - `EBAY_CLIENT_ID` = App ID (Client ID)
+   - `EBAY_CLIENT_SECRET` = Cert ID (Client Secret)
+   - `EBAY_RUNAME` = the RuName from step 2
+   - `EBAY_VERIFICATION_TOKEN` = the token from step 3
+   - `EBAY_ENV` = `sandbox` while testing; remove it for real listings
+5. **Database**: run `db/migrations/006_ebay_selling.sql` in Supabase (SQL editor) once.
+6. `/health` shows `publishing.ebay: true` and `ebayDeletionNotices: true` when it's all set.
 
-**Promoted Listings** (eBay's ads) can be added too. eBay charges only when the item sells, but
-it is still spending, so the person types the ad rate to approve it, as amounts already work.
+Each seller also needs eBay's **business policies** once: eBay.com → Account settings → Business
+policies → opt in, then create a shipping, a payment and a returns policy. Accounts → Selling in
+the app explains this.
 
-### Setup (the owner, about 30 minutes, free)
+### Not yet
 
-1. Create an eBay Developer Program account at developer.ebay.com and get the app's keys
-   (a test set and a live set).
-2. Set the eBay sign-in return address (the exact value comes with the build).
-3. Add to Railway Variables, never anywhere else: `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`,
-   `EBAY_RUNAME`, `EBAY_VERIFICATION_TOKEN`.
-4. Each seller needs eBay's shipping, payment and returns presets (business policies) set up on
-   their account, once. Hera walks them through it.
-
-### The build
-
-- **Connect eBay** in Accounts, through eBay's own sign-in page (like X and Facebook).
-- **Account deletion notices:** eBay won't issue live keys until the app has an address that
-  receives a notice when a user deletes their eBay account. Built on the server.
-- **A listing tool for Hera:** category suggestions, each category's required details, price,
-  condition, and the rule checks above.
-- **Several photos per request** (up to 12; the app takes one today).
-- **Publishing** after approval: create the listing on eBay and return its link.
-- A listing card in the app, Promoted Listings with typed confirmation, and tests, tried on
-  eBay's test site before going live.
-
-**Cost:** eBay's API is free. Sellers pay eBay's normal listing and selling fees, and Promoted
-Listings fees only if they choose them.
+- One photo per listing (the app sends one photo per request today; eBay allows up to 24).
+- Promoted Listings (eBay ads, paid only when an item sells), with the person typing the ad rate.
+- Checking the signature on eBay's deletion notices (today any notice for an eBay user id removes
+  that connection; the worst case is the person reconnecting).
+- Auctions; listings outside eBay US.
 
 ## Other sites
 
