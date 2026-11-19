@@ -108,6 +108,14 @@ export const config = {
   /** "sandbox" uses eBay's test site, where nothing is really sold. */
   ebaySandbox: opt("EBAY_ENV") === "sandbox",
 
+  /** Selling Hera: its App Store id (numbers only, once it's live) or a public TestFlight link,
+   *  for the home page and the "Built with Hera" link; and the owner's dashboard password. */
+  appStoreId: opt("APP_STORE_ID"),
+  testflightUrl: opt("TESTFLIGHT_URL"),
+  adminToken: opt("ADMIN_TOKEN"),
+  /** "off" removes "Built with Hera" from free-plan websites. */
+  builtWithHera: opt("BUILT_WITH_HERA") !== "off",
+
   /** Hera Pro and monthly limits. BILLING=on turns the limits on; until then nothing is stopped
    *  (the subscription has to exist in App Store Connect first). */
   billing: {

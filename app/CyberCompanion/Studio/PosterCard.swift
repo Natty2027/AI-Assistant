@@ -12,6 +12,8 @@ struct PosterCard: View {
     }
 
     private var photo: CGImage? { model.lastRunPhoto.flatMap(PosterView.image(from:)) }
+    /// Free-plan posters carry a small "Made with Hera"; Hera Pro removes it.
+    private var madeWithHera: Bool { model.pro.status?.isPro != true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -23,7 +25,7 @@ struct PosterCard: View {
             Text(size.detail).font(.caption).foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
-                ShareLink(item: PosterExport(poster: poster, brand: model.brand.kit, size: size, photo: model.lastRunPhoto),
+                ShareLink(item: PosterExport(poster: poster, brand: model.brand.kit, size: size, photo: model.lastRunPhoto, madeWithHera: madeWithHera),
                           preview: SharePreview(poster.headline, image: Image(systemName: "photo"))) {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
@@ -43,6 +45,16 @@ struct PosterCard: View {
             if let problems = poster.problems, !problems.isEmpty {
                 CheckList(checks: problems)
             }
+            if madeWithHera {
+                Button {
+                    model.pro.showPlans = true
+                } label: {
+                    Label("Remove \u{201C}Made with Hera\u{201D} with Hera Pro", systemImage: "sparkles")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
             if model.brand.kit.logo == nil && model.brand.kit.businessName.isEmpty {
                 Label("Add your logo and colors in Settings → Brand kit to use them on every poster.", systemImage: "paintpalette")
                     .font(.caption)
@@ -57,7 +69,7 @@ struct PosterCard: View {
         let pixels = size.pixels
         return GeometryReader { geo in
             let scale = geo.size.width / pixels.width
-            PosterView(poster: poster, brand: model.brand.kit, size: size, photo: photo)
+            PosterView(poster: poster, brand: model.brand.kit, size: size, photo: photo, madeWithHera: madeWithHera)
                 .scaleEffect(scale, anchor: .topLeading)
                 .frame(width: geo.size.width, height: pixels.height * scale, alignment: .topLeading)
         }

@@ -1,3 +1,4 @@
+import StoreKit
 import SwiftUI
 
 /// Everything the assistant proposed. Nothing reaches the public until it's approved here.
@@ -72,6 +73,7 @@ struct ReviewView: View {
 /// One proposal: the exact content, the rule results, and the confirmations required to approve.
 struct ProposalDetailView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.requestReview) private var requestReview
     @State private var proposal: Proposal
     @State private var confirmed: Set<String> = []
     @State private var acknowledgedTaint = false
@@ -251,6 +253,19 @@ struct ProposalDetailView: View {
                     }
                     .buttonStyle(.glass)
                 }
+                // After a success on the free plan: what Pro adds, once, quietly.
+                if result.ok, model.pro.status?.isPro == false {
+                    Button {
+                        model.pro.showPlans = true
+                    } label: {
+                        Label(proposal.isSite ? "Remove \u{201C}Built with Hera\u{201D} and get more requests with Hera Pro" : "Get more requests every month with Hera Pro",
+                              systemImage: "sparkles")
+                            .labelStyle(.alignedIcon)
+                            .font(.footnote)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
             }
             .glowCard()
         }
@@ -277,6 +292,11 @@ struct ProposalDetailView: View {
         let attestations = proposal.requiredAttestations.map(\.id).filter(confirmed.contains)
         if let updated = await model.approveAndCarryOut(proposal, attestations: attestations, acknowledgeTaint: acknowledgedTaint) {
             proposal = updated
+            // Something just went live: a good moment to ask for a rating, now and then.
+            if updated.result?.ok == true, HappyMoments.recordSuccess() {
+                try? await Task.sleep(for: .seconds(1.5))
+                requestReview()
+            }
         } else {
             refreshFromModel()
         }

@@ -245,14 +245,17 @@ export class SiteSandbox {
    * compares this fingerprint with the approved one and uploads these same bytes, so nothing
    * written in between can slip in.
    */
-  async publishable(): Promise<{ digest: string; files: Array<{ path: string; contents: string | Buffer }> }> {
+  async publishable(opts: { decorate?: (html: string) => string } = {}): Promise<{ digest: string; files: Array<{ path: string; contents: string | Buffer }> }> {
     const h = createHash("sha256");
     const files: Array<{ path: string; contents: string | Buffer }> = [];
     for (const f of await this.files()) {
       const raw = await this.readBytes(f.path);
       h.update(`${f.path}\0${createHash("sha256").update(raw).digest("hex")}\n`);
       const contents = isBinaryPath(f.path) ? raw : raw.toString("utf8");
-      files.push({ path: f.path, contents: f.path.endsWith(".html") ? withPolicy(contents as string) : contents });
+      // `decorate` adds things the person didn't write (the "Built with Hera" link) after the
+      // fingerprint, so what they approved is still exactly what they saw.
+      const html = (s: string) => withPolicy(opts.decorate ? opts.decorate(s) : s);
+      files.push({ path: f.path, contents: f.path.endsWith(".html") ? html(contents as string) : contents });
     }
     return { digest: h.digest("hex"), files };
   }

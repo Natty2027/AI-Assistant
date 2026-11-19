@@ -8,6 +8,7 @@ import { requireAuth } from "./auth.ts";
 import { dbConfigured, dbReachable, pool, query } from "./db.ts";
 import { HttpError, Router, sendHtml } from "./http.ts";
 import { privacyPage, supportPage, termsPage } from "./pages.ts";
+import { adminAllowed, getHeraUrl, growth, growthPage, homePage } from "./marketing.ts";
 import { createLimiter } from "./rateLimit.ts";
 import { assertUuid, ProviderError } from "./shared.ts";
 import Anthropic from "@anthropic-ai/sdk";
@@ -48,6 +49,10 @@ function makeService(store: ActionStore): AgentService {
   return new AgentService({
     store,
     run: sqlRun,
+    // Free-plan websites link back to Hera's home page (or the App Store once it's there).
+    builtWithHera: config.builtWithHera && config.publicUrl
+      ? { url: getHeraUrl(config) ?? config.publicUrl, isPro: (userId) => billing.status(userId).then((s) => s.plan === "pro") }
+      : null,
     fetch: (url, init) => fetch(url, init),
     sitesDir: config.sitesDir,
     mediaDir: config.mediaDir,
@@ -145,7 +150,20 @@ export function buildRouter(): Router {
   const r = new Router();
 
   /* ---- public pages: App Store Connect needs live Support, Privacy Policy and Marketing URLs ---- */
-  r.get("/", (ctx) => sendHtml(ctx.res, supportPage(config.supportEmail)));
+  r.get("/", (ctx) => sendHtml(ctx.res, homePage(config, config.supportEmail)));
+
+  /* ---- the owner's growth dashboard: counts only, behind ADMIN_TOKEN (the browser asks) ---- */
+  r.get("/admin/growth", async (ctx) => {
+    if (!adminAllowed(ctx.req.headers.authorization, config.adminToken)) {
+      ctx.res.writeHead(401, { "WWW-Authenticate": 'Basic realm="Hera growth"', "Content-Type": "text/plain" });
+      ctx.res.end(config.adminToken ? "Sign in with any user name and ADMIN_TOKEN as the password." : "Set ADMIN_TOKEN (24+ characters) in Railway Variables first.");
+      return;
+    }
+    const page = growthPage(await growth(sqlRun));
+    ctx.res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'" });
+    ctx.res.end(page);
+  });
   r.get("/support", (ctx) => sendHtml(ctx.res, supportPage(config.supportEmail)));
   r.get("/privacy", (ctx) => sendHtml(ctx.res, privacyPage(config.supportEmail)));
   r.get("/terms", (ctx) => sendHtml(ctx.res, termsPage(config.supportEmail)));

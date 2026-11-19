@@ -22,6 +22,7 @@ import { MediaError, MediaStore } from "./media.ts";
 import { appReturnUrl, OAuthStates, PendingConnections, redirectUri, type OAuthProvider } from "./oauth.ts";
 import type { OAuthClient } from "../config.ts";
 import { ProviderError, type FetchLike, type Run } from "../shared.ts";
+import { withBuiltWithHera } from "../marketing.ts";
 import { decryptToken, encryptToken, newDataKeyId } from "../crypto/envelope.ts";
 
 /** What can actually be carried out today. Approving anything else is refused up front, so
@@ -46,6 +47,9 @@ export interface ServiceDeps {
   mediaDir: string;
   /** Sign-in with X and Meta. Each is off until this server's public address and that
    *  platform's developer app are configured. */
+  /** Free-plan websites get a "Built with Hera" link to this address; null for none. Pro ones
+   *  don't. `isPro` says which plan the person is on. */
+  builtWithHera?: { url: string; isPro: (userId: string) => Promise<boolean> } | null;
   oauth?: { publicUrl?: string; x?: OAuthClient; meta?: OAuthClient; metaConfigId?: string;
     /** Selling on eBay: the developer keyset, its RuName, and whether to use eBay's test site. */
     ebay?: OAuthClient; ebayRuName?: string; ebaySandbox?: boolean };
@@ -478,7 +482,8 @@ export class AgentService {
     const sandbox = await this.sandbox(userId);
     // The rules already compared fingerprints a moment ago. Read the files once more, compare
     // that exact copy with what was approved, and upload that same copy.
-    const { digest, files } = await sandbox.publishable();
+    const badge = this.d.builtWithHera && !(await this.d.builtWithHera.isPro(userId).catch(() => false)) ? this.d.builtWithHera.url : null;
+    const { digest, files } = await sandbox.publishable(badge ? { decorate: (html) => withBuiltWithHera(html, badge) } : {});
     if (digest !== payload.contentHash) return { ok: false, detail: "The site changed after it was approved." };
 
     const token = decryptToken(Buffer.from(c.token_ct), c.data_key_id);

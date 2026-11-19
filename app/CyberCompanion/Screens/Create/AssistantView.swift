@@ -26,6 +26,8 @@ struct AssistantView: View {
     @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
     /// The "How Hera works" card shows until it's dismissed once.
     @AppStorage("seenHowHeraWorks") private var seenHowHeraWorks = false
+    /// Set when the upgrade card is closed, so it goes at once (it stays closed for the month).
+    @State private var nudgeDismissed = false
 
     /// Where the spoken "Talk to Hera" conversation is.
     private enum Conversation { case none, choosing, describing }
@@ -49,6 +51,9 @@ struct AssistantView: View {
                 hero
                     .id("top")
                 notices
+                if UpgradeNudge.shouldShow(model.pro.status) && !nudgeDismissed {
+                    upgradeNudge
+                }
                 VoiceOrb(isListening: voice.isListening, isBusy: isPreparingVoice,
                          isHeraSpeaking: model.speech.isSpeaking, level: voice.level) {
                     if model.speech.isSpeaking { stopHera() } else { Task { await toggleVoice() } }
@@ -438,6 +443,39 @@ struct AssistantView: View {
         if continuing || model.isContinuing(mode) {
             prompt = ""
             promptBeforeVoice = ""
+        }
+    }
+
+    /* ---------------- Hera Pro ---------------- */
+
+    /// Three quarters of the free month used: a gentle offer, closable for the rest of the month.
+    @ViewBuilder
+    private var upgradeNudge: some View {
+        if let status = model.pro.status {
+            HStack(alignment: .top, spacing: 12) {
+                IconTile(systemImage: "sparkles", size: 30)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(status.remaining) free \(status.remaining == 1 ? "request" : "requests") left this month")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Hera Pro gives you many more, and removes \u{201C}Made with Hera\u{201D} from posters and websites.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("See Hera Pro") { model.pro.showPlans = true }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.small)
+                        .padding(.top, 4)
+                }
+                Spacer(minLength: 0)
+                Button("Close", systemImage: "xmark") {
+                    UpgradeNudge.dismiss()
+                    withAnimation { nudgeDismissed = true }
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .glowCard()
+            .transition(.opacity)
         }
     }
 

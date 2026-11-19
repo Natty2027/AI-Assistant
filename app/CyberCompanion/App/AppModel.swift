@@ -159,7 +159,9 @@ final class AppModel {
         async let consent: Void = refreshConsent()
         async let accounts: Void = refreshConnections()
         async let pending: Void = refreshProposals()
-        _ = await (consent, accounts, pending)
+        // The plan and this month's requests, for the upgrade card and posters' "Made with Hera".
+        async let plan: Void = pro.refresh(client: client)
+        _ = await (consent, accounts, pending, plan)
     }
 
     /* ---------------- the assistant ---------------- */

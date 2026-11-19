@@ -45,6 +45,8 @@ struct PosterView: View {
     let size: PosterSize
     /// The photo the person attached, used when the poster asks for it.
     var photo: CGImage?
+    /// A small "Made with Hera" in the corner, on the free plan.
+    var madeWithHera = false
 
     private var canvas: CGSize { size.pixels }
     /// One "point" of the design: everything is sized in these, relative to the shorter side.
@@ -58,6 +60,7 @@ struct PosterView: View {
             content
                 .padding(.horizontal, 80 * unit)
                 .padding(.vertical, (isWide ? 56 : 96) * unit)
+            if madeWithHera { madeWithHeraMark }
         }
         .frame(width: canvas.width, height: canvas.height)
         .clipped()
@@ -215,6 +218,19 @@ struct PosterView: View {
             .shadow(color: .black.opacity(0.18), radius: 20 * unit, y: 8 * unit)
     }
 
+    /// Small and out of the way: bottom right, under the design's padding.
+    private var madeWithHeraMark: some View {
+        Text("Made with Hera")
+            .font(.system(size: 20 * unit, weight: .semibold, design: .rounded))
+            .foregroundStyle(ink.opacity(0.75))
+            .padding(.horizontal, 14 * unit)
+            .padding(.vertical, 6 * unit)
+            .background(.ultraThinMaterial.opacity(0.6), in: Capsule())
+            .padding(24 * unit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            .accessibilityHidden(true)
+    }
+
     nonisolated static func image(from data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -229,6 +245,7 @@ struct PosterExport: Transferable {
     let brand: BrandKit
     let size: PosterSize
     let photo: Data?
+    var madeWithHera = false
 
     static var transferRepresentation: some TransferRepresentation {
         DataRepresentation(exportedContentType: .png) { export in
@@ -240,7 +257,7 @@ struct PosterExport: Transferable {
 
     @MainActor
     func renderPNG() -> Data? {
-        let view = PosterView(poster: poster, brand: brand, size: size, photo: photo.flatMap(PosterView.image(from:)))
+        let view = PosterView(poster: poster, brand: brand, size: size, photo: photo.flatMap(PosterView.image(from:)), madeWithHera: madeWithHera)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 1
         renderer.proposedSize = ProposedViewSize(size.pixels)
@@ -276,7 +293,7 @@ struct PosterExport: Transferable {
                              callToAction: "RSVP today", footer: "claycorner.com", emoji: "🏡", usePhoto: false, problems: nil)
     let brand = BrandKit(businessName: "Clay Corner", primaryHex: "#1F6F5C", accentHex: "#F2A541")
     HStack(alignment: .top, spacing: 12) {
-        PosterView(poster: poster, brand: brand, size: .story).scaleEffect(0.16, anchor: .topLeading).frame(width: 173, height: 307, alignment: .topLeading)
+        PosterView(poster: poster, brand: brand, size: .story, madeWithHera: true).scaleEffect(0.16, anchor: .topLeading).frame(width: 173, height: 307, alignment: .topLeading)
         VStack(spacing: 12) {
             var minimal = poster
             let _ = (minimal.style = .minimal)
