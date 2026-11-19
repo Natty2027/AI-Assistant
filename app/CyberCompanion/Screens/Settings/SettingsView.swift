@@ -21,6 +21,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 account
+                if model.isConfigured { planSection }
                 if model.isConfigured { aiSection }
                 brandSection
                 if model.isConfigured { memorySection }
@@ -204,6 +205,42 @@ struct SettingsView: View {
         .onChange(of: eventReminders) { Task { await model.refreshReminders() } }
         .onChange(of: reminderLead) { Task { await model.refreshReminders() } }
         .onChange(of: spokenReminders) { Task { await model.refreshReminders() } }
+    }
+
+    /// Hera Pro: this month's requests, and upgrading or managing the subscription.
+    private var planSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                IconTile(systemImage: model.pro.status?.isPro == true ? "sparkles" : "person.fill", size: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.pro.status?.isPro == true ? "Hera Pro" : "Free")
+                    if let status = model.pro.status {
+                        Text(status.usageLine).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if model.pro.status?.isPro == true {
+                    Link("Manage", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                } else {
+                    Button("Upgrade") { model.pro.showPlans = true }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.small)
+                }
+            }
+            if let status = model.pro.status {
+                ProgressView(value: Double(min(status.used, status.limit)), total: Double(max(status.limit, 1)))
+                    .tint(status.remaining == 0 && status.enforced ? .orange : Theme.spectrum[1])
+                    .accessibilityLabel(status.usageLine)
+            }
+        } header: {
+            SectionLabel("Plan")
+        } footer: {
+            Text(model.pro.status?.resetsLine.map { "\($0). Each request to Hera counts as one: a website, a set of posts, a listing, a reply." }
+                 ?? "Each request to Hera counts as one: a website, a set of posts, a listing, a reply.")
+        }
+        .task { await model.pro.refresh(client: model.client) }
     }
 
     private var voiceSection: some View {

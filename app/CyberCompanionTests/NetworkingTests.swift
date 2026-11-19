@@ -116,6 +116,30 @@ struct NetworkingTests {
         }
     }
 
+    @Test func purchasesAreSentToTheServerWithTheServersFieldName() async throws {
+        StubProtocol.handler = { _ in
+            (200, #"{"plan":"pro","used":3,"limit":300,"resetsAt":null,"enforced":true,"proExpiresAt":"2026-12-19T00:00:00Z"}"#)
+        }
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        let status = try await client.redeemPurchase(signedTransaction: "header.payload.signature")
+        #expect(status.isPro)
+        let request = try #require(StubProtocol.requests.last)
+        #expect(request.url?.path() == "/billing/verify")
+        let body = StubProtocol.bodies.last.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
+        #expect(body?["signed_transaction"] == "header.payload.signature")
+    }
+
+    @Test func aUsedUpMonthComesBackAsTheLimitCode() async throws {
+        StubProtocol.handler = { _ in (402, #"{"error":"That's all 20 free requests for this month.","code":"limit_reached"}"#) }
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        do {
+            _ = try await client.runAssistant(request: "hi", mode: .posts, allowWebSearch: false)
+            Issue.record("expected the limit")
+        } catch let error as APIClient.APIError {
+            #expect(error.code == "limit_reached")
+        }
+    }
+
     @Test func requestsCarryTheTokenAndLanguage() async throws {
         StubProtocol.handler = { _ in (200, #"{"granted":true}"#) }
         let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "abc" }, session: StubProtocol.session)
@@ -144,9 +168,12 @@ private final class TokenBox: @unchecked Sendable {
 private final class StubProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: (URLRequest) -> (Int, String) = { _ in (404, "{}") }
     nonisolated(unsafe) static var requests: [URLRequest] = []
+    /// Each request's body. URLSession hands a protocol the body as a stream, not httpBody.
+    nonisolated(unsafe) static var bodies: [Data] = []
 
     static var session: URLSession {
         requests = []
+        bodies = []
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
         return URLSession(configuration: configuration)
@@ -157,6 +184,7 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         Self.requests.append(request)
+        Self.bodies.append(Self.read(request))
         let (status, body) = Self.handler(request)
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -165,4 +193,19 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+
+    private static func read(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let n = stream.read(&buffer, maxLength: buffer.count)
+            if n <= 0 { break }
+            data.append(buffer, count: n)
+        }
+        return data
+    }
 }

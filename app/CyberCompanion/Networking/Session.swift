@@ -37,6 +37,8 @@ final class Session {
 
     var isSignedIn: Bool { stored != nil }
     var email: String? { stored?.email }
+    /// The Hera account id (a UUID), which ties an App Store purchase to this account.
+    var userID: String? { stored?.userID }
 
     /// Supabase address and public key: the release values in AppConfig, else the ones entered
     /// under Settings → Advanced for development.

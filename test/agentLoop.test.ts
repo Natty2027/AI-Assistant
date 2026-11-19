@@ -297,3 +297,26 @@ test("write_post only accepts known platforms", async () => {
   assert.equal(out.drafts.length, 0);
   assert.match(lastResults(calls[1])[0].content, /INVALID_INPUT/);
 });
+
+test("websites and launches use the most capable model; shorter writing uses the faster, cheaper one", async () => {
+  const { MODEL_FOR, LIGHT_MODEL } = await import("../server/agent/loop.ts");
+  const seen: Record<string, any> = {};
+  for (const mode of ["site", "launch", "posts", "schedule"] as const) {
+    const client = { beta: { messages: { create: async (p: any) => {
+      seen[mode] = p;
+      return { id: "m", type: "message", role: "assistant", model: p.model, content: [{ type: "text", text: "ok" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } } as any;
+    } } } };
+    const { SiteSandbox } = await import("../server/agent/sandbox.ts");
+    const { ActionStore } = await import("../server/agent/approvals.ts");
+    const { makeCtx } = await import("./helpers/agentCtx.ts");
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const sandbox = await SiteSandbox.open(await mkdtemp(`${tmpdir()}/hera-model-`), "s-model");
+    await runAgent({ mode, client, store: new ActionStore(), sandbox, userId: "u1", context: () => makeCtx() } as any, "hi");
+  }
+  assert.equal(seen.site.model, AGENT_MODEL);
+  assert.equal(seen.launch.model, AGENT_MODEL);
+  assert.equal(seen.posts.model, LIGHT_MODEL);
+  assert.equal(seen.schedule.model, LIGHT_MODEL);
+  assert.equal(seen.posts.output_config.effort, MODEL_FOR.posts.effort);
+});

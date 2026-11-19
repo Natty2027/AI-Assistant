@@ -107,4 +107,14 @@ export const config = {
   ebayVerificationToken: opt("EBAY_VERIFICATION_TOKEN"),
   /** "sandbox" uses eBay's test site, where nothing is really sold. */
   ebaySandbox: opt("EBAY_ENV") === "sandbox",
+
+  /** Hera Pro and monthly limits. BILLING=on turns the limits on; until then nothing is stopped
+   *  (the subscription has to exist in App Store Connect first). */
+  billing: {
+    enforced: opt("BILLING") === "on",
+    freeLimit: Number(opt("FREE_REQUESTS_PER_MONTH") ?? 20),
+    proLimit: Number(opt("PRO_REQUESTS_PER_MONTH") ?? 300),
+    bundleId: opt("APP_BUNDLE_ID") ?? "com.natty2027.hera",
+    productIds: (opt("PRO_PRODUCT_IDS") ?? "com.natty2027.hera.pro.monthly,com.natty2027.hera.pro.yearly").split(",").map((p) => p.trim()).filter(Boolean),
+  },
 } as const;

@@ -34,6 +34,17 @@ type ToolResult = Anthropic.Beta.Messages.BetaToolResultBlockParam;
 type ToolUse = Anthropic.Beta.Messages.BetaToolUseBlock;
 
 export const AGENT_MODEL = "claude-opus-5-5";
+/** Faster and much cheaper: plenty for posts, posters, listings, emails, texts and the schedule. */
+export const LIGHT_MODEL = "claude-sonnet-5-5";
+/** Which model each kind of request uses. Websites and launches are long, many-file jobs where the
+ *  most capable model is worth its cost; everything else is short writing. A conversation keeps
+ *  its mode, so it never switches model halfway. */
+export const MODEL_FOR: Record<string, { model: string; effort: "high" | "medium" }> = {
+  site: { model: AGENT_MODEL, effort: "high" },
+  launch: { model: AGENT_MODEL, effort: "high" },
+  posts: { model: LIGHT_MODEL, effort: "medium" },
+  schedule: { model: LIGHT_MODEL, effort: "medium" },
+};
 /** Steps and tokens per request. A launch does the work of several requests in one, so it gets more. */
 const LIMITS: Record<string, { turns: number; tokens: number }> = {
   default: { turns: 20, tokens: 600_000 },
@@ -492,10 +503,10 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
   for (let turn = 1; turn <= limits.turns; turn++) {
     // Typed against the SDK, so a misnamed field fails the build rather than the request.
     const params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming = {
-      model: AGENT_MODEL,
+      model: (MODEL_FOR[deps.mode] ?? MODEL_FOR.site).model,
       max_tokens: OUTPUT_TOKENS[deps.mode] ?? OUTPUT_TOKENS.default,
       thinking: { type: "adaptive" },
-      output_config: { effort: "high" },
+      output_config: { effort: (MODEL_FOR[deps.mode] ?? MODEL_FOR.site).effort },
       // Route around a refusal with Anthropic's default fallback, rather than failing outright.
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",

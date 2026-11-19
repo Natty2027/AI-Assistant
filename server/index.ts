@@ -7,7 +7,7 @@
 import { createServer } from "node:http";
 import { config } from "./config.ts";
 import { closePool } from "./db.ts";
-import { buildRouter } from "./routes.ts";
+import { buildRouter, shutdown } from "./routes.ts";
 import { refreshSigningKeys } from "./auth.ts";
 
 if (config.devUserId && process.env.RAILWAY_ENVIRONMENT) {
@@ -45,8 +45,19 @@ server.listen(config.port, "0.0.0.0", () => {
   console.log(`cyber-companion api listening on :${config.port}`);
 });
 
+// Railway sends SIGTERM, then stops the process RAILWAY_DEPLOYMENT_DRAINING_SECONDS later. Use
+// that time to let Hera finish what she's doing (a website can take ten minutes), keeping a few
+// seconds to close cleanly. The new deployment already answers the app meanwhile.
+const drainMs = Math.max(0, (Number(process.env.RAILWAY_DEPLOYMENT_DRAINING_SECONDS) || 0) * 1000 - 5000);
+let stopping = false;
 for (const sig of ["SIGTERM", "SIGINT"] as const) {
   process.on(sig, () => {
-    server.close(async () => { await closePool(); process.exit(0); });
+    if (stopping) return;
+    stopping = true;
+    void shutdown(drainMs).finally(() => {
+      server.close(async () => { await closePool(); process.exit(0); });
+      // Keep-alive connections can hold close() open; don't wait on them forever.
+      setTimeout(() => process.exit(0), 5000).unref();
+    });
   });
 }

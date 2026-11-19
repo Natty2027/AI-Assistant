@@ -21,6 +21,8 @@ final class AppModel {
     let schedule = ScheduleManager()
     /// Alerts before calendar events, with Hera saying what's coming up.
     let reminders = EventReminders()
+    /// Hera Pro: the subscription and this month's requests.
+    let pro = HeraPro()
     /// The business's name, colors and logo, used on every poster.
     let brand = BrandKitStore()
     /// The photo sent with the latest run, so its posters can use it.
@@ -187,6 +189,8 @@ final class AppModel {
                                                     receivedText: shared)
             // Hera has it now, in this conversation; it isn't sent again with the next reply.
             if shared != nil { receivedText = nil }
+            // One more request used this month.
+            Task { await pro.refresh(client: client) }
             lastRun = run
             conversation = run.conversationId.map { ($0, mode) }
             // A new task uses its own photo; a reply keeps the task's photo unless it brings a new one.
@@ -436,6 +440,8 @@ final class AppModel {
             return false
         } catch {
             errorMessage = RetryPolicy.message(for: error)
+            // This month's requests are used up: offer Hera Pro.
+            if case APIClient.APIError.server(_, _, "limit_reached", _) = error { pro.showPlans = true }
             return false
         }
     }

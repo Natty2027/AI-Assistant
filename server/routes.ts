@@ -13,22 +13,41 @@ import { assertUuid, ProviderError } from "./shared.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentService } from "./agent/service.ts";
 import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
-import { ActionError } from "./agent/approvals.ts";
+import { ActionError, ActionStore, sqlProposalSink } from "./agent/approvals.ts";
 import { SandboxError } from "./agent/sandbox.ts";
 import { isOAuthProvider } from "./agent/oauth.ts";
 import { challengeResponse } from "./agent/ebay.ts";
-import { RunJobs, type RunFailure } from "./agent/runs.ts";
+import { RunJobs, sqlRunSink, type RunFailure } from "./agent/runs.ts";
+import { Billing, BillingError } from "./billing.ts";
 
 const writeLimiter = createLimiter({ windowMs: 60_000, max: 20 });
 // Each assistant run can be many model calls, so it gets a much tighter budget.
 const agentRunLimiter = createLimiter({ windowMs: 3_600_000, max: 10 });
 
 let agentService: AgentService | null = null;
-/** One per process: it owns the in-memory proposal store (see approvals.ts on persistence). */
+/** Resolves once saved proposals are back in memory after a restart. */
+let agentReady: Promise<void> = Promise.resolve();
+const sqlRun = (sql: string, params?: unknown[]) => query(sql, params ?? []) as Promise<{ rows: any[] }>;
+
+/** One per process: it owns the proposal store, which writes through to the database. */
 function agent(): AgentService {
   if (!dbConfigured()) throw new HttpError(503, "The assistant needs the database, which isn't connected yet.");
-  agentService ??= new AgentService({
-    run: (sql, params) => query(sql, params ?? []) as Promise<{ rows: any[] }>,
+  if (!agentService) {
+    const sink = sqlProposalSink(sqlRun);
+    const store = new ActionStore(undefined, sink);
+    agentReady = sink.load().then((saved) => store.restore(saved)).catch((e) => {
+      // Before migration 007 there's nowhere to save them: proposals then live in memory only.
+      console.error("[approvals] couldn't load saved proposals (has db/migrations/007 been run?)", e instanceof Error ? e.message : e);
+    });
+    agentService = makeService(store);
+  }
+  return agentService;
+}
+
+function makeService(store: ActionStore): AgentService {
+  return new AgentService({
+    store,
+    run: sqlRun,
     fetch: (url, init) => fetch(url, init),
     sitesDir: config.sitesDir,
     mediaDir: config.mediaDir,
@@ -37,7 +56,6 @@ function agent(): AgentService {
     // maxRetries 0: the agent loop retries through withAiRetry, so the SDK must not retry too.
     client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 }) : null,
   });
-  return agentService;
 }
 
 /** Turns the agent's typed failures into HTTP answers a person can read. */
@@ -50,7 +68,8 @@ function agentFailure(e: unknown): never {
   if (e instanceof ProviderError) throw new HttpError(502, "The service could not complete that. Try again shortly.", true, "provider_unavailable");
   throw e;
 }
-const guarded = <T>(fn: () => Promise<T> | T): Promise<T> => Promise.resolve().then(fn).catch(agentFailure);
+// Waits for saved proposals to be loaded, so nothing reads the store half-restored.
+const guarded = <T>(fn: () => Promise<T> | T): Promise<T> => agentReady.then(fn).catch(agentFailure);
 
 /** What the app is told when a background run fails: the same answers as a direct request. */
 function runFailure(e: unknown): RunFailure {
@@ -58,7 +77,30 @@ function runFailure(e: unknown): RunFailure {
   console.error("[run failed]", e instanceof Error ? `${e.name}: ${e.message.slice(0, 300)}` : "unknown error");
   return { status: 500, message: "Something went wrong on our side. Please try again.", code: "run_failed" };
 }
-const runJobs = new RunJobs(runFailure);
+const billing = new Billing(sqlRun, config.billing);
+
+/** Billing's refusals as answers the app understands: 402 for a used-up month. */
+async function billed<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof BillingError) throw new HttpError(e.code === "limit_reached" ? 402 : 400, e.message, true, e.code);
+    // Before migration 008 there's nowhere to count; with limits off, that's no reason to fail.
+    if (!config.billing.enforced && (e as { code?: string })?.code === "42P01") return undefined as T;
+    throw e;
+  }
+}
+
+const runJobs = new RunJobs(runFailure, undefined, undefined, sqlRunSink(sqlRun));
+
+/**
+ * A deploy or restart: stop taking new requests to Hera, let the ones in flight finish (up to
+ * `maxMs`), and make sure every proposal change has been saved.
+ */
+export async function shutdown(maxMs: number): Promise<void> {
+  await runJobs.drain(maxMs);
+  await agentService?.store.flush();
+}
 
 /** user_settings is created lazily; every table keys on it, so make sure the row exists. */
 async function ensureSettings(userId: string): Promise<void> {
@@ -92,10 +134,10 @@ async function requireAiConsent(userId: string): Promise<void> {
 const USER_DATA_TABLES = [
   "safety_events", "habit_observations", "habit_profiles", "proposed_events",
   "events_cache", "connection_disclosures", "oauth_connections", "action_connections",
-  "agent_conversations", "agent_memories", "user_settings",
+  "agent_conversations", "agent_memories", "agent_proposals", "agent_runs", "user_plans", "agent_usage", "user_settings",
 ] as const;
 /** Added by a later migration; skipped, not failed on, in a database that doesn't have them yet. */
-const OPTIONAL_TABLES = new Set<string>(["agent_conversations", "agent_memories"]);
+const OPTIONAL_TABLES = new Set<string>(["agent_conversations", "agent_memories", "agent_proposals", "agent_runs", "user_plans", "agent_usage"]);
 
 /* ------------------------------ routes ------------------------------ */
 
@@ -302,6 +344,8 @@ export function buildRouter(): Router {
     await requireAiConsent(userId);
     // Counted only once the run can actually happen, so refused requests don't use up the hour.
     if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
+    // This month's requests: counted now, refused when used up (only once BILLING is on).
+    await billed(() => billing.useOne(userId));
     return async () => {
       const out = await guarded(() => agent().run(userId, request, {
         mode: mode as AgentMode, allowWebSearch: body.allow_web_search === true,
@@ -328,6 +372,7 @@ export function buildRouter(): Router {
   /** Starts a request in the background and returns its id; the app checks /agent/runs/:id. */
   r.post("/agent/runs", async (ctx) => {
     const userId = requireAuth(ctx);
+    if (runJobs.draining) throw new HttpError(503, "Hera is updating. Try again in a minute.", true, "updating");
     if (runJobs.isRunning(userId)) throw new HttpError(409, "Hera is still working on your last request. Wait for it to finish, then try again.", true, "run_in_progress");
     const work = await prepareRun(userId, ctx.body);
     return { run_id: runJobs.start(userId, work) };
@@ -336,10 +381,24 @@ export function buildRouter(): Router {
   r.get("/agent/runs/:id", async (ctx) => {
     const userId = requireAuth(ctx);
     assertUuid(ctx.params.id);
-    const state = runJobs.get(userId, ctx.params.id);
+    const state = await runJobs.find(userId, ctx.params.id);
     if (!state) throw new HttpError(404, "Hera lost track of that request, probably because the server restarted. Please send it again.", true, "run_lost");
     if (state.status === "failed") throw new HttpError(state.failure.status, state.failure.message, true, state.failure.code);
     return state.status === "running" ? { status: "running" } : { status: "finished", result: state.result };
+  });
+
+  /* ---- Hera Pro: the plan, this month's requests, and redeeming an App Store purchase ---- */
+
+  r.get("/billing/status", async (ctx) => {
+    const userId = requireAuth(ctx);
+    return (await billed(() => billing.status(userId))) ?? { plan: "free", used: 0, limit: config.billing.freeLimit, resetsAt: null, enforced: false, proExpiresAt: null };
+  });
+
+  r.post("/billing/verify", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    await ensureSettings(userId);
+    return await billed(() => billing.redeem(userId, ctx.body.signed_transaction));
   });
 
   /* ---- what Hera remembers: the person sees, adds and deletes these in Settings ---- */

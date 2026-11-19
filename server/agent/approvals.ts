@@ -80,17 +80,71 @@ export function formatCents(cents: number): string {
 }
 
 /**
- * In-memory store. One process, one owner of state, so the status transitions below are atomic
- * (no await between the check and the write). Lost on restart, which fails safe: an approved
- * action that never ran simply has to be proposed again. Move to the database, with the same
- * conditional-update pattern, before running more than one server instance.
+ * Where proposals are kept between restarts: every change is written through (in order, per
+ * proposal) and everything is read back when the server starts. The store itself stays the one
+ * owner of state, so the status transitions below remain atomic (no await between the check and
+ * the write). One server instance only: two would each have their own copy in memory.
+ */
+export interface ProposalSink {
+  save(p: Proposal, tokenHash: Buffer | null): Promise<void>;
+  remove(userId: string): Promise<void>;
+}
+
+/** A saved proposal as the sink stores it (dates as ISO strings). */
+export interface SavedProposal { proposal: Record<string, any>; tokenHash: Buffer | null }
+
+/**
+ * Proposals and approvals. In memory for speed and atomicity, written through to a sink (the
+ * database) so a restart or a deploy doesn't lose what's waiting for the person's approval.
  */
 export class ActionStore {
   private proposals = new Map<string, Proposal>();
   private tokens = new Map<string, Buffer>(); // proposal id -> sha256(token)
   private log: AuditEntry[] = [];
+  private writes = new Map<string, Promise<void>>();
 
-  constructor(private readonly clock: () => Date = () => new Date()) {}
+  constructor(private readonly clock: () => Date = () => new Date(), private readonly sink: ProposalSink | null = null) {}
+
+  /** Writes this proposal's current state, after any earlier write for it. Never throws: a failed
+   *  write is logged, and the proposal still works until the next restart. */
+  private changed(p: Proposal): void {
+    if (!this.sink) return;
+    const snapshot = { ...p, payload: p.payload, checks: [...p.checks] };
+    const token = this.tokens.get(p.id) ?? null;
+    const next = (this.writes.get(p.id) ?? Promise.resolve())
+      .then(() => this.sink!.save(snapshot, token))
+      .catch((e) => console.error("[approvals] couldn't save a proposal", e instanceof Error ? e.message : e));
+    this.writes.set(p.id, next);
+    void next.then(() => { if (this.writes.get(p.id) === next) this.writes.delete(p.id); });
+  }
+
+  /** Waits for every pending write (shutdown, tests). */
+  async flush(): Promise<void> {
+    await Promise.all([...this.writes.values()]);
+  }
+
+  /**
+   * Puts saved proposals back after a restart. One that was being carried out when the server
+   * stopped is marked failed rather than run again: it may have partly happened.
+   */
+  restore(saved: SavedProposal[]): void {
+    for (const { proposal: raw, tokenHash } of saved) {
+      const date = (v: unknown) => (v ? new Date(String(v)) : undefined);
+      const p = {
+        ...raw,
+        payload: deepFreeze(structuredClone(raw.payload)),
+        createdAt: date(raw.createdAt)!, expiresAt: date(raw.expiresAt)!,
+        approvedAt: date(raw.approvedAt), approvalExpiresAt: date(raw.approvalExpiresAt),
+      } as Proposal;
+      if (p.status === "executing") {
+        p.status = "failed";
+        p.result = { ok: false, detail: "Hera was restarted while this was being carried out, so it may or may not have gone through. Check the account, and ask Hera again if it isn't there." };
+        this.changed(p);
+      }
+      this.proposals.set(p.id, p);
+      if (tokenHash && p.status === "approved") this.tokens.set(p.id, tokenHash);
+    }
+  }
 
   private audit(p: Proposal, event: AuditEntry["event"], detail: string): void {
     this.log.push(Object.freeze({ at: this.clock(), userId: p.userId, proposalId: p.id, kind: p.kind, event, payloadHash: p.payloadHash, detail }));
@@ -120,6 +174,7 @@ export class ActionStore {
     };
     this.proposals.set(p.id, p);
     this.audit(p, p.status === "blocked" ? "blocked" : "proposed", checks.map((c) => c.id).join(",") || "no issues");
+    this.changed(p);
     return p;
   }
 
@@ -129,6 +184,7 @@ export class ActionStore {
     if (!p || p.userId !== userId) throw new ActionError("not_found", "No such proposal.");
     if ((p.status === "pending" || p.status === "approved") && this.clock() > p.expiresAt) {
       p.status = "expired";
+      this.changed(p);
     }
     return p;
   }
@@ -145,6 +201,7 @@ export class ActionStore {
       this.proposals.delete(id);
       this.tokens.delete(id);
     }
+    if (this.sink) void this.sink.remove(userId).catch((e) => console.error("[approvals] couldn't delete proposals", e instanceof Error ? e.message : e));
   }
 
   /** Returns a single-use token. Only the user's client holds it; it is never logged. */
@@ -175,6 +232,7 @@ export class ActionStore {
     p.approvalExpiresAt = new Date(now.getTime() + APPROVAL_TTL_MS);
     this.tokens.set(p.id, sha(token));
     this.audit(p, "approved", (args.attestations ?? []).join(",") || "approved");
+    this.changed(p);
     return { token, expiresAt: p.approvalExpiresAt };
   }
 
@@ -184,6 +242,7 @@ export class ActionStore {
     p.status = "rejected";
     this.tokens.delete(p.id);
     this.audit(p, "rejected", "rejected by user");
+    this.changed(p);
   }
 
   /** Runs the action exactly once, after re-checking everything against the current state. */
@@ -191,6 +250,7 @@ export class ActionStore {
     const p = this.get(args.id, args.userId);
     const refuse = (code: string, msg: string): never => {
       this.audit(p, "refused", code);
+      this.changed(p);
       throw new ActionError(code, msg);
     };
     if (p.status !== "approved") refuse("not_approved", `This proposal is ${p.status}.`);
@@ -216,6 +276,7 @@ export class ActionStore {
     // Claim it before doing anything external: a second execute, even with the same token, now fails.
     p.status = "executing";
     this.tokens.delete(p.id);
+    this.changed(p);
     let result: ExecutionResult;
     try {
       result = await args.executor(p.kind, p.payload);
@@ -227,6 +288,7 @@ export class ActionStore {
     // A failure is not retried automatically: it may have partly happened. Propose it again.
     p.status = result.ok ? "executed" : "failed";
     this.audit(p, result.ok ? "executed" : "failed", result.detail.slice(0, 200));
+    this.changed(p);
     return p;
   }
 
@@ -251,4 +313,25 @@ export class ActionStore {
     }
     return { usageToday, spentThisMonthCents };
   }
+}
+
+/** The database sink: one row per proposal, its whole record as JSON. Server-only table. */
+export function sqlProposalSink(run: (sql: string, params: unknown[]) => Promise<{ rows: any[] }>): ProposalSink & { load(): Promise<SavedProposal[]> } {
+  return {
+    async save(p, tokenHash) {
+      await run(
+        `insert into agent_proposals (id, user_id, record, token_hash, updated_at) values ($1, $2, $3, $4, now())
+         on conflict (id) do update set record = excluded.record, token_hash = excluded.token_hash, updated_at = now()`,
+        [p.id, p.userId, JSON.stringify(p), tokenHash]);
+    },
+    async remove(userId) {
+      await run(`delete from agent_proposals where user_id = $1`, [userId]);
+    },
+    async load() {
+      // A week is long past every proposal's own expiry; older ones are only history.
+      await run(`delete from agent_proposals where updated_at < now() - interval '7 days'`, []);
+      const { rows } = await run(`select record, token_hash from agent_proposals`, []);
+      return rows.map((r) => ({ proposal: typeof r.record === "string" ? JSON.parse(r.record) : r.record, tokenHash: r.token_hash ? Buffer.from(r.token_hash) : null }));
+    },
+  };
 }

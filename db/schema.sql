@@ -448,3 +448,58 @@ create policy org_admin_reads_audit on audit_log
   );
 
 -- No policy grants INSERT on oauth_connections to authenticated; the server role only.
+
+-- ============================================================
+-- Approvals and finished runs (see migrations/007)
+-- ============================================================
+
+-- Proposals waiting for (or past) the person's approval: the whole record, and the hash of a live
+-- approval token (never the token itself). Server-only.
+create table if not exists agent_proposals (
+  id          text primary key,
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  record      jsonb not null,
+  token_hash  bytea,
+  updated_at  timestamptz not null default now()
+);
+create index if not exists agent_proposals_user on agent_proposals (user_id);
+revoke all on agent_proposals from anon, authenticated;
+alter table agent_proposals enable row level security;
+
+-- A finished background run's answer, kept for half an hour for the app to collect. Server-only.
+create table if not exists agent_runs (
+  id          uuid primary key,
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  state       jsonb not null,
+  ended_at    timestamptz not null default now()
+);
+create index if not exists agent_runs_ended on agent_runs (ended_at);
+revoke all on agent_runs from anon, authenticated;
+alter table agent_runs enable row level security;
+
+-- ============================================================
+-- Hera Pro and monthly request counts (see migrations/008)
+-- ============================================================
+
+-- The person's Pro subscription, from a verified App Store purchase. One subscription belongs to
+-- one Hera account. Server-only.
+create table if not exists user_plans (
+  user_id                  uuid primary key references auth.users(id) on delete cascade,
+  product_id               text not null,
+  original_transaction_id  text not null unique,
+  expires_at               timestamptz not null,
+  environment              text not null,
+  updated_at               timestamptz not null default now()
+);
+revoke all on user_plans from anon, authenticated;
+alter table user_plans enable row level security;
+
+-- Requests to Hera per person per month (YYYY-MM, UTC), for the monthly limit. Server-only.
+create table if not exists agent_usage (
+  user_id   uuid not null references auth.users(id) on delete cascade,
+  month     text not null check (month ~ '^\d{4}-\d{2}$'),
+  requests  integer not null default 0,
+  primary key (user_id, month)
+);
+revoke all on agent_usage from anon, authenticated;
+alter table agent_usage enable row level security;

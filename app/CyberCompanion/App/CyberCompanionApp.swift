@@ -30,6 +30,8 @@ struct CyberCompanionApp: App {
                 .environment(model)
                 .environment(conversations)
                 .task { await model.refreshAll() }
+                // Purchases, renewals and refunds, sent to the server as they happen.
+                .task { model.pro.start { model.client } }
                 // An event added, moved or deleted anywhere (Calendar, Outlook, Gmail, Hera)
                 // updates the widget and the reminders.
                 .task {

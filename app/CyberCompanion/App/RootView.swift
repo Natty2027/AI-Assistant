@@ -22,6 +22,7 @@ struct RootView: View {
                 .onChange(of: conversations.isPending, initial: true) { _, pending in
                     if pending { selection = .create }
                 }
+                .sheet(isPresented: Bindable(model.pro).showPlans) { PlanSheet() }
         }
     }
 

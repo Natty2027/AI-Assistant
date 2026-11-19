@@ -97,6 +97,18 @@ struct APIClient: Sendable {
                               code: "run_slow", requestID: nil)
     }
 
+    /* ---------------- Hera Pro ---------------- */
+
+    func planStatus() async throws -> PlanStatus {
+        try await send("GET", "billing/status")
+    }
+
+    /// Sends an App Store signed transaction; the server checks Apple's signature and returns the plan.
+    func redeemPurchase(signedTransaction: String) async throws -> PlanStatus {
+        struct Body: Encodable { let signedTransaction: String }
+        return try await send("POST", "billing/verify", body: Body(signedTransaction: signedTransaction))
+    }
+
     /// Uploads a JPEG for the next posts run and returns its id.
     func uploadPhoto(jpeg: Data) async throws -> String {
         struct Body: Encodable { let data: String }
