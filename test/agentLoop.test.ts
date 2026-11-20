@@ -78,7 +78,7 @@ test("a website run builds the site and ends with a proposal the user must appro
   assert.equal(req.fallbacks, "default");
   assertNoActingTools(req);
   assert.deepEqual(req.tools.map((t: any) => t.name).sort(),
-    ["add_photo_to_site", "ask_user", "check_site", "draft_email", "draft_text", "list_site_files", "propose_site_deploy", "read_site_file", "remember", "write_site_file"]);
+    ["add_calendar_file", "add_photo_to_site", "ask_user", "check_site", "draft_email", "draft_text", "list_site_files", "propose_site_deploy", "read_site_file", "remember", "write_site_file"]);
   assert.match(req.system, /only for the website/);
   assert.match(req.system, /Never write reviews, testimonials/);
 });

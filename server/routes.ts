@@ -102,7 +102,20 @@ const runJobs = new RunJobs(runFailure, undefined, undefined, sqlRunSink(sqlRun)
  * A deploy or restart: stop taking new requests to Hera, let the ones in flight finish (up to
  * `maxMs`), and make sure every proposal change has been saved.
  */
+/** Posts scheduled posts when their time comes: checks every minute once the server is up. */
+let scheduler: ReturnType<typeof setInterval> | null = null;
+export function startScheduler(): void {
+  if (scheduler || !dbConfigured()) return;
+  scheduler = setInterval(() => {
+    void agentReady.then(() => agent().runDue()).catch((e) => console.error("[schedule]", e instanceof Error ? e.message : e));
+  }, 60_000);
+  scheduler.unref();
+  // Load saved proposals now, so posts due during a restart go out within a minute.
+  agent();
+}
+
 export async function shutdown(maxMs: number): Promise<void> {
+  if (scheduler) { clearInterval(scheduler); scheduler = null; }
   await runJobs.drain(maxMs);
   await agentService?.store.flush();
 }
@@ -377,6 +390,8 @@ export function buildRouter(): Router {
         brand: body.brand,
         // A text message the person received and shared, to explain or help answer.
         receivedText: body.received_text,
+        // The person's clock, for "Friday at 9" and scheduled posts.
+        localTime: body.local_time,
       }));
       return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, emailDrafts: out.emailDrafts, textDrafts: out.textDrafts, posterDrafts: out.posterDrafts, tainted: out.tainted, conversationId: out.conversationId };
     };
@@ -462,6 +477,13 @@ export function buildRouter(): Router {
     const userId = requireAuth(ctx);
     if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
     return { ok: true, proposal: await guarded(() => agent().execute(userId, ctx.params.id, ctx.body.token)) };
+  });
+
+  /** A post approved to go out at its time: the approval token is used up here. */
+  r.post("/agent/proposals/:id/schedule", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    return { ok: true, proposal: await guarded(() => agent().schedulePost(userId, ctx.params.id, ctx.body.token)) };
   });
 
   r.post("/agent/proposals/:id/reject", async (ctx) => {

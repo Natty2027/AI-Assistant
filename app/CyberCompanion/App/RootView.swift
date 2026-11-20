@@ -23,6 +23,22 @@ struct RootView: View {
                     if pending { selection = .create }
                 }
                 .sheet(isPresented: Bindable(model.pro).showPlans) { PlanSheet() }
+                // An email reminder was tapped: the email, ready to send.
+                .sheet(item: Bindable(model).remindedEmail) { draft in
+                    NavigationStack {
+                        ScrollView { EmailDraftCard(draft: draft).padding() }
+                            .navigationTitle("Your email")
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button("Done") {
+                                        EmailReminders.cancel(draft.id)
+                                        model.remindedEmail = nil
+                                    }
+                                }
+                            }
+                    }
+                    .frame(minWidth: 420, minHeight: 520)
+                }
         }
     }
 

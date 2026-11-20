@@ -207,6 +207,7 @@ struct StatusPill: View {
         case "rejected": "Declined"
         case "expired": "Expired"
         case "approved", "executing": "Publishing…"
+        case "scheduled": "Scheduled"
         default: status.capitalized
         }
     }
@@ -217,6 +218,7 @@ struct StatusPill: View {
         case "executed": .green
         case "blocked", "failed": .red
         case "approved", "executing": Theme.spectrum[2]
+        case "scheduled": Theme.spectrum[1]
         default: .secondary
         }
     }

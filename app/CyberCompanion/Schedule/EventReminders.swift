@@ -247,13 +247,20 @@ final class EventReminders {
 /// and when the person taps one (she says it again).
 final class ReminderDelivery: NSObject, UNUserNotificationCenterDelegate, Sendable {
     private let speak: @MainActor @Sendable (String) -> Void
+    private let openEmail: @MainActor @Sendable (String) -> Void
 
-    init(speak: @escaping @MainActor @Sendable (String) -> Void) {
+    init(speak: @escaping @MainActor @Sendable (String) -> Void, openEmail: @escaping @MainActor @Sendable (String) -> Void = { _ in }) {
         self.speak = speak
+        self.openEmail = openEmail
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        // "Time to send your email": Hera says so, and the banner stays tappable.
+        if notification.request.identifier.hasPrefix(EmailReminders.idPrefix) {
+            if let spoken = notification.request.content.userInfo["spoken"] as? String { await speak(spoken) }
+            return [.banner, .list]
+        }
         guard notification.request.identifier.hasPrefix(EventReminderPlanner.idPrefix),
               EventReminders.speaks, let spoken = notification.request.content.userInfo["spoken"] as? String else {
             return [.banner, .list, .sound]
@@ -263,6 +270,13 @@ final class ReminderDelivery: NSObject, UNUserNotificationCenterDelegate, Sendab
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        // Tapping an email reminder opens that email, ready to send.
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           response.notification.request.identifier.hasPrefix(EmailReminders.idPrefix),
+           let id = response.notification.request.content.userInfo["emailId"] as? String {
+            await openEmail(id)
+            return
+        }
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
               response.notification.request.identifier.hasPrefix(EventReminderPlanner.idPrefix),
               let spoken = response.notification.request.content.userInfo["spoken"] as? String else { return }

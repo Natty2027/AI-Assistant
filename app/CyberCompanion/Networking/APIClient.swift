@@ -60,7 +60,10 @@ struct APIClient: Sendable {
             let brand: RunBrand?
             /// A text message the person received and shared, to explain or help answer.
             let receivedText: String?
+            /// This device's clock, for "Friday at 9" and scheduled posts.
+            let localTime: LocalTime
         }
+        struct LocalTime: Encodable { let now: String; let timeZone: String }
         struct Started: Decodable {
             let runId: String
             enum CodingKeys: String, CodingKey { case runId = "run_id" }
@@ -71,7 +74,8 @@ struct APIClient: Sendable {
         }
         let body = Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID,
                         schedule: schedule, conversationId: conversationID, brand: brand,
-                        receivedText: receivedText)
+                        receivedText: receivedText,
+                        localTime: LocalTime(now: HeraTime.nowWithOffset(), timeZone: TimeZone.current.identifier))
         let started: Started
         do {
             started = try await send("POST", "agent/runs", body: body, timeout: 60)
@@ -131,6 +135,13 @@ struct APIClient: Sendable {
     func execute(_ proposal: Proposal, token approvalToken: String) async throws -> Proposal {
         struct Body: Encodable { let token: String }
         let out: ProposalResponse = try await send("POST", "agent/proposals/\(proposal.id)/execute", body: Body(token: approvalToken), timeout: 120)
+        return out.proposal
+    }
+
+    /// An approved post with a time: the server holds it and posts it then.
+    func schedule(_ proposal: Proposal, token approvalToken: String) async throws -> Proposal {
+        struct Body: Encodable { let token: String }
+        let out: ProposalResponse = try await send("POST", "agent/proposals/\(proposal.id)/schedule", body: Body(token: approvalToken))
         return out.proposal
     }
 

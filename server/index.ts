@@ -7,7 +7,7 @@
 import { createServer } from "node:http";
 import { config } from "./config.ts";
 import { closePool } from "./db.ts";
-import { buildRouter, shutdown } from "./routes.ts";
+import { buildRouter, shutdown, startScheduler } from "./routes.ts";
 import { refreshSigningKeys } from "./auth.ts";
 
 if (config.devUserId && process.env.RAILWAY_ENVIRONMENT) {
@@ -43,6 +43,7 @@ server.keepAliveTimeout = 10_000;
 
 server.listen(config.port, "0.0.0.0", () => {
   console.log(`cyber-companion api listening on :${config.port}`);
+  startScheduler();
 });
 
 // Railway sends SIGTERM, then stops the process RAILWAY_DEPLOYMENT_DRAINING_SECONDS later. Use

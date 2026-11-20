@@ -20,7 +20,9 @@ struct CyberCompanionApp: App {
         // before any screen appears, and an unregistered dependency is a crash.
         AppDependencyManager.shared.add(dependency: conversations)
         // Also before launch finishes, so tapping a reminder that opened the app is still heard.
-        reminderDelivery = ReminderDelivery { [weak model] spoken in model?.speech.speak(spoken) }
+        reminderDelivery = ReminderDelivery(
+            speak: { [weak model] spoken in model?.speech.speak(spoken) },
+            openEmail: { [weak model] id in model?.openRemindedEmail(id) })
         UNUserNotificationCenter.current().delegate = reminderDelivery
     }
 

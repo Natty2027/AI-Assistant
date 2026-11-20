@@ -44,6 +44,8 @@ final class AppModel {
     /// A text message the person pasted or shared to Hera: read aloud, and sent with the next
     /// request so Hera can explain it or write the reply.
     var receivedText: String?
+    /// An email whose "time to send" reminder was tapped: shown, ready to send.
+    var remindedEmail: EmailDraft?
     /// Lasting facts Hera remembers, shown in Settings.
     var memories: [Memory] = []
 
@@ -205,6 +207,13 @@ final class AppModel {
         }
     }
 
+    /// From a tapped email reminder: opens that email, and Hera says what it is.
+    func openRemindedEmail(_ id: String) {
+        guard let draft = EmailReminders.email(id) else { return }
+        remindedEmail = draft
+        speech.speak(EmailReminders.spoken(for: draft))
+    }
+
     /* ---------------- texts the person received ---------------- */
 
     /// A text pasted or shared to Hera: kept for the next request and read out.
@@ -311,7 +320,10 @@ final class AppModel {
         var updated: Proposal?
         await perform {
             let approval = try await client.approve(proposal, attestations: attestations, acknowledgeTaint: acknowledgeTaint)
-            updated = try await client.execute(proposal, token: approval.token)
+            // A post with a time is held by the server until then; anything else goes now.
+            updated = proposal.postAt != nil
+                ? try await client.schedule(proposal, token: approval.token)
+                : try await client.execute(proposal, token: approval.token)
             proposals = try await client.proposals()
         }
         await refreshWidget()

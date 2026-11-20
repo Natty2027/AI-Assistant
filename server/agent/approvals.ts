@@ -23,7 +23,7 @@ import {
   type ActionKind, type Check, type Context,
 } from "./policy.ts";
 
-export type Status = "pending" | "blocked" | "approved" | "executing" | "executed" | "failed" | "rejected" | "expired";
+export type Status = "pending" | "blocked" | "approved" | "scheduled" | "executing" | "executed" | "failed" | "rejected" | "expired";
 
 export interface Proposal {
   id: string;
@@ -40,6 +40,8 @@ export interface Proposal {
   expiresAt: Date;
   approvedAt?: Date;
   approvalExpiresAt?: Date;
+  /** Approved to go out at this time (a scheduled post). */
+  scheduledFor?: Date;
   result?: { ok: boolean; ref?: string; detail: string };
 }
 
@@ -88,6 +90,11 @@ export function formatCents(cents: number): string {
 export interface ProposalSink {
   save(p: Proposal, tokenHash: Buffer | null): Promise<void>;
   remove(userId: string): Promise<void>;
+  /** Marks a scheduled proposal as being carried out, if it still is scheduled. False when
+   *  another server already took it (during a deploy two run for a while). */
+  claim?(id: string): Promise<boolean>;
+  /** One proposal as saved, to catch up after another server changed it. */
+  loadOne?(id: string): Promise<SavedProposal | null>;
 }
 
 /** A saved proposal as the sink stores it (dates as ISO strings). */
@@ -134,7 +141,7 @@ export class ActionStore {
         ...raw,
         payload: deepFreeze(structuredClone(raw.payload)),
         createdAt: date(raw.createdAt)!, expiresAt: date(raw.expiresAt)!,
-        approvedAt: date(raw.approvedAt), approvalExpiresAt: date(raw.approvalExpiresAt),
+        approvedAt: date(raw.approvedAt), approvalExpiresAt: date(raw.approvalExpiresAt), scheduledFor: date(raw.scheduledFor),
       } as Proposal;
       if (p.status === "executing") {
         p.status = "failed";
@@ -238,16 +245,17 @@ export class ActionStore {
 
   reject(id: string, userId: string): void {
     const p = this.get(id, userId);
-    if (p.status !== "pending" && p.status !== "approved") throw new ActionError("not_pending", `This proposal is ${p.status}.`);
+    // A scheduled post can be cancelled any time before it goes out.
+    if (p.status !== "pending" && p.status !== "approved" && p.status !== "scheduled") throw new ActionError("not_pending", `This proposal is ${p.status}.`);
     p.status = "rejected";
     this.tokens.delete(p.id);
     this.audit(p, "rejected", "rejected by user");
     this.changed(p);
   }
 
-  /** Runs the action exactly once, after re-checking everything against the current state. */
-  async execute(args: { id: string; userId: string; token: string; ctx: Context; executor: Executor }): Promise<Proposal> {
-    const p = this.get(args.id, args.userId);
+  /** Everything that must hold before an approved proposal may go ahead: the right token, still
+   *  valid, the payload unchanged, and every rule passing now. Throws (and logs) otherwise. */
+  private checkApproved(p: Proposal, token: string, ctx: Context): void {
     const refuse = (code: string, msg: string): never => {
       this.audit(p, "refused", code);
       this.changed(p);
@@ -255,7 +263,7 @@ export class ActionStore {
     };
     if (p.status !== "approved") refuse("not_approved", `This proposal is ${p.status}.`);
     const stored = this.tokens.get(p.id);
-    const given = sha(String(args.token ?? ""));
+    const given = sha(String(token ?? ""));
     if (!stored || !timingSafeEqual(stored, given)) refuse("bad_token", "That approval is not valid.");
     if (this.clock() > (p.approvalExpiresAt as Date)) {
       p.status = "expired";
@@ -264,22 +272,28 @@ export class ActionStore {
     }
     // The payload is frozen, but verify anyway: the hash is the contract with the user.
     if (hashPayload(p.payload) !== p.payloadHash) refuse("hash_mismatch", "The action changed after approval.");
+    this.recheck(p, ctx, refuse);
+  }
 
-    const fresh = evaluate(p.kind, p.payload, args.ctx, this.clock());
+  /** Every rule again, as of now. */
+  private recheck(p: Proposal, ctx: Context, refuse: (code: string, msg: string) => never, atExecution = false): void {
+    const fresh = evaluate(p.kind, p.payload, ctx, this.clock(), { atExecution });
     if (isBlocked(fresh)) {
       p.status = "blocked";
       p.checks = fresh;
       this.tokens.delete(p.id);
       refuse("blocked_at_execution", fresh.filter((c) => c.level === "block").map((c) => c.message).join(" "));
     }
+  }
 
-    // Claim it before doing anything external: a second execute, even with the same token, now fails.
+  /** Carries it out (claimed first: a second call, even with the same token, now fails). */
+  private async carryOut(p: Proposal, executor: Executor): Promise<Proposal> {
     p.status = "executing";
     this.tokens.delete(p.id);
     this.changed(p);
     let result: ExecutionResult;
     try {
-      result = await args.executor(p.kind, p.payload);
+      result = await executor(p.kind, p.payload);
     } catch {
       // Error details from a provider can echo request data; keep them out of the log.
       result = { ok: false, detail: "The service could not complete this." };
@@ -290,6 +304,65 @@ export class ActionStore {
     this.audit(p, result.ok ? "executed" : "failed", result.detail.slice(0, 200));
     this.changed(p);
     return p;
+  }
+
+  /** Runs the action exactly once, after re-checking everything against the current state. */
+  async execute(args: { id: string; userId: string; token: string; ctx: Context; executor: Executor }): Promise<Proposal> {
+    const p = this.get(args.id, args.userId);
+    if (p.payload.postAt) {
+      this.audit(p, "refused", "scheduled");
+      throw new ActionError("scheduled", "This post has a time to go out; schedule it rather than posting it now.");
+    }
+    this.checkApproved(p, args.token, args.ctx);
+    return this.carryOut(p, args.executor);
+  }
+
+  /**
+   * An approved post with a time: checked now exactly as if it were going out, then held until
+   * its time. The approval token is used up here; the post goes out on the server's clock.
+   */
+  schedule(args: { id: string; userId: string; token: string; ctx: Context }): Proposal {
+    const p = this.get(args.id, args.userId);
+    const at = typeof p.payload.postAt === "string" ? new Date(p.payload.postAt) : null;
+    if (!at || Number.isNaN(at.getTime())) throw new ActionError("not_scheduled", "This doesn't have a time to go out.");
+    this.checkApproved(p, args.token, args.ctx);
+    p.status = "scheduled";
+    p.scheduledFor = at;
+    this.tokens.delete(p.id);
+    this.audit(p, "approved", `scheduled for ${at.toISOString()}`);
+    this.changed(p);
+    return p;
+  }
+
+  /** Scheduled proposals whose time has come, as [id, userId]. */
+  due(): Array<{ id: string; userId: string }> {
+    const now = this.clock();
+    return [...this.proposals.values()]
+      .filter((p) => p.status === "scheduled" && p.scheduledFor && p.scheduledFor <= now)
+      .map((p) => ({ id: p.id, userId: p.userId }));
+  }
+
+  /** Carries out one due scheduled proposal, once, after checking every rule again. */
+  async runScheduled(args: { id: string; userId: string; ctx: Context; executor: Executor }): Promise<Proposal | null> {
+    const p = this.get(args.id, args.userId);
+    if (p.status !== "scheduled") return null;
+    // Only one server may take it: the database says who.
+    if (this.sink?.claim && !(await this.sink.claim(p.id))) {
+      const saved = await this.sink.loadOne?.(p.id);
+      if (saved) this.restore([saved]);
+      return null;
+    }
+    try {
+      this.recheck(p, args.ctx, (code, msg) => {
+        this.audit(p, "refused", code);
+        p.result = { ok: false, detail: `Not posted: ${msg}` };
+        this.changed(p);
+        throw new ActionError(code, msg);
+      }, true);
+    } catch {
+      return p;
+    }
+    return this.carryOut(p, args.executor);
   }
 
   /** What has actually gone out today and this month, from this store's own records, so the
@@ -317,7 +390,18 @@ export class ActionStore {
 
 /** The database sink: one row per proposal, its whole record as JSON. Server-only table. */
 export function sqlProposalSink(run: (sql: string, params: unknown[]) => Promise<{ rows: any[] }>): ProposalSink & { load(): Promise<SavedProposal[]> } {
+  const row = (r: any): SavedProposal => ({ proposal: typeof r.record === "string" ? JSON.parse(r.record) : r.record, tokenHash: r.token_hash ? Buffer.from(r.token_hash) : null });
   return {
+    async claim(id) {
+      const { rows } = await run(
+        `update agent_proposals set record = jsonb_set(record, '{status}', '"executing"'), updated_at = now()
+          where id = $1 and record->>'status' = 'scheduled' returning id`, [id]);
+      return rows.length === 1;
+    },
+    async loadOne(id) {
+      const { rows } = await run(`select record, token_hash from agent_proposals where id = $1`, [id]);
+      return rows[0] ? row(rows[0]) : null;
+    },
     async save(p, tokenHash) {
       await run(
         `insert into agent_proposals (id, user_id, record, token_hash, updated_at) values ($1, $2, $3, $4, now())

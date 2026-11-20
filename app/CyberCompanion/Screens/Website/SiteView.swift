@@ -177,6 +177,7 @@ struct SiteSchemeHandler: URLSchemeHandler {
         case "svg": "image/svg+xml"
         case "txt": "text/plain"
         case "xml": "application/xml"
+        case "ics": "text/calendar"
         case "jpg", "jpeg": "image/jpeg"
         case "png": "image/png"
         case "gif": "image/gif"

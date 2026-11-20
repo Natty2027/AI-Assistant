@@ -12,6 +12,9 @@ struct EmailDraftCard: View {
     @State private var toText: String
     @State private var showComposer = false
     @State private var copied = false
+    /// Set once the reminder to send it is on.
+    @State private var remindedAt: Date?
+    @State private var reminderProblem: String?
     @Environment(\.openURL) private var openURL
 
     init(draft: EmailDraft) {
@@ -45,6 +48,8 @@ struct EmailDraftCard: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            if let invite = draft.invite { inviteRow(invite) }
+            if let sendAt = draft.sendAt.flatMap(HeraTime.parse) { reminderRow(sendAt) }
             HStack(spacing: 10) {
                 Button("Open in Mail", systemImage: "arrow.up.forward.app") { openInMailApp() }
                     .buttonStyle(.glassProminent)
@@ -59,6 +64,11 @@ struct EmailDraftCard: View {
             }
             .controlSize(.small)
             .lineLimit(1)
+            if draft.invite != nil {
+                Text("Open in Mail can't carry the invite. Use \(canWriteHere ? "Write here or " : "")Share invite to include it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Text("Nothing is sent until you press Send in your email app.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -70,6 +80,75 @@ struct EmailDraftCard: View {
             MailComposeSheet(draft: current).ignoresSafeArea()
         }
         #endif
+    }
+
+    private var canWriteHere: Bool {
+        #if os(iOS)
+        MFMailComposeViewController.canSendMail()
+        #else
+        false
+        #endif
+    }
+
+    /// The calendar invite: what it is, and a way to share the file (Mail, Messages, AirDrop…).
+    private func inviteRow(_ invite: EmailDraft.Invite) -> some View {
+        HStack(spacing: 10) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Calendar invite: \(invite.title)").font(.footnote.weight(.semibold))
+                    if let start = HeraTime.parse(invite.start) {
+                        Text(HeraTime.spoken(start)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } icon: {
+                Image(systemName: "calendar.badge.plus")
+            }
+            .labelStyle(.alignedIcon)
+            Spacer()
+            ShareLink(item: InviteFile(invite: invite), preview: SharePreview(invite.title, image: Image(systemName: "calendar"))) {
+                Label("Share invite", systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+            .lineLimit(1)
+        }
+    }
+
+    /// A reminder to send it later, at the time Hera set.
+    private func reminderRow(_ sendAt: Date) -> some View {
+        HStack(spacing: 10) {
+            Label(remindedAt.map { "Reminder set for \(HeraTime.spoken($0))" } ?? "Send it \(HeraTime.spoken(sendAt))",
+                  systemImage: remindedAt == nil ? "bell" : "bell.fill")
+                .labelStyle(.alignedIcon)
+                .font(.footnote)
+            Spacer()
+            if remindedAt == nil {
+                Button("Remind me") {
+                    Task {
+                        if await EmailReminders.remind(current, at: sendAt) {
+                            remindedAt = sendAt
+                            reminderProblem = nil
+                        } else {
+                            reminderProblem = sendAt <= .now ? "That time has passed." : "Turn on notifications for Hera in Settings to get reminders."
+                        }
+                    }
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
+            } else {
+                Button("Cancel") {
+                    EmailReminders.cancel(draft.id)
+                    remindedAt = nil
+                }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let reminderProblem {
+                Text(reminderProblem).font(.caption2).foregroundStyle(.orange).offset(y: 16)
+            }
+        }
     }
 
     /// The draft as edited, with the To line split back into addresses.
@@ -135,6 +214,11 @@ struct MailComposeSheet: UIViewControllerRepresentable {
         composer.setCcRecipients(draft.cc)
         composer.setSubject(draft.subject)
         composer.setMessageBody(draft.body, isHTML: false)
+        // The invite goes along as a real calendar file: guests tap it to add the event.
+        if let invite = draft.invite {
+            let file = InviteFile(invite: invite)
+            composer.addAttachmentData(file.data, mimeType: "text/calendar", fileName: file.fileName)
+        }
         return composer
     }
 

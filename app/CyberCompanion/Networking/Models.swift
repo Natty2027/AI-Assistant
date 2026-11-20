@@ -77,6 +77,8 @@ struct Draft: Codable, Hashable, Identifiable, Sendable {
     let link: String?
     let sponsored: Bool
     let problems: [Check]
+    /// When it's set to go out, if scheduled (ISO with offset). Absent from older servers.
+    var postAt: String?
 
     var knownPlatform: Platform? { platform.flatMap(Platform.init(rawValue:)) }
     var isForSharing: Bool { connectionId == nil }
@@ -140,12 +142,18 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
     let expiresAt: String
     let result: Outcome?
     let canBeCarriedOut: Bool
+    /// When an approved scheduled post goes out. Absent from older servers.
+    var scheduledFor: String?
 
     var isPost: Bool { kind == "social.post" }
     var isSite: Bool { kind == "site.deploy" }
     /// An item to list for sale on eBay.
     var isListing: Bool { kind == "marketplace.listing" }
     var isPending: Bool { status == "pending" }
+    /// Approved, and waiting for its time.
+    var isScheduled: Bool { status == "scheduled" }
+    /// The time it's set to go out, if it has one.
+    var postAt: Date? { (scheduledFor ?? payload["postAt"]?.stringValue).flatMap(HeraTime.parse) }
     var postText: String? { payload["text"]?.stringValue }
     var postLink: String? { payload["link"]?.stringValue }
 
@@ -368,11 +376,45 @@ struct PosterDraft: Codable, Hashable, Identifiable, Sendable {
 /// An email Hera wrote (server/agent/loop.ts). She never sends it: the person edits it here and
 /// sends it from their email app.
 struct EmailDraft: Codable, Hashable, Identifiable, Sendable {
+    /// A calendar invite to attach: what it's for, and the .ics file itself.
+    struct Invite: Codable, Hashable, Sendable {
+        let title: String
+        let start: String
+        let end: String
+        let location: String?
+        let ics: String
+    }
+
     let id: String
     var to: [String]
     var cc: [String]
     var subject: String
     var body: String
+    /// When the person wants to send it; their phone reminds them then.
+    var sendAt: String?
+    var invite: Invite?
+}
+
+/// Dates as the server writes them: ISO 8601, with or without fractional seconds.
+enum HeraTime {
+    static func parse(_ text: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return ISO8601DateFormatter().date(from: text) ?? withFraction.date(from: text)
+    }
+
+    /// "Fri, Nov 21 at 9:00 AM".
+    static func spoken(_ date: Date) -> String {
+        "\(date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())) at \(date.formatted(date: .omitted, time: .shortened))"
+    }
+
+    /// Now, with this device's offset, as the server reads it.
+    static func nowWithOffset(_ now: Date = .now, timeZone: TimeZone = .current) -> String {
+        let f = ISO8601DateFormatter()
+        f.timeZone = timeZone
+        f.formatOptions = [.withInternetDateTime]
+        return f.string(from: now)
+    }
 }
 
 /// A text message Hera wrote (server/agent/loop.ts). She never sends it: the app finds each person

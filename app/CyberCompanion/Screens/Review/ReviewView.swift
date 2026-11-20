@@ -10,7 +10,9 @@ struct ReviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     let pending = model.proposals.filter(\.isPending)
-                    let history = model.proposals.filter { !$0.isPending }
+                    // Approved posts waiting for their time, soonest first.
+                    let comingUp = model.proposals.filter(\.isScheduled).sorted { ($0.postAt ?? .distantFuture) < ($1.postAt ?? .distantFuture) }
+                    let history = model.proposals.filter { !$0.isPending && !$0.isScheduled }
                     if pending.isEmpty && history.isEmpty {
                         ContentUnavailableView("Nothing to review", systemImage: "checkmark.seal",
                                                description: Text("When Hera has a website or post ready to publish, it appears here for you to approve."))
@@ -18,6 +20,9 @@ struct ReviewView: View {
                     }
                     if !pending.isEmpty {
                         group("Waiting for you", pending)
+                    }
+                    if !comingUp.isEmpty {
+                        group("Coming up", comingUp, color: Theme.spectrum[1])
                     }
                     if !history.isEmpty {
                         group("Earlier", history, color: .secondary)
@@ -55,7 +60,7 @@ struct ReviewView: View {
                 Text(p.summary)
                     .font(.headline)
                     .lineLimit(2)
-                Text(p.label)
+                Text(p.postAt.map { "\(p.label) · \(HeraTime.spoken($0))" } ?? p.label)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 StatusPill(status: p.status)
@@ -96,6 +101,7 @@ struct ProposalDetailView: View {
                     }
                 }
                 if proposal.isPending { decision }
+                if proposal.isScheduled { scheduledCard }
                 if let result = proposal.result { outcome(result) }
                 if let message = model.errorMessage {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
@@ -115,12 +121,14 @@ struct ProposalDetailView: View {
         #endif
         .overlay { if isWorking { ProgressView().controlSize(.large) } }
         .sensoryFeedback(.success, trigger: proposal.status) { _, status in status == "executed" }
-        .confirmationDialog(proposal.isListing ? "List this on eBay now?" : "Publish this now?", isPresented: $showPublishConfirmation, titleVisibility: .visible) {
-            Button(proposal.isListing ? "List it" : "Publish") { Task { await publish() } }
+        .confirmationDialog(proposal.isListing ? "List this on eBay now?" : proposal.postAt.map { "Post this \(HeraTime.spoken($0))?" } ?? "Publish this now?",
+                            isPresented: $showPublishConfirmation, titleVisibility: .visible) {
+            Button(proposal.isListing ? "List it" : proposal.postAt != nil ? "Schedule" : "Publish") { Task { await publish() } }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(proposal.isListing
                  ? "It goes live on eBay at this price, and anyone can buy it. eBay's selling fees apply."
+                 : proposal.postAt != nil ? "It goes out then, exactly as you see it. You can cancel it in Review until then."
                  : "Once published, anyone can see it.")
         }
     }
@@ -145,6 +153,11 @@ struct ProposalDetailView: View {
                     Text(proposal.postText ?? "")
                         .font(.body)
                         .textSelection(.enabled)
+                    if let at = proposal.postAt {
+                        Label("Goes out \(HeraTime.spoken(at))", systemImage: "calendar.badge.clock")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(Theme.spectrum[1])
+                    }
                     if let link = proposal.postLink, let url = URL(string: link) {
                         Link(destination: url) { Label(link, systemImage: "link") }
                             .font(.callout)
@@ -153,6 +166,32 @@ struct ProposalDetailView: View {
                     Text("Publishes every file currently in your website, exactly as you can preview it in the Website tab.")
                         .foregroundStyle(.secondary)
                 }
+            }
+            .glowCard()
+        }
+    }
+
+    /// An approved post waiting for its time: when, and a way to stop it.
+    private var scheduledCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Scheduled", color: Theme.spectrum[1])
+            VStack(alignment: .leading, spacing: 12) {
+                if let at = proposal.postAt {
+                    Label("Goes out \(HeraTime.spoken(at)), exactly as above.", systemImage: "calendar.badge.clock")
+                }
+                Button(role: .destructive) {
+                    Task {
+                        isWorking = true
+                        await model.reject(proposal)
+                        refreshFromModel()
+                        isWorking = false
+                    }
+                } label: {
+                    Text("Cancel this post").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .disabled(isWorking)
             }
             .glowCard()
         }
@@ -213,7 +252,8 @@ struct ProposalDetailView: View {
                 Button {
                     showPublishConfirmation = true
                 } label: {
-                    Label(proposal.isListing ? "Approve and list on eBay" : "Approve and publish", systemImage: "checkmark.seal.fill")
+                    Label(proposal.isListing ? "Approve and list on eBay" : proposal.postAt != nil ? "Approve and schedule" : "Approve and publish",
+                          systemImage: proposal.postAt != nil ? "calendar.badge.clock" : "checkmark.seal.fill")
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity)
                 }

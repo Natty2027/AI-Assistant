@@ -140,6 +140,19 @@ struct NetworkingTests {
         }
     }
 
+    @Test func aRunCarriesTheDevicesClock() async throws {
+        StubProtocol.handler = { request in
+            request.httpMethod == "POST" ? (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-000000000003"}"#)
+                : (200, #"{"status":"finished","result":{"status":"done","text":"ok","tainted":false,"drafts":[],"proposals":[]}}"#)
+        }
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        _ = try await client.runAssistant(request: "Post every Monday", mode: .posts, allowWebSearch: false)
+        let body = try #require(StubProtocol.bodies.first.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        let clock = try #require(body["local_time"] as? [String: String])
+        #expect(clock["time_zone"] == TimeZone.current.identifier)
+        #expect(clock["now"].flatMap(HeraTime.parse) != nil)
+    }
+
     @Test func requestsCarryTheTokenAndLanguage() async throws {
         StubProtocol.handler = { _ in (200, #"{"granted":true}"#) }
         let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "abc" }, session: StubProtocol.session)

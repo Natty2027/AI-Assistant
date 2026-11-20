@@ -18,7 +18,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { Check } from "./policy.ts";
 
-const ALLOWED_EXT = new Set([".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".txt", ".xml", ".json", ".webmanifest"]);
+const ALLOWED_EXT = new Set([".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".txt", ".xml", ".json", ".webmanifest", ".ics"]);
 /** Pictures stored as bytes. Everything else on a site is text. */
 const BINARY_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"]);
 

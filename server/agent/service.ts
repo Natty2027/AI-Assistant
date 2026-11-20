@@ -62,6 +62,17 @@ export interface ProposalView {
   payload: Readonly<Record<string, unknown>>; payloadHash: string;
   checks: Proposal["checks"]; tainted: boolean; status: Proposal["status"];
   expiresAt: string; result: Proposal["result"] | null; canBeCarriedOut: boolean;
+  /** When an approved scheduled post goes out. */
+  scheduledFor: string | null;
+}
+
+/** The person's clock as the app sends it: a time with an offset and an IANA zone name. */
+export function readLocalTime(raw: unknown): { now: string; timeZone: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { now, time_zone: tz } = raw as Record<string, unknown>;
+  if (typeof now !== "string" || typeof tz !== "string") return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?([+-]\d{2}:\d{2}|Z)$/.test(now) || !/^[A-Za-z_]+(\/[A-Za-z0-9_+-]+){0,2}$/.test(tz)) return null;
+  return { now, timeZone: tz };
 }
 
 export function viewOf(p: Proposal): ProposalView {
@@ -70,6 +81,7 @@ export function viewOf(p: Proposal): ProposalView {
     payload: p.payload, payloadHash: p.payloadHash, checks: p.checks, tainted: p.tainted,
     status: p.status, expiresAt: p.expiresAt.toISOString(), result: p.result ?? null,
     canBeCarriedOut: EXECUTABLE.has(p.kind),
+    scheduledFor: p.scheduledFor?.toISOString() ?? null,
   };
 }
 
@@ -400,7 +412,7 @@ export class AgentService {
    * (an answer to her question, or a follow-up like "make the header blue"); otherwise it starts a
    * new one. Returns the id to send with the next reply, or null if the task can't continue.
    */
-  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown; brand?: unknown; receivedText?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
+  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown; brand?: unknown; receivedText?: unknown; localTime?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     let schedule: ScheduleSnapshot | undefined;
     // Schedule needs the calendar; a launch uses it when the person allowed access and skips it otherwise.
@@ -428,6 +440,7 @@ export class AgentService {
       marketplace: this.d.oauth?.ebay ? this.marketplaceFor(userId) : undefined,
       brand: readBrand(opts.brand),
       receivedText: typeof opts.receivedText === "string" && opts.receivedText.trim() ? opts.receivedText.trim().slice(0, 4000) : null,
+      localTime: readLocalTime(opts.localTime),
       remember: async (fact) => (await this.memory.remember(userId, fact)).message,
     }, request, resume);
     // A conversation that expired or was never this person's starts fresh under a new id.
@@ -466,6 +479,27 @@ export class AgentService {
       executor: (kind, payload) => this.carryOut(userId, kind, payload),
     });
     return viewOf(p);
+  }
+
+  /** An approved post with a time: held until then (see ActionStore.schedule). */
+  async schedulePost(userId: string, id: string, token: unknown): Promise<ProposalView> {
+    const ctx = await this.context(userId);
+    return viewOf(this.store.schedule({ id, userId, token: String(token ?? ""), ctx }));
+  }
+
+  /** Posts everything whose time has come. Called every minute; one failure doesn't stop the rest. */
+  async runDue(): Promise<number> {
+    let done = 0;
+    for (const { id, userId } of this.store.due()) {
+      try {
+        const ctx = await this.context(userId);
+        const out = await this.store.runScheduled({ id, userId, ctx, executor: (kind, payload) => this.carryOut(userId, kind, payload) });
+        if (out) done++;
+      } catch (e) {
+        console.error("[schedule] couldn't run a scheduled post", e instanceof Error ? e.message : e);
+      }
+    }
+    return done;
   }
 
   private async carryOut(userId: string, kind: ActionKind, payload: Readonly<Record<string, unknown>>): Promise<ExecutionResult> {

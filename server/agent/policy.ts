@@ -105,6 +105,8 @@ export const PAYLOADS = {
     link: https.nullable(),
     sponsored: z.boolean(),
     mediaRefs: z.array(id).max(10),
+    /** When to post it, set when it was written; absent to post as soon as it's approved. */
+    postAt: z.string().max(40).optional(),
   }).strict(),
   // An eBay listing exactly as it will go live. The policy ids are the seller's own presets,
   // looked up from their account when the listing is proposed, never written by the model.
@@ -250,7 +252,7 @@ export function postContentChecks(platform: Platform, text: string, link: string
  * Every rule for one proposed action. Pure: same inputs, same answer. `now` is passed in so the
  * time-based rules are testable and so execution-time re-checks see the real clock.
  */
-export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, now = new Date()): Check[] {
+export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, now = new Date(), opts: { atExecution?: boolean } = {}): Check[] {
   const out: Check[] = [];
   const spec = ACTIONS[kind];
   const parsed = PAYLOADS[kind].safeParse(rawPayload);
@@ -277,6 +279,8 @@ export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, no
       const platform = conn.platform;
       if (!platform) { out.push({ id: "unknown_platform", level: "block", message: "This account's platform is not known." }); break; }
       out.push(...postContentChecks(platform, p.text, p.link, p.sponsored, p.mediaRefs.length));
+      // When a scheduled post goes out, its time has (rightly) arrived: not checked again then.
+      if (p.postAt && !opts.atExecution) out.push(...scheduleChecks(p.postAt, p.mediaRefs.length, now));
       const norm = normalize(p.text);
       for (const r of ctx.recentPosts) {
         if (normalize(r.text) !== norm) continue;
@@ -404,6 +408,20 @@ export function listingChecks(p: Payload<"marketplace.listing">): Check[] {
   }
   contentChecks(all, out);
   return out;
+}
+
+/** A scheduled post's time: real, ahead, and not so far ahead that its photo is gone by then
+ *  (attached photos are kept for a week). */
+export function scheduleChecks(postAt: string, photos: number, now: Date): Check[] {
+  const at = Date.parse(postAt);
+  if (Number.isNaN(at) || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(postAt)) {
+    return [{ id: "bad_time", level: "block", message: "The time to post it isn't a valid date and time." }];
+  }
+  const ahead = at - now.getTime();
+  if (ahead < 2 * 60_000) return [{ id: "past_time", level: "block", message: "The time to post it has already passed. Pick a later time." }];
+  if (ahead > 90 * DAY_MS) return [{ id: "far_time", level: "block", message: "Posts can be scheduled up to 90 days ahead." }];
+  if (photos > 0 && ahead > 6 * DAY_MS) return [{ id: "photo_time", level: "block", message: "A post with a photo can be scheduled up to 6 days ahead." }];
+  return [];
 }
 
 export const isBlocked = (checks: Check[]) => checks.some((c) => c.level === "block");
