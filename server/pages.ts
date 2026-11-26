@@ -7,7 +7,7 @@
  * them reviewed before launch, and update them whenever a new provider or data type is added.
  */
 
-const UPDATED = "November 7, 2026";
+const UPDATED = "November 26, 2026";
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -41,12 +41,12 @@ export function supportPage(email: string): string {
   const mail = escape(email);
   return layout("Support", `
 <h1>Hera</h1>
-<p>Speak or type what you'd like, and Hera builds a website and writes social posts for it. You review the exact content, and nothing is published until you approve it.</p>
+<p>Speak or type what you'd like, and Hera writes social posts, posters, emails and texts for it. You review the exact content, and nothing is posted or sent until you approve it.</p>
 <h2>Get help</h2>
 <p>Email <a href="mailto:${mail}">${mail}</a>. If something went wrong, include the request ID the app showed you, if any.</p>
 <h2>Common questions</h2>
 <p><strong>Is my voice recorded?</strong> No. Speech is turned into text on your device by Apple's speech recognition. Only the text you choose to send leaves your device.</p>
-<p><strong>Can it post without me?</strong> No. Every website and post waits in Review until you approve that exact content.</p>
+<p><strong>Can it post without me?</strong> No. Every post waits in Review until you approve that exact content.</p>
 <p><strong>Can it change my calendar without me?</strong> No. In Schedule, Hera proposes each change and your device makes it only when you approve it.</p>
 <p><strong>How do I delete my account?</strong> In the app, open Settings and choose Delete account. Your data and your sign-in account are deleted.</p>`);
 }
@@ -60,8 +60,8 @@ export function privacyPage(email: string): string {
 
 <h2>What we collect</h2>
 <p><strong>Account.</strong> When you sign in with Apple we receive an account identifier and, if you choose to share it, your email address (which may be an Apple private relay address). Sign-in is handled by Supabase.</p>
-<p><strong>What you ask for and what we make.</strong> The requests you type or dictate, the websites and posts the assistant creates, and your approvals.</p>
-<p><strong>Connected accounts.</strong> If you connect Netlify, Bluesky, X, or a Facebook Page and its Instagram account, we store the token, app password, or sign-in access the platform gives us, encrypted, only to publish what you approve. We never see your passwords for X, Facebook or Instagram: you sign in on their own pages. You can disconnect at any time, which deletes it.</p>
+<p><strong>What you ask for and what we make.</strong> The requests you type or dictate, the posts, posters, emails and texts the assistant writes, and your approvals.</p>
+<p><strong>Connected accounts.</strong> If you connect Bluesky, X, or a Facebook Page and its Instagram account, we store the token, app password, or sign-in access the platform gives us, encrypted, only to publish what you approve. We never see your passwords for X, Facebook or Instagram: you sign in on their own pages. You can disconnect at any time, which deletes it.</p>
 <p><strong>Photos you attach.</strong> A photo you add to a post is stored on our server at a private, unguessable address so the platform can fetch it when you approve the post (Instagram requires this). Photos are deleted after seven days, or when you delete your account.</p>
 <p><strong>Your calendar and reminders.</strong> Only when you use Schedule, and only with your permission on your device, Hera reads your events for the next few weeks and your open reminders and sends them with that request, so the assistant can plan around them. We don't store them: they are used for that one request and discarded. Changes are made on your device, only the ones you approve. You can turn access off at any time in your device's settings.</p>
 <p><strong>What Hera remembers.</strong> So a task can continue across your replies, we keep each conversation with Hera for seven days after its last message, then delete it. Facts you tell Hera to keep, such as your business name or opening hours, are stored until you delete them in Settings → What Hera remembers. Both are deleted with your account.</p>
@@ -70,10 +70,10 @@ export function privacyPage(email: string): string {
 
 <h2>Who processes it</h2>
 <ul>
-  <li><strong>Anthropic</strong> (the maker of Claude) receives your requests and the content the assistant works on, to write your website and posts and, when you use Schedule, the calendar events and reminders sent with that request. We ask for your consent before any AI processing and you can withdraw it in Settings. Your email address is not sent to Anthropic.</li>
+  <li><strong>Anthropic</strong> (the maker of Claude) receives your requests and the content the assistant works on, to write your posts and, when you use Schedule, the calendar events and reminders sent with that request. We ask for your consent before any AI processing and you can withdraw it in Settings. Your email address is not sent to Anthropic.</li>
   <li><strong>Supabase</strong>: sign-in and our database.</li>
   <li><strong>Our hosting provider</strong> runs the server.</li>
-  <li><strong>Netlify</strong>, <strong>Bluesky</strong>, <strong>X</strong> and <strong>Meta</strong> (Facebook and Instagram), only when you connect them and approve publishing to your own account.</li>
+  <li><strong>Bluesky</strong>, <strong>X</strong> and <strong>Meta</strong> (Facebook and Instagram), only when you connect them and approve publishing to your own account.</li>
 </ul>
 
 <h2>Retention and deletion</h2>
@@ -97,7 +97,7 @@ export function termsPage(email: string): string {
 <h2>What's not allowed</h2>
 <p>Spam, deceptive or fake reviews and testimonials, impersonation, harassment, or anything unlawful. The app enforces some of these rules automatically and may refuse a request.</p>
 <h2>Third-party platforms</h2>
-<p>Publishing to Netlify, Bluesky, X, Facebook or Instagram is subject to their terms. Posting to other platforms happens through your own apps, under their terms.</p>
+<p>Publishing to Bluesky, X, Facebook or Instagram is subject to their terms. Posting to other platforms happens through your own apps, under their terms.</p>
 <h2>The service</h2>
 <p>The service is provided as is. We may change or end features, and we may suspend accounts that break these terms.</p>
 <h2>Contact</h2>

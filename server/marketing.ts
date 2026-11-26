@@ -1,6 +1,5 @@
 /**
- * Selling Hera itself: its public home page, the "Built with Hera" link on websites made on the
- * free plan, and a private growth dashboard for the owner.
+ * Selling Hera itself: its public home page and a private growth dashboard for the owner.
  *
  * The home page is plain HTML with inline styles, served under the same strict policy as the
  * other public pages (nothing loads from elsewhere, nothing runs). With APP_STORE_ID set it shows
@@ -24,9 +23,9 @@ export function getHeraUrl(links: StoreLinks): string | null {
 
 const FEATURES: Array<[string, string, string]> = [
   ["🎨", "Posters and posts", "A poster in every size (Instagram, Stories, a printable flyer) and posts for each platform, in your brand's colors."],
-  ["🌐", "A real website", "Tell Hera about your business and she builds the site, with your photos. Publish it with one tap."],
+  ["⏰", "Scheduled posts", "Say when, and your approved posts go out on time, even a whole series: every Monday for a month."],
   ["🏷️", "Sell on eBay", "Snap a photo, say the price. Hera writes the listing, picks the category and fills in the details."],
-  ["🚀", "Launch Kit", "One request for an event or a sale: the web page, the posts, the poster, the email and the calendar, all ready."],
+  ["🚀", "Launch Kit", "One request for an event or a sale: the posts, the countdown, the poster, the email and the calendar, all ready."],
   ["💬", "Emails and texts", "Hera writes them in your voice and reads them to you. You press Send."],
   ["📅", "Your schedule", "Hera plans around your calendar and reminds you before every event, out loud."],
 ];
@@ -45,9 +44,9 @@ export function homePage(links: StoreLinks, supportEmail: string): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Hera: your marketing assistant, by voice</title>
-<meta name="description" content="Hera makes posters, posts, websites and eBay listings for your small business. Say what you need; nothing goes out until you approve it." />
+<meta name="description" content="Hera makes posters, posts, emails and eBay listings for your small business. Say what you need; nothing goes out until you approve it." />
 <meta property="og:title" content="Hera: your marketing assistant, by voice" />
-<meta property="og:description" content="Posters, posts, websites and eBay listings for your small business. You approve everything." />
+<meta property="og:description" content="Posters, posts, emails and eBay listings for your small business. You approve everything." />
 ${banner}
 <style>
   :root { color-scheme: light dark; --ink: #0f172a; --muted: #64748b; --bg: #f8fafc; --card: #ffffff; --accent: #5b4bdb; }
@@ -79,7 +78,7 @@ ${banner}
 <main>
   <section class="hero">
     <h1>Say it. Hera makes it.<br/>You approve it.</h1>
-    <p class="lead">Your small business's marketing assistant. Posters, posts, a website and eBay listings, by voice or by typing, in your brand's colors.</p>
+    <p class="lead">Your small business's marketing assistant. Posters, posts, emails and eBay listings, by voice or by typing, in your brand's colors.</p>
     ${cta}
   </section>
   <section class="grid">
@@ -88,7 +87,7 @@ ${banner}
   <h2>How it works</h2>
   <section class="steps">
     <div><strong>1. Say what you need</strong>"Make a poster and posts for Saturday's open house, 10 to 2."</div>
-    <div><strong>2. Hera makes it</strong>The poster, the posts, the page on your website, ready in a minute or two.</div>
+    <div><strong>2. Hera makes it</strong>The poster, the posts and the email, ready in a minute or two.</div>
     <div><strong>3. You approve</strong>Nothing is posted, published or sent until you've seen it and said yes.</div>
   </section>
   <p class="promise">Your voice is turned into text on your phone. Your contacts and calendar stay on it. You can delete everything at any time.</p>
@@ -97,18 +96,6 @@ ${banner}
 <footer><span>© Hera</span><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:${mail}">${mail}</a></footer>
 </body>
 </html>`;
-}
-
-/** The link added to the bottom of websites published on the free plan. */
-export function builtWithHeraHtml(url: string): string {
-  return `<p style="text-align:center;font:13px -apple-system,system-ui,sans-serif;opacity:.7;margin:32px 0 16px">Built with <a href="${escape(url)}" style="color:inherit">Hera</a></p>`;
-}
-
-/** Adds the link just before </body> (or at the end of a page without one). */
-export function withBuiltWithHera(html: string, url: string): string {
-  const link = builtWithHeraHtml(url);
-  const end = html.search(/<\/body\s*>/i);
-  return end === -1 ? `${html}\n${link}` : `${html.slice(0, end)}${link}\n${html.slice(end)}`;
 }
 
 /* ------------------------------ the owner's dashboard ------------------------------ */
@@ -169,7 +156,7 @@ export function growthPage(g: Growth): string {
 <table>
 ${row("Accounts", g.accounts)}
 ${row("Asked Hera at least once", g.askedHera, `${pct(g.askedHera, g.accounts)} of accounts`)}
-${row("Approved something (posted, published, listed)", g.approvedSomething, `${pct(g.approvedSomething, g.askedHera)} of those who asked`)}
+${row("Approved something (posted or listed)", g.approvedSomething, `${pct(g.approvedSomething, g.askedHera)} of those who asked`)}
 ${row("Hera Pro now", g.pro, `${pct(g.pro, g.accounts)} of accounts`)}
 </table>
 <h2>Recently</h2>

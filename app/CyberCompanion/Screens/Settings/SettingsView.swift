@@ -70,21 +70,21 @@ struct SettingsView: View {
             } header: {
                 SectionLabel("Account")
             } footer: {
-                Text("Deleting your account removes your websites, posts, connected accounts and sign-in from our servers. Anything already published stays where it was published.")
+                Text("Deleting your account removes your posts, drafts, connected accounts and sign-in from our servers. Anything already published stays where it was published.")
             }
         }
     }
 
     private var aiSection: some View {
         Section {
-            Toggle("Use AI to create websites and posts", isOn: Binding(
+            Toggle("Use AI to create posters and posts", isOn: Binding(
                 get: { model.aiConsent ?? false },
                 set: { granted in Task { await model.setAIConsent(granted) } }
             ))
         } header: {
             SectionLabel("AI")
         } footer: {
-            Text("What you ask Hera is sent to Claude, by Anthropic, to make your website and posts. When you use Schedule, your upcoming events and open reminders are sent with that request. Your voice is recognized on this device; only the finished text is sent. You can turn this off at any time.")
+            Text("What you ask Hera is sent to Claude, by Anthropic, to make your posters and posts. When you use Schedule, your upcoming events and open reminders are sent with that request. Your voice is recognized on this device; only the finished text is sent. You can turn this off at any time.")
         }
     }
 
@@ -159,7 +159,7 @@ struct SettingsView: View {
         } header: {
             SectionLabel("What Hera remembers")
         } footer: {
-            Text("Hera uses these in every website, post and schedule task so you don't have to repeat yourself. They're sent to Claude with your requests. Delete anything you'd rather she forgot.")
+            Text("Hera uses these in every poster, post and schedule task so you don't have to repeat yourself. They're sent to Claude with your requests. Delete anything you'd rather she forgot.")
         }
         .task { await model.refreshMemories() }
     }
@@ -237,8 +237,8 @@ struct SettingsView: View {
         } header: {
             SectionLabel("Plan")
         } footer: {
-            Text(model.pro.status?.resetsLine.map { "\($0). Each request to Hera counts as one: a website, a set of posts, a listing, a reply." }
-                 ?? "Each request to Hera counts as one: a website, a set of posts, a listing, a reply.")
+            Text(model.pro.status?.resetsLine.map { "\($0). Each request to Hera counts as one: a set of posts, a launch, a listing, a reply." }
+                 ?? "Each request to Hera counts as one: a set of posts, a launch, a listing, a reply.")
         }
         .task { await model.pro.refresh(client: model.client) }
     }
@@ -342,7 +342,7 @@ private struct DeleteAccountSheet: View {
                     Label("This can't be undone", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .font(.headline)
-                    Text("Your websites, drafts, approvals, connected accounts and your sign-in account are permanently deleted from our servers. Sites and posts you already published stay where they were published; remove them there if you want them gone.")
+                    Text("Your posts, drafts, approvals, connected accounts and your sign-in account are permanently deleted from our servers. Posts and listings you already published stay where they were published; remove them there if you want them gone.")
                         .font(.callout)
                     TextField("Type DELETE to confirm", text: $typed)
                         .autocorrectionDisabled()

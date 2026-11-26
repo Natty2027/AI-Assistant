@@ -1,7 +1,6 @@
 /**
  * Calendar invites as .ics files (RFC 5545), the format Gmail, Outlook, Apple Calendar and every
- * other calendar understand. Used two ways: attached to an email Hera writes, so guests tap "Add to
- * calendar", and as a file on the person's website behind an "Add to my calendar" link.
+ * other calendar understand. Attached to an email Hera writes, so guests tap "Add to calendar".
  *
  * METHOD:PUBLISH ("here's an event") rather than REQUEST ("please RSVP"): it adds cleanly everywhere
  * without an organizer mailbox to receive replies. Times are written in UTC, so they're right in

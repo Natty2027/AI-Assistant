@@ -146,7 +146,6 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
     var scheduledFor: String?
 
     var isPost: Bool { kind == "social.post" }
-    var isSite: Bool { kind == "site.deploy" }
     /// An item to list for sale on eBay.
     var isListing: Bool { kind == "marketplace.listing" }
     var isPending: Bool { status == "pending" }
@@ -190,25 +189,22 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
     var isBlocked: Bool { status == "blocked" || checks.contains { $0.level == .block } }
 }
 
-/// What one assistant run is for. Website, posts and schedule are separate runs; the server
-/// enforces it, so a website run can't write posts and a posts run can't change the site.
+/// What one assistant run is for. Posts, schedule and launch are separate runs; the server
+/// enforces it, so a posts run can't change the schedule.
 enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    case site
     case posts
     /// The person's calendar and reminders, read and changed on their device.
     case schedule
-    /// Launch Kit: one request, and the website page, posts, calendar and email are all made ready.
+    /// Launch Kit: one request, and the posts, poster, calendar and email are all made ready.
     case launch
 
-    /// Modes that can carry a photo for posts.
-    /// A photo can go on posts, on the website, or both in a launch.
-    var takesPhoto: Bool { self != .schedule }
+    /// A photo can go on posts and posters, alone or in a launch. The schedule has no use for one.
+    var takesPhoto: Bool { self == .posts || self == .launch }
 
     var id: Self { self }
 
     var title: String {
         switch self {
-        case .site: "Website"
         // Posts, posters and flyers (the server's "posts" mode).
         case .posts: "Studio"
         case .schedule: "Schedule"
@@ -216,12 +212,11 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// The order on the Create screen: marketing first, then the website and the schedule.
-    static let displayOrder: [CreateMode] = [.launch, .posts, .site, .schedule]
+    /// The order on the Create screen: marketing first, then the schedule.
+    static let displayOrder: [CreateMode] = [.launch, .posts, .schedule]
 
     var systemImage: String {
         switch self {
-        case .site: "globe"
         case .posts: "paintpalette"
         case .schedule: "calendar"
         case .launch: "sparkles"
@@ -296,19 +291,6 @@ struct Connection: Codable, Hashable, Identifiable, Sendable {
     let provider: String
     let platform: String?
     let label: String
-    let publishesTo: String?
-}
-
-struct SiteFile: Codable, Hashable, Identifiable, Sendable {
-    let path: String
-    let bytes: Int
-    var id: String { path }
-}
-
-struct SiteResponse: Codable, Hashable, Sendable {
-    let files: [SiteFile]
-    let checks: [Check]
-    let contentHash: String
 }
 
 /* ---------------- envelopes ---------------- */
@@ -442,18 +424,6 @@ struct Memory: Codable, Hashable, Identifiable, Sendable {
 struct MemoriesResponse: Decodable, Sendable { let memories: [Memory] }
 struct MemoryAddResponse: Decodable, Sendable { let memory: Memory?; let message: String }
 struct ProposalResponse: Decodable, Sendable { let proposal: Proposal }
-struct FileResponse: Decodable, Sendable {
-    let contents: String
-    /// "base64" for pictures; text otherwise (older servers send no encoding).
-    let encoding: String?
-}
-
-/// The brand kit's name and colors, sent with a run so the website matches the posters.
-struct RunBrand: Encodable, Sendable {
-    let businessName: String?
-    let primaryColor: String
-    let accentColor: String
-}
 struct ConsentResponse: Decodable, Sendable { let granted: Bool }
 struct OKResponse: Decodable, Sendable { let ok: Bool }
 

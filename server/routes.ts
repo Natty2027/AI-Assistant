@@ -8,14 +8,13 @@ import { requireAuth } from "./auth.ts";
 import { dbConfigured, dbReachable, pool, query } from "./db.ts";
 import { HttpError, Router, sendHtml } from "./http.ts";
 import { privacyPage, supportPage, termsPage } from "./pages.ts";
-import { adminAllowed, getHeraUrl, growth, growthPage, homePage } from "./marketing.ts";
+import { adminAllowed, growth, growthPage, homePage } from "./marketing.ts";
 import { createLimiter } from "./rateLimit.ts";
 import { assertUuid, ProviderError } from "./shared.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentService } from "./agent/service.ts";
 import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
 import { ActionError, ActionStore, sqlProposalSink } from "./agent/approvals.ts";
-import { SandboxError } from "./agent/sandbox.ts";
 import { isOAuthProvider } from "./agent/oauth.ts";
 import { challengeResponse } from "./agent/ebay.ts";
 import { RunJobs, sqlRunSink, type RunFailure } from "./agent/runs.ts";
@@ -49,10 +48,6 @@ function makeService(store: ActionStore): AgentService {
   return new AgentService({
     store,
     run: sqlRun,
-    // Free-plan websites link back to Hera's home page (or the App Store once it's there).
-    builtWithHera: config.builtWithHera && config.publicUrl
-      ? { url: getHeraUrl(config) ?? config.publicUrl, isPro: (userId) => billing.status(userId).then((s) => s.plan === "pro") }
-      : null,
     fetch: (url, init) => fetch(url, init),
     sitesDir: config.sitesDir,
     mediaDir: config.mediaDir,
@@ -69,7 +64,6 @@ function agentFailure(e: unknown): never {
     const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, bad_media: 400, bad_schedule: 400, ai_unavailable: 503, provider_unavailable: 502 };
     throw new HttpError(status[e.code] ?? 409, e.message, true, e.code);
   }
-  if (e instanceof SandboxError) throw new HttpError(400, e.message, true, `site_${e.code}`);
   if (e instanceof ProviderError) throw new HttpError(502, "The service could not complete that. Try again shortly.", true, "provider_unavailable");
   throw e;
 }
@@ -156,6 +150,24 @@ const USER_DATA_TABLES = [
 ] as const;
 /** Added by a later migration; skipped, not failed on, in a database that doesn't have them yet. */
 const OPTIONAL_TABLES = new Set<string>(["agent_conversations", "agent_memories", "agent_proposals", "agent_runs", "user_plans", "agent_usage"]);
+
+/**
+ * The mode a request to Hera asks for. Apps from before modes existed send none: they get Posts.
+ * Building websites was removed; an app that still offers it is told to update, with its own
+ * code so it can say so plainly.
+ */
+export function checkMode(raw: unknown): AgentMode {
+  const mode = raw ?? "posts";
+  if (mode === "site") throw new HttpError(410, "Building websites was removed from Hera. Update the app to the latest version.", true, "mode_removed");
+  if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'posts', 'schedule' or 'launch'.");
+  return mode as AgentMode;
+}
+
+/** ?wait= on a run check: whole seconds, 0 to 25. Anything else means don't wait. */
+export function waitSeconds(raw: string | null): number {
+  const n = Number(raw);
+  return raw && Number.isFinite(n) ? Math.min(25, Math.max(0, Math.floor(n))) : 0;
+}
 
 /* ------------------------------ routes ------------------------------ */
 
@@ -281,7 +293,7 @@ export function buildRouter(): Router {
     } finally {
       client.release();
     }
-    // Their website files (on the volume) and proposals (in memory) are theirs too.
+    // Their photos and any old website files (on the volume) and proposals (in memory) are theirs too.
     await agent().forget(userId);
     // Apple requires deleting the account itself, not only its data (guideline 5.1.1(v)).
     // The data is already gone, so a retry after a failure here is safe and finishes the job.
@@ -304,7 +316,7 @@ export function buildRouter(): Router {
     return { ok: true, accountDeleted: Boolean(config.supabaseUrl && config.supabaseServiceRoleKey) };
   });
 
-  /* ---- the assistant: build a site, draft promotion, propose; the person approves ---- */
+  /* ---- the assistant: draft promotion, propose; the person approves ---- */
 
   r.get("/agent/connections", async (ctx) => {
     const userId = requireAuth(ctx);
@@ -338,13 +350,6 @@ export function buildRouter(): Router {
     return { ok: true, id: await guarded(() => agent().savePhoto(userId, ctx.body.data)) };
   });
 
-  r.post("/agent/connections/netlify", async (ctx) => {
-    const userId = requireAuth(ctx);
-    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
-    await ensureSettings(userId);
-    return { ok: true, connection: await guarded(() => agent().connectNetlify(userId, ctx.body.token)) };
-  });
-
   r.post("/agent/connections/bluesky", async (ctx) => {
     const userId = requireAuth(ctx);
     if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
@@ -366,10 +371,7 @@ export function buildRouter(): Router {
   async function prepareRun(userId: string, body: Record<string, any>): Promise<() => Promise<unknown>> {
     const request = typeof body.request === "string" ? body.request.trim() : "";
     if (!request || request.length > 4000) throw new HttpError(400, "Describe what you'd like, in up to 4000 characters.");
-    // Website and posts are separate runs. Builds from before the split send no mode; they get
-    // the website, which is what they were opened for most often.
-    const mode = body.mode ?? "site";
-    if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'site', 'posts', 'schedule' or 'launch'.");
+    const mode = checkMode(body.mode);
     await ensureSettings(userId);
     // What the person writes is sent to the model provider, so the AI consent switch applies.
     await requireAiConsent(userId);
@@ -379,15 +381,13 @@ export function buildRouter(): Router {
     await billed(() => billing.useOne(userId));
     return async () => {
       const out = await guarded(() => agent().run(userId, request, {
-        mode: mode as AgentMode, allowWebSearch: body.allow_web_search === true,
-        // A photo goes on posts, on the website, or both in a launch.
-        photoId: mode === "posts" || mode === "launch" || mode === "site" ? body.photo_id ?? null : null,
+        mode, allowWebSearch: body.allow_web_search === true,
+        // A photo goes on posts, posters and listings, in Posts or a launch.
+        photoId: mode === "posts" || mode === "launch" ? body.photo_id ?? null : null,
         // Their calendar and reminders as their device sees them, for this request; never stored on its own.
         schedule: mode === "schedule" || mode === "launch" ? body.schedule : undefined,
         // Continue an earlier task: the id from the previous answer.
         conversationId: body.conversation_id,
-        // The brand kit from the app: business name and colors for the website.
-        brand: body.brand,
         // A text message the person received and shared, to explain or help answer.
         receivedText: body.received_text,
         // The person's clock, for "Friday at 9" and scheduled posts.
@@ -411,9 +411,13 @@ export function buildRouter(): Router {
     return { run_id: runJobs.start(userId, work) };
   });
 
+  /** With ?wait=<seconds> (up to 25), answers as soon as the run finishes instead of right away,
+   *  so the app hears the moment the answer is ready without checking every few seconds. */
   r.get("/agent/runs/:id", async (ctx) => {
     const userId = requireAuth(ctx);
     assertUuid(ctx.params.id);
+    const wait = waitSeconds(ctx.url.searchParams.get("wait"));
+    if (wait > 0) await runJobs.wait(userId, ctx.params.id, wait * 1000);
     const state = await runJobs.find(userId, ctx.params.id);
     if (!state) throw new HttpError(404, "Hera lost track of that request, probably because the server restarted. Please send it again.", true, "run_lost");
     if (state.status === "failed") throw new HttpError(state.failure.status, state.failure.message, true, state.failure.code);
@@ -490,16 +494,6 @@ export function buildRouter(): Router {
     const userId = requireAuth(ctx);
     await guarded(() => agent().reject(userId, ctx.params.id));
     return { ok: true };
-  });
-
-  r.get("/agent/site", async (ctx) => {
-    const userId = requireAuth(ctx);
-    return await guarded(() => agent().site(userId));
-  });
-
-  r.get("/agent/site/file", async (ctx) => {
-    const userId = requireAuth(ctx);
-    return await guarded(() => agent().siteFile(userId, ctx.url.searchParams.get("path")));
   });
 
   return r;

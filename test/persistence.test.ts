@@ -79,9 +79,9 @@ test("a finished run's answer can be collected after a restart; a running one sa
   const otherServer = new RunJobs((e) => ({ status: 500, message: String(e) }), undefined, undefined, sqlRunSink(run));
   assert.deepEqual(await otherServer.find(U, id), { status: "running" }, "during a deploy, the new server knows it's still going");
 
-  finish({ text: "Your site is ready" });
+  finish({ text: "Your posts are ready" });
   await new Promise((r) => setTimeout(r, 50));
-  assert.deepEqual(await otherServer.find(U, id), { status: "finished", result: { text: "Your site is ready" } });
+  assert.deepEqual(await otherServer.find(U, id), { status: "finished", result: { text: "Your posts are ready" } });
   assert.equal(await otherServer.find("00000000-0000-0000-0000-000000000000", id), null, "only the person's own");
 });
 
@@ -96,4 +96,49 @@ test("stopping waits for runs in flight and takes no new ones", async () => {
   await drained;
   assert.equal(jobs.inFlight, 0);
   assert.ok(ticks >= 3);
+});
+
+test("a saved website proposal from before websites were removed is skipped on restart, and the rest load", () => {
+  const store = new ActionStore();
+  const at = new Date().toISOString();
+  const saved = (id: string, kind: string, payload: Record<string, unknown>) => ({
+    proposal: { id, userId: U, kind, payload, payloadHash: "h", summary: "s", checks: [], tainted: false, status: "pending", createdAt: at, expiresAt: new Date(Date.now() + 86_400_000).toISOString() },
+    tokenHash: null,
+  });
+  store.restore([
+    saved("old-site", "site.deploy", { connectionId: "host", siteId: "s1", contentHash: "a".repeat(64) }),
+    saved("a-post", "social.post", post),
+  ]);
+  assert.deepEqual(store.list(U).map((p) => p.id), ["a-post"]);
+  assert.throws(() => store.get("old-site", U), { code: "not_found" });
+});
+
+test("waiting on a run answers the moment it finishes", async () => {
+  const jobs = new RunJobs((e) => ({ status: 500, message: String(e) }));
+  let finish!: (v: unknown) => void;
+  const id = jobs.start(U, () => new Promise((r) => { finish = r; }));
+  const started = Date.now();
+  setTimeout(() => finish("done"), 30);
+  await jobs.wait(U, id, 5_000);
+  assert.ok(Date.now() - started < 1_000, "it didn't wait out the whole time");
+  assert.deepEqual(jobs.get(U, id), { status: "finished", result: "done" });
+});
+
+test("waiting on a run gives up after the time asked, and doesn't wait at all when there's nothing to wait for", async () => {
+  const jobs = new RunJobs((e) => ({ status: 500, message: String(e) }));
+  const id = jobs.start(U, () => new Promise(() => {}));
+  let started = Date.now();
+  await jobs.wait(U, id, 40);
+  const waited = Date.now() - started;
+  assert.ok(waited >= 35 && waited < 1_000, `waited ${waited}ms`);
+  assert.deepEqual(jobs.get(U, id), { status: "running" });
+
+  // Someone else's run, an unknown id, and a finished run: no wait.
+  const done = jobs.start(U, async () => "ok");
+  await new Promise((r) => setTimeout(r, 0));
+  started = Date.now();
+  await jobs.wait("00000000-0000-0000-0000-000000000000", id, 5_000);
+  await jobs.wait(U, "00000000-0000-0000-0000-00000000dead", 5_000);
+  await jobs.wait(U, done, 5_000);
+  assert.ok(Date.now() - started < 100);
 });

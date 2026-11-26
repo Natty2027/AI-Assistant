@@ -6,28 +6,17 @@
  *   npm run mock:app        then point the app at http://localhost:4480 with any token
  */
 import http from "node:http";
+import crypto from "node:crypto";
 
 const PORT = Number(process.env.PORT ?? 4480);
 
-const SITE = {
-  "index.html": `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Clay Corner</title><link rel="stylesheet" href="style.css"></head>
-<body><header><h1>Clay Corner</h1><p>Pottery for beginners, Saturdays at 10am.</p></header>
-<main><h2>What you'll make</h2><p>A bowl and a mug in four weeks. All clay and firing included.</p>
-<p><a href="about.html">About the studio</a></p></main></body></html>`,
-  "about.html": `<!doctype html><html><head><meta charset="utf-8"><title>About</title><link rel="stylesheet" href="style.css"></head>
-<body><h1>About the studio</h1><p>A small community studio on Main Street.</p><p><a href="index.html">Home</a></p></body></html>`,
-  "style.css": `body{font-family:-apple-system,system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem;color:#3b3127;background:#faf6f0}
-h1{color:#8a4b2a}header{border-bottom:2px solid #e3d5c3;margin-bottom:1rem}`,
-};
-
 const connections = [
-  { id: "c-netlify", kind: "hosting", provider: "netlify", platform: null, label: "Netlify (you@example.com)", publishesTo: null },
-  { id: "c-bsky", kind: "social", provider: "bluesky", platform: "bluesky", label: "Bluesky (@claycorner.bsky.social)", publishesTo: null },
+  { id: "c-bsky", kind: "social", provider: "bluesky", platform: "bluesky", label: "Bluesky (@claycorner.bsky.social)" },
 ];
 
 let proposals = [];
 let n = 0;
+const runs = new Map();
 
 function proposal(kind, label, summary, payload, checks = []) {
   return {
@@ -38,17 +27,16 @@ function proposal(kind, label, summary, payload, checks = []) {
 }
 
 function run() {
-  const site = proposal("site.deploy", "Publish a website", "Publish the Clay Corner website", { connectionId: "c-netlify", siteId: "u-demo", contentHash: "a".repeat(64) });
   const post = proposal("social.post", "Publish a social post", "Announce the Saturday class on Bluesky", {
     connectionId: "c-bsky", text: "Beginner pottery starts this Saturday at 10am at Clay Corner. Four weeks, a bowl and a mug, all materials included.",
     link: "https://claycorner.example/", sponsored: false, mediaRefs: [],
   });
-  proposals = [post, site, ...proposals];
+  proposals = [post, ...proposals];
   return {
     status: "done",
-    text: "I built a two-page website for Clay Corner and wrote posts announcing the class. The website and the Bluesky post are waiting for your approval in Review; nothing has been published. The Instagram and X posts are for you to share yourself.",
+    text: "I wrote posts announcing the class. The Bluesky post is waiting for your approval in Review; nothing has been posted. The Instagram and X posts are for you to share yourself.",
     tainted: false,
-    proposals: [post, site],
+    proposals: [post],
     drafts: [
       { id: "d1", connectionId: "c-bsky", platform: "bluesky", text: post.payload.text, link: post.payload.link, sponsored: false, problems: [] },
       { id: "d2", connectionId: null, platform: "instagram", text: "Ever wanted to try the wheel? 🏺 Our beginner pottery class starts this Saturday at 10am. Four weeks, one bowl, one mug, all clay and firing included. Link in bio to sign up.", link: null, sponsored: false,
@@ -76,9 +64,28 @@ http.createServer(async (req, res) => {
   if (req.method === "GET" && p === "/consent/ai") return send(res, 200, { granted: true, at: new Date().toISOString() });
   if (req.method === "POST" && p === "/consent/ai") return send(res, 200, { ok: true, granted: body.granted });
   if (req.method === "GET" && p === "/agent/connections") return send(res, 200, { connections });
+  // Website building was removed: an app that still asks for it is told to update, as the server does.
+  if (req.method === "POST" && (p === "/agent/run" || p === "/agent/runs") && body.mode === "site") {
+    return send(res, 410, { error: "Building websites was removed from Hera. Update the app to the latest version.", code: "mode_removed" });
+  }
   if (req.method === "POST" && p === "/agent/run") {
     await new Promise((r) => setTimeout(r, 1200)); // feel like real work
     return send(res, 200, run());
+  }
+  // Background runs: finished 1.2 seconds after they start. ?wait= holds the check until then.
+  if (req.method === "POST" && p === "/agent/runs") {
+    const id = crypto.randomUUID();
+    runs.set(id, { readyAt: Date.now() + 1200, result: run() });
+    return send(res, 200, { run_id: id });
+  }
+  const r = p.match(/^\/agent\/runs\/([^/]+)$/);
+  if (req.method === "GET" && r) {
+    const job = runs.get(r[1]);
+    if (!job) return send(res, 404, { error: "Hera lost track of that request. Please send it again.", code: "run_lost" });
+    const wait = Math.min(25, Math.max(0, Math.floor(Number(url.searchParams.get("wait")) || 0))) * 1000;
+    const left = job.readyAt - Date.now();
+    if (left > 0 && wait > 0) await new Promise((done) => setTimeout(done, Math.min(left, wait)));
+    return Date.now() >= job.readyAt ? send(res, 200, { status: "finished", result: job.result }) : send(res, 200, { status: "running" });
   }
   if (req.method === "GET" && p === "/agent/proposals") return send(res, 200, { proposals });
   if (m) {
@@ -91,20 +98,11 @@ http.createServer(async (req, res) => {
     }
     if (m[2] === "execute") {
       target.status = "executed";
-      target.result = target.kind === "site.deploy"
-        ? { ok: true, ref: "https://clay-corner.netlify.app", detail: "Published at https://clay-corner.netlify.app" }
-        : { ok: true, ref: "https://bsky.app/profile/claycorner.bsky.social/post/3kdemo", detail: "Posted at https://bsky.app/profile/claycorner.bsky.social/post/3kdemo" };
+      target.result = { ok: true, ref: "https://bsky.app/profile/claycorner.bsky.social/post/3kdemo", detail: "Posted at https://bsky.app/profile/claycorner.bsky.social/post/3kdemo" };
       return send(res, 200, { ok: true, proposal: target });
     }
     target.status = "rejected";
     return send(res, 200, { ok: true });
-  }
-  if (req.method === "GET" && p === "/agent/site") {
-    return send(res, 200, { files: Object.entries(SITE).map(([path, c]) => ({ path, bytes: Buffer.byteLength(c) })), checks: [], contentHash: "a".repeat(64) });
-  }
-  if (req.method === "GET" && p === "/agent/site/file") {
-    const contents = SITE[url.searchParams.get("path") ?? ""];
-    return contents ? send(res, 200, { contents }) : send(res, 404, { error: "No such file." });
   }
   send(res, 404, { error: `no route for ${req.method} ${p}` });
 }).listen(PORT, () => console.log(`mock app server on http://localhost:${PORT}`));

@@ -2,18 +2,12 @@
  * Posters: Hera writes the words and picks a style; the app draws it. The harness keeps posters
  * short and honest, and nothing is published.
  */
-import { test, before } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { runAgent, AGENT_MODEL } from "../server/agent/loop.ts";
 import { ActionStore } from "../server/agent/approvals.ts";
-import { SiteSandbox } from "../server/agent/sandbox.ts";
 import { makeCtx } from "./helpers/agentCtx.ts";
 
-let base: string;
-before(async () => { base = await mkdtemp(path.join(tmpdir(), "hera-poster-")); });
 const msg = (content: any[], stop_reason = "tool_use") =>
   ({ id: "m", type: "message", role: "assistant", model: AGENT_MODEL, content, stop_reason, usage: { input_tokens: 10, output_tokens: 10 } }) as any;
 const use = (id: string, name: string, input: Record<string, unknown>) => ({ type: "tool_use", id, name, input });
@@ -22,11 +16,10 @@ const poster = (over: Record<string, unknown> = {}) => ({
   call_to_action: "Book now", footer: "claycorner.example", emoji: "🏺✨", use_photo: false, ...over,
 });
 
-let n = 0;
-async function run(mode: "posts" | "launch" | "site", steps: Array<() => any>, extra: Record<string, unknown> = {}) {
+async function run(mode: "posts" | "launch" | "schedule", steps: Array<() => any>, extra: Record<string, unknown> = {}) {
   const calls: any[] = [];
   const client = { beta: { messages: { create: async (p: any) => { calls.push(structuredClone(p)); return steps[Math.min(calls.length - 1, steps.length - 1)](); } } } };
-  const out = await runAgent({ mode, client, store: new ActionStore(), sandbox: await SiteSandbox.open(base, `s-${++n}`), userId: "u1", context: () => makeCtx(), ...extra } as any, "Make a poster for my workshop");
+  const out = await runAgent({ mode, client, store: new ActionStore(), userId: "u1", context: () => makeCtx(), ...extra } as any, "Make a poster for my workshop");
   return { out, calls, results: (i: number) => calls[i].messages.at(-1).content as any[] };
 }
 const done = () => msg([{ type: "text", text: "Here's your poster." }], "end_turn");
@@ -61,11 +54,11 @@ test("posters stay short, honest and only use a photo that was attached", async 
   assert.ok(out.posterDrafts[0].problems.length > 0, JSON.stringify(out.posterDrafts[0]));
 });
 
-test("a launch includes a poster; the website mode can't design one", async () => {
+test("a launch includes a poster; schedule mode can't design one", async () => {
   const launch = await run("launch", [() => msg([use("d1", "design_poster", poster({ style: "bold" }))]), done]);
   assert.equal(launch.out.posterDrafts.length, 1);
   assert.match(launch.calls[0].system, /Poster: design one poster/);
-  const site = await run("site", [() => msg([use("d1", "design_poster", poster())]), done]);
-  assert.equal(site.out.posterDrafts.length, 0);
-  assert.match(site.results(1)[0].content, /switch to/);
+  const sched = await run("schedule", [() => msg([use("d1", "design_poster", poster())]), done]);
+  assert.equal(sched.out.posterDrafts.length, 0);
+  assert.match(sched.results(1)[0].content, /switch to Posts/);
 });

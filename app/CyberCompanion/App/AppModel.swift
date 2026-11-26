@@ -168,7 +168,7 @@ final class AppModel {
 
     /* ---------------- the assistant ---------------- */
 
-    /// `photo` is a JPEG for the posts or the website; it's uploaded first.
+    /// `photo` is a JPEG for the posts and posters; it's uploaded first.
     func runAssistant(prompt: String, mode: CreateMode, allowWebSearch: Bool, photo: Data? = nil) async {
         let request = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !request.isEmpty else { return }
@@ -184,12 +184,9 @@ final class AppModel {
             default: nil
             }
             let continuing = conversation?.mode == mode ? conversation?.id : nil
-            let kit = brand.kit
-            let brandInfo = RunBrand(businessName: kit.businessName.isEmpty ? nil : kit.businessName,
-                                     primaryColor: kit.primaryHex, accentColor: kit.accentHex)
             let shared = receivedText
             let run = try await client.runAssistant(request: request, mode: mode, allowWebSearch: allowWebSearch,
-                                                    photoID: photoID, schedule: snapshot, conversationID: continuing, brand: brandInfo,
+                                                    photoID: photoID, schedule: snapshot, conversationID: continuing,
                                                     receivedText: shared)
             // Hera has it now, in this conversation; it isn't sent again with the next reply.
             if shared != nil { receivedText = nil }
@@ -377,14 +374,6 @@ final class AppModel {
         guard confirmed else { return (false, nil) }
         await refreshConnections()
         return (true, note)
-    }
-
-    func connectNetlify(token: String) async -> Bool {
-        guard let client else { return false }
-        return await perform {
-            _ = try await client.connectNetlify(token: token.trimmingCharacters(in: .whitespacesAndNewlines))
-            try await loadConnections(client)
-        }
     }
 
     func connectBluesky(handle: String, appPassword: String) async -> Bool {

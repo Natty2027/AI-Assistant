@@ -22,7 +22,7 @@ struct PlanSheet: View {
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Many more requests every month", systemImage: "bolt.fill")
-                        Label("Websites, posters, posts, eBay listings and launches", systemImage: "wand.and.stars")
+                        Label("Posters, posts, eBay listings and launches", systemImage: "wand.and.stars")
                         Label("Cancel any time in your Apple account", systemImage: "checkmark.circle")
                     }
                     .labelStyle(.alignedIcon)

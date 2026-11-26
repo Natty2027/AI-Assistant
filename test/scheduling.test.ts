@@ -2,13 +2,10 @@
  * Ongoing posts, invites and reminder emails. A post can be approved now and go out at its time:
  * checked when approved, held, checked again when due, posted once (even with two servers running
  * during a deploy), and cancellable until then. Emails can carry a calendar invite and a time to
- * be reminded to send them; websites can carry an "Add to my calendar" file.
+ * be reminded to send them.
  */
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 process.env.MASTER_KEY = Buffer.alloc(32, 12).toString("base64");
 const { makeDb, addUser } = await import("./helpers/db.ts");
@@ -16,7 +13,6 @@ const { ActionStore, sqlProposalSink } = await import("../server/agent/approvals
 const { scheduleChecks } = await import("../server/agent/policy.ts");
 const { makeIcs, IcsError } = await import("../server/agent/ics.ts");
 const { runAgent, AGENT_MODEL } = await import("../server/agent/loop.ts");
-const { SiteSandbox } = await import("../server/agent/sandbox.ts");
 const { readLocalTime } = await import("../server/agent/service.ts");
 const { makeCtx } = await import("./helpers/agentCtx.ts");
 
@@ -115,12 +111,10 @@ test("Hera schedules posts, attaches invites, sets reminder times, and knows the
     () => msg([use("p1", "draft_post", { connection_id: "x1", text: "Open house Saturday!", link: null, sponsored: false, attach_photo: false, post_at: "2026-11-21T09:00:00-08:00" })]),
     () => msg([use("e1", "draft_email", { to: [], cc: [], subject: "Open house Saturday", body: "Join us!", send_at: "2026-11-20T09:00:00-08:00",
       invite: { title: "Open House", start: "2026-11-22T10:00:00-08:00", end: "2026-11-22T14:00:00-08:00", location: "Clay Corner, 12 Main St", description: null } })]),
-    () => msg([use("c1", "add_calendar_file", { path: "events/open-house.ics", title: "Open House", start: "2026-11-22T10:00:00-08:00", end: "2026-11-22T14:00:00-08:00", location: null, description: null })]),
     () => msg([{ type: "text", text: "Done." }], "end_turn"),
   ];
   const client = { beta: { messages: { create: async (p: any) => { calls.push(structuredClone(p)); return steps[calls.length - 1](); } } } };
-  const sandbox = await SiteSandbox.open(await mkdtemp(path.join(tmpdir(), "hera-sched-")), "s1");
-  const out = await runAgent({ mode: "launch", client, store: new ActionStore(), sandbox, userId: "u1", context: () => makeCtx(),
+  const out = await runAgent({ mode: "launch", client, store: new ActionStore(), userId: "u1", context: () => makeCtx(),
     localTime: { now: "2026-11-19T09:00:00-08:00", timeZone: "America/Los_Angeles" } } as any, "Launch Saturday's open house");
 
   assert.match(calls[0].system, /It is now 2026-11-19T09:00:00-08:00 in the person's time zone \(America\/Los_Angeles\)/);
@@ -128,7 +122,6 @@ test("Hera schedules posts, attaches invites, sets reminder times, and knows the
   const email = out.emailDrafts[0];
   assert.equal(email.sendAt, "2026-11-20T09:00:00-08:00");
   assert.match(email.invite!.ics, /DTSTART:20261122T180000Z\r\nDTEND:20261122T220000Z/);
-  assert.match(await sandbox.read("events/open-house.ics"), /BEGIN:VEVENT/);
 });
 
 /* ---------------- invites ---------------- */

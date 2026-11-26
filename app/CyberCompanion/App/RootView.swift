@@ -3,7 +3,7 @@ import SwiftUI
 /// Tabs on iPhone, a sidebar on iPad and Mac.
 struct RootView: View {
     enum Section: Hashable {
-        case create, review, website, accounts, settings
+        case create, review, accounts, settings
     }
 
     @Environment(AppModel.self) private var model
@@ -65,9 +65,6 @@ struct RootView: View {
                 ReviewView()
             }
             .badge(model.pendingCount)
-            Tab("Website", systemImage: "globe", value: .website) {
-                SiteView()
-            }
             Tab("Accounts", systemImage: "person.crop.circle.badge.plus", value: .accounts) {
                 AccountsView()
             }

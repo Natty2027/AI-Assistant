@@ -14,7 +14,7 @@ struct EbayTests {
 
     @Test func aListingReadsAsBuyersWillSeeIt() throws {
         let p = try JSONDecoder().decode(Proposal.self, from: Data(listingJSON.utf8))
-        #expect(p.isListing && !p.isPost && !p.isSite)
+        #expect(p.isListing && !p.isPost)
         #expect(p.listingTitle == "Canon AE-1 35mm Film Camera")
         #expect(p.listingPrice == "180.00")
         #expect(p.listingCondition == "Used, very good")

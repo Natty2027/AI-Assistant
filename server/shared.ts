@@ -10,7 +10,7 @@ export type Run = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
- * A provider (Netlify, Bluesky) refused or failed. unauthorized: reconnect needed. rejected: the
+ * A provider (Bluesky, X, Meta, eBay) refused or failed. unauthorized: reconnect needed. rejected: the
  * provider refused this request. unavailable: retry later. Messages carry a status code and a
  * kind, never a response body, because a provider's error body can echo request data.
  */

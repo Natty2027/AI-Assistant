@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Rule results, worded by the server for people. Used wherever a site or post is shown before
-/// it's approved: Create, Review and Website.
+/// Rule results, worded by the server for people. Used wherever a post or listing is shown
+/// before it's approved: Create and Review.
 struct CheckList: View {
     let checks: [Check]
 

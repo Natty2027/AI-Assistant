@@ -7,7 +7,6 @@ export function makeCtx(over: Partial<Context> = {}): Context {
       { id: "x1", kind: "social", platform: "x", label: "Studio on X" },
       { id: "x2", kind: "social", platform: "x", label: "Second X account" },
       { id: "ig", kind: "social", platform: "instagram", label: "Studio on Instagram" },
-      { id: "host", kind: "hosting", label: "Website hosting" },
       { id: "mail", kind: "email", label: "Newsletter" },
       { id: "sms", kind: "sms", label: "Texts" },
       { id: "ads", kind: "ads", label: "Ads account" },
@@ -23,8 +22,6 @@ export function makeCtx(over: Partial<Context> = {}): Context {
     usageToday: {},
     spendCapCents: 0,
     spentThisMonthCents: 0,
-    siteScans: {},
-    siteDigests: {},
     ...over,
   };
 }

@@ -1,18 +1,13 @@
 /**
- * Selling Hera: the home page links to the App Store (or TestFlight before launch), websites on the
- * free plan carry a "Built with Hera" link that doesn't change what the person approved, and the
- * owner's dashboard counts people at each step behind a password.
+ * Selling Hera: the home page links to the App Store (or TestFlight before launch) and describes
+ * only what Hera does, and the owner's dashboard counts people at each step behind a password.
  */
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 process.env.MASTER_KEY = Buffer.alloc(32, 12).toString("base64");
 const { makeDb, addUser } = await import("./helpers/db.ts");
-const { adminAllowed, getHeraUrl, growth, growthPage, homePage, withBuiltWithHera } = await import("../server/marketing.ts");
-const { SiteSandbox } = await import("../server/agent/sandbox.ts");
+const { adminAllowed, getHeraUrl, growth, growthPage, homePage } = await import("../server/marketing.ts");
 
 let run: Awaited<ReturnType<typeof makeDb>>["run"];
 before(async () => {
@@ -36,21 +31,10 @@ test("the home page goes to the App Store with Safari's banner, or TestFlight be
   assert.equal(getHeraUrl({ testflightUrl: "https://evil.example/join" }), null, "only real TestFlight links");
 });
 
-test("'Built with Hera' goes just before </body>", () => {
-  const out = withBuiltWithHera("<html><body><h1>Shop</h1></body></html>", "https://hera.example/");
-  assert.match(out, /<h1>Shop<\/h1><p[^>]*>Built with <a href="https:\/\/hera\.example\/"[^>]*>Hera<\/a><\/p>\n<\/body>/);
-  assert.match(withBuiltWithHera("<h1>No body tag</h1>", "https://hera.example/"), /<h1>No body tag<\/h1>\n<p/);
-});
-
-test("the link is added at publish time and doesn't change the approved fingerprint", async () => {
-  const s = await SiteSandbox.open(await mkdtemp(path.join(tmpdir(), "hera-mk-")), "site-1");
-  await s.write("index.html", "<html><head><title>Shop</title></head><body><h1>Shop</h1></body></html>");
-  await s.write("site.css", "body{}");
-  const plain = await s.publishable();
-  const badged = await s.publishable({ decorate: (h) => withBuiltWithHera(h, "https://hera.example/") });
-  assert.equal(badged.digest, plain.digest);
-  assert.match(String(badged.files.find((f) => f.path === "index.html")!.contents), /Built with/);
-  assert.equal(String(badged.files.find((f) => f.path === "site.css")!.contents), "body{}");
+test("the home page no longer offers websites", () => {
+  const page = homePage({}, "help@hera.app");
+  assert.doesNotMatch(page, /website/i);
+  assert.match(page, /Scheduled posts/);
 });
 
 test("the dashboard needs ADMIN_TOKEN as the password", () => {

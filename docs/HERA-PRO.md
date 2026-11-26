@@ -2,7 +2,7 @@
 
 ## Hera Pro (subscriptions)
 
-Each request to Hera (a website, a set of posts, a listing, a reply) counts as one for the month.
+Each request to Hera (a set of posts, a launch, a listing, a reply) counts as one for the month.
 The free plan gets `FREE_REQUESTS_PER_MONTH` (default 20); Hera Pro gets `PRO_REQUESTS_PER_MONTH`
 (default 300). Limits are **off** until `BILLING=on`, so nobody is stopped before the
 subscription exists. Counting starts as soon as migration 008 is run.
@@ -35,9 +35,10 @@ after checking the App Store's signature back to Apple's root certificate (`serv
 
 ## Which AI model answers
 
-Websites and Launch Kit use the most capable model (Claude Opus 5.5). Studio (posts, posters,
-listings), Schedule, emails and texts use the faster, much cheaper Claude Sonnet 5.5
-(`MODEL_FOR` in `server/agent/loop.ts`).
+Every mode (Studio, Schedule and Launch Kit) uses Claude Sonnet 5.5 (`claude-sonnet-5-5`) at
+medium effort (`MODEL_FOR` in `server/agent/loop.ts`). Prompt caching reuses the tools, system
+prompt and conversation between the turns of a run, and several tools asked for in one turn run in
+parallel. A launch has up to 40 steps and takes a few minutes.
 
 ## Approvals and runs survive deploys
 
@@ -48,6 +49,7 @@ the server stopped is marked failed rather than run twice.
 When Railway deploys, the old server stops taking new requests and waits for Hera to finish what
 she's doing. Set how long it may wait in Railway Variables:
 
-- `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=900` (15 minutes: enough for a website build)
+- `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=900` (15 minutes: plenty for a long launch to finish;
+  a launch takes a few minutes, so 300 is also enough)
 
 Run `db/migrations/007_persistent_approvals.sql` in Supabase once.

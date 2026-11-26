@@ -1,13 +1,14 @@
 /**
- * Requests to Hera that run in the background. Building a website can take Hera ten minutes or
- * more (every page is a long step), which is longer than a phone will hold one request open, so
- * the app starts a run, gets its id at once, and checks back every few seconds for the answer.
+ * Requests to Hera that run in the background. A launch can take Hera a few minutes, which is
+ * longer than a phone will reliably hold one request open, so the app starts a run, gets its id at
+ * once, and checks back for the answer. A check can wait (see wait) so the answer arrives the
+ * moment it's ready rather than at the next check.
  *
  * A run belongs to this server process. When the server is told to stop (a deploy), it stops
  * taking new runs and waits for the ones in flight to finish (drain). Finished answers are saved
  * (see RunSink) and kept for half an hour, so an app that was in the background, or that checks in
  * after a deploy, can still collect its answer. One run per person at a time, so two requests
- * can't edit the same website at once.
+ * can't draft over each other or use up the month's requests at once.
  */
 import { randomUUID } from "node:crypto";
 
@@ -18,7 +19,7 @@ export type RunState =
   | { status: "finished"; result: unknown }
   | { status: "failed"; failure: RunFailure };
 
-interface Job { userId: string; state: RunState; endedAt: number | null }
+interface Job { userId: string; state: RunState; endedAt: number | null; waiters: Set<() => void> }
 
 /** Where finished runs are kept, so their answers survive a restart. */
 export interface RunSink {
@@ -60,7 +61,7 @@ export class RunJobs {
   /** Starts `work` and returns the run's id at once. Callers check isRunning first. */
   start(userId: string, work: () => Promise<unknown>): string {
     const id = randomUUID();
-    const job: Job = { userId, state: { status: "running" }, endedAt: null };
+    const job: Job = { userId, state: { status: "running" }, endedAt: null, waiters: new Set() };
     this.jobs.set(id, job);
     // Saved as running too: during a deploy the new server answers the app's check-ins while this
     // one finishes the run, and it reads this to say "still working" rather than "lost".
@@ -68,6 +69,8 @@ export class RunJobs {
     const end = (state: RunState) => {
       job.state = state;
       job.endedAt = this.clock();
+      for (const wake of job.waiters) wake();
+      job.waiters.clear();
       this.sink?.save(id, userId, state).catch((e) => console.error("[runs] couldn't save a result", e instanceof Error ? e.message : e));
     };
     work().then(
@@ -82,6 +85,21 @@ export class RunJobs {
     this.sweep();
     const job = this.jobs.get(id);
     return job && job.userId === userId ? job.state : null;
+  }
+
+  /**
+   * Resolves as soon as the run is no longer running, or after `ms`, whichever comes first. At
+   * once if it isn't this person's, isn't running, or belongs to another server process: the
+   * caller then answers from find as usual.
+   */
+  wait(userId: string, id: string, ms: number): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job || job.userId !== userId || job.state.status !== "running" || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const wake = () => { clearTimeout(timer); job.waiters.delete(wake); resolve(); };
+      const timer = setTimeout(wake, ms);
+      job.waiters.add(wake);
+    });
   }
 
   /** Like get, but also finds answers saved before a restart. */

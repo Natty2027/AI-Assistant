@@ -85,21 +85,22 @@ test("an answer to Hera's question continues the same task, and its drafts carry
 });
 
 test("a follow-up after a finished answer carries on from it", async () => {
-  const first = scripted([() => say("Your site has a blue header and a bakery menu.")]);
-  const one = await service(first.client).run(U, "Make a bakery site", { mode: "site" });
-  const second = scripted([() => say("Done, the header is green now.")]);
-  await service(second.client).run(U, "Make the header green instead", { mode: "site", conversationId: one.conversationId });
+  const first = scripted([() => say("Here's a post about your bakery's new sourdough.")]);
+  const one = await service(first.client).run(U, "Write a post for my bakery", { mode: "posts" });
+  const second = scripted([() => say("Done, it's shorter now.")]);
+  await service(second.client).run(U, "Make it shorter", { mode: "posts", conversationId: one.conversationId });
   const sent = second.calls[0].messages;
   assert.deepEqual(sent.map((m: any) => m.role), ["user", "assistant", "user"]);
-  assert.equal(sent[1].content, "Your site has a blue header and a bakery menu.");
-  assert.equal(sent[2].content, "Make the header green instead");
+  assert.equal(sent[1].content, "Here's a post about your bakery's new sourdough.");
+  // The newest message goes as a text block, so it can carry the prompt-cache marker.
+  assert.equal(sent[2].content[0].text, "Make it shorter");
 });
 
 test("a conversation can't be continued by someone else, in another mode, or from a made-up id", async () => {
   const first = scripted([() => say("Noted.")]);
-  const one = await service(first.client).run(U, "My secret plan", { mode: "site" });
+  const one = await service(first.client).run(U, "My secret plan", { mode: "posts" });
 
-  for (const [who, mode, id] of [[OTHER, "site", one.conversationId], [U, "posts", one.conversationId], [U, "site", "not-an-id"]] as const) {
+  for (const [who, mode, id] of [[OTHER, "posts", one.conversationId], [U, "launch", one.conversationId], [U, "posts", "not-an-id"]] as const) {
     const fresh = scripted([() => say("Hi.")]);
     const out = await service(fresh.client).run(who, "hello", { mode, conversationId: id });
     assert.equal(fresh.calls[0].messages.length, 1, `${who} ${mode} starts fresh`);
@@ -152,22 +153,8 @@ test("before the migration is run, memory still works in-process instead of fail
   const store = new MemoryStore(async () => { throw missing; });
   const saved = await store.remember(U, "Uses the name Clay Corner");
   assert.equal((await store.memories(U))[0].text, "Uses the name Clay Corner");
-  const id = await store.saveConversation(U, null, "site", { messages: [], drafts: [], tainted: false, pending: null });
-  assert.ok(id && (await store.conversation(U, id, "site")));
-  assert.equal(await store.conversation(OTHER, id!, "site"), null);
+  const id = await store.saveConversation(U, null, "posts", { messages: [], drafts: [], tainted: false, pending: null });
+  assert.ok(id && (await store.conversation(U, id, "posts")));
+  assert.equal(await store.conversation(OTHER, id!, "posts"), null);
   assert.equal(await store.forgetMemory(U, saved.saved!.id), true);
-});
-
-test("saved conversations stay small: earlier full files are replaced with a note", async () => {
-  const big = "<p>" + "x".repeat(5000) + "</p>";
-  const s = scripted([
-    () => msg([{ type: "thinking", thinking: "plan", signature: "sig" }, use("w1", "write_site_file", { path: "index.html", contents: big })]),
-    () => say("Built it."),
-  ]);
-  const out = await service(s.client).run(U, "Build a site", { mode: "site" });
-  const { rows } = await run(`select state from agent_conversations where id = $1`, [out.conversationId]);
-  const earlier = rows[0].state.messages[1].content;
-  assert.ok(!earlier.some((b: any) => b.type === "thinking"), "earlier thinking isn't kept");
-  assert.match(earlier.find((b: any) => b.type === "tool_use").input.contents, /read_site_file/);
-  assert.ok(JSON.stringify(rows[0].state).length < 3000);
 });

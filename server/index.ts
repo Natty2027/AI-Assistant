@@ -47,7 +47,7 @@ server.listen(config.port, "0.0.0.0", () => {
 });
 
 // Railway sends SIGTERM, then stops the process RAILWAY_DEPLOYMENT_DRAINING_SECONDS later. Use
-// that time to let Hera finish what she's doing (a website can take ten minutes), keeping a few
+// that time to let Hera finish what she's doing (a launch can take a few minutes), keeping a few
 // seconds to close cleanly. The new deployment already answers the app meanwhile.
 const drainMs = Math.max(0, (Number(process.env.RAILWAY_DEPLOYMENT_DRAINING_SECONDS) || 0) * 1000 - 5000);
 let stopping = false;

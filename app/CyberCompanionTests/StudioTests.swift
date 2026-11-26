@@ -59,7 +59,7 @@ struct StudioTests {
     }
 
     @Test func studioLeadsTheCreateScreen() {
-        #expect(CreateMode.displayOrder == [.launch, .posts, .site, .schedule])
+        #expect(CreateMode.displayOrder == [.launch, .posts, .schedule])
         #expect(CreateMode.posts.title == "Studio")
         #expect(CreateMode.posts.rawValue == "posts", "the server's name doesn't change")
     }

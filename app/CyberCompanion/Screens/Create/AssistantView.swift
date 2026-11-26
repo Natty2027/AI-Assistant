@@ -1,7 +1,7 @@
 import PhotosUI
 import SwiftUI
 
-/// Type or speak a request: "make a website for my pottery class and write posts announcing it".
+/// Type or speak a request: "make a poster for my pottery class and write posts announcing it".
 struct AssistantView: View {
     var openSettings: () -> Void
     var openReview: () -> Void
@@ -11,7 +11,7 @@ struct AssistantView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var prompt = ""
-    /// Website or posts: one at a time, never both in the same run.
+    /// Posts, schedule or launch: one at a time, never two in the same run.
     @State private var mode: CreateMode = .posts
     @State private var allowWebSearch = false
     /// A photo for the posts (Instagram needs one). Posts only.
@@ -36,7 +36,6 @@ struct AssistantView: View {
     private let suggestions: [(CreateMode, String, String)] = [
         (.posts, "photo.artframe", "Make a poster and posts for Saturday's open house, 10 AM to 2 PM"),
         (.launch, "sparkles", "Launch my pottery workshop on the 20th at 6 PM: $40, 8 spots"),
-        (.site, "globe", "Make a one-page website for my business"),
         (.posts, "calendar.badge.plus", "Announce my next event on social media"),
         (.posts, "sparkles", "Write a week of posts about what I do"),
         (.schedule, "calendar", "What's on my schedule tomorrow? Add a gym session in a free hour"),
@@ -108,7 +107,7 @@ struct AssistantView: View {
         }
         .auroraBackground()
         .onChange(of: voice.transcript) { _, spoken in
-            // The answer to "website or posts?" isn't part of the request.
+            // The answer to "posts, launch or schedule?" isn't part of the request.
             guard conversation != .choosing else { return }
             prompt = [promptBeforeVoice, spoken].filter { !$0.isEmpty }.joined(separator: " ")
         }
@@ -255,7 +254,7 @@ struct AssistantView: View {
                 .labelStyle(compact ? AnyLabelStyle(.iconOnly) : AnyLabelStyle(.titleAndIcon))
                 .buttonStyle(.glass)
                 .disabled(model.isRunning || isLoadingPhoto)
-                .help(mode == .site ? "Add a photo to put on your website." : "Add a photo to your posts. Instagram posts need one.")
+                .help("Add a photo to your posters and posts. Instagram posts need one.")
                 .accessibilityLabel(title)
             }
 
@@ -291,7 +290,7 @@ struct AssistantView: View {
                 .scaledToFill()
                 .frame(width: 64, height: 64)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            Text(mode == .site ? "Hera will put this photo on your website." : "Hera will add this photo to your posts.")
+            Text("Hera will add this photo to your posters and posts.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -369,7 +368,6 @@ struct AssistantView: View {
         if model.receivedText != nil { return "How should Hera reply? For example: say yes, 7 works for me" }
         if model.isContinuing(mode) { return "Reply to Hera, or ask for a change…" }
         return switch mode {
-        case .site: "Describe the website you'd like. Add a photo to put it on the site…"
         case .posts: "What should we promote? A poster, posts, a flyer…"
         case .schedule: "Tell Hera what to plan, move or remind you about…"
         case .launch: "What are you launching? The date, place, price and how to sign up…"
@@ -378,10 +376,9 @@ struct AssistantView: View {
 
     private var workingMessage: String {
         switch mode {
-        case .site: "Building your website, page by page. This can take several minutes; you can leave the app and come back."
         case .posts: "Designing your posters and posts. This can take a minute."
         case .schedule: "Looking at your schedule. This can take a minute."
-        case .launch: "Putting your launch together: website, posts, calendar and email. This can take a few minutes."
+        case .launch: "Putting your launch together: posts, a poster, calendar and email. This can take a few minutes."
         }
     }
 
@@ -457,7 +454,7 @@ struct AssistantView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(status.remaining) free \(status.remaining == 1 ? "request" : "requests") left this month")
                         .font(.subheadline.weight(.semibold))
-                    Text("Hera Pro gives you many more, and removes \u{201C}Made with Hera\u{201D} from posters and websites.")
+                    Text("Hera Pro gives you many more, and removes \u{201C}Made with Hera\u{201D} from posters.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button("See Hera Pro") { model.pro.showPlans = true }
@@ -575,7 +572,7 @@ struct AssistantView: View {
 
     /* ---------------- "Talk to Hera" ---------------- */
 
-    /// Hera asks website or posts, listens, then asks what it's about and starts on it. Each step
+    /// Hera asks posts, launch or schedule, listens, then asks what it's about and starts on it. Each step
     /// waits for her to finish speaking before the mic opens. Nothing is published: the run ends
     /// in proposals the person approves, as always.
     private func startConversation() {
@@ -585,30 +582,30 @@ struct AssistantView: View {
             model.speech.speak("Hi, I'm Hera. First, tap Allow AI on this screen, then call me again.")
             return
         }
-        askWebsiteOrPosts(firstTime: true)
+        askWhatToMake(firstTime: true)
     }
 
-    private func askWebsiteOrPosts(firstTime: Bool) {
+    private func askWhatToMake(firstTime: Bool) {
         conversation = .choosing
         let question = firstTime
-            ? "Hi, I'm Hera. Would you like a website, some posts, help with your schedule, or a full launch with all of it?"
-            : "Let's do one at a time. A website, posts, your schedule, or a full launch?"
+            ? "Hi, I'm Hera. Should we make posters and posts, plan a launch, or work on your schedule?"
+            : "Let's do one at a time. Posters and posts, a launch, or your schedule?"
         model.speech.speak(question) {
-            Task { await hearWebsiteOrPosts(firstTime: firstTime) }
+            Task { await hearWhatToMake(firstTime: firstTime) }
         }
     }
 
-    private func hearWebsiteOrPosts(firstTime: Bool) async {
+    private func hearWhatToMake(firstTime: Bool) async {
         let reply = await voice.listenUntilSilence()
         guard conversation == .choosing else { return }
         if let chosen = ConversationReply.mode(from: reply) {
             mode = chosen
             askWhatAbout()
         } else if firstTime && !reply.isEmpty {
-            askWebsiteOrPosts(firstTime: false)
+            askWhatToMake(firstTime: false)
         } else {
             conversation = .none
-            model.speech.speak("No problem. Choose Website, Posts or Schedule, then tell me what you'd like.")
+            model.speech.speak("No problem. Choose Launch, Studio or Schedule, then tell me what you'd like.")
         }
     }
 
@@ -617,7 +614,6 @@ struct AssistantView: View {
         prompt = ""
         promptBeforeVoice = ""
         let question = switch mode {
-        case .site: "Great. What should the website be about?"
         case .posts: "Great. What would you like to post about?"
         case .schedule: "Great. What do you need done on your schedule?"
         case .launch: "Great. What are you launching? Tell me the date, the place, the price and how people sign up."
@@ -674,7 +670,7 @@ struct AssistantView: View {
             SectionLabel("Your OK")
             Text("Allow Hera to use AI")
                 .font(.headline)
-            Text("What you type or say is sent to Claude, by Anthropic, to write your website and posts, and with Schedule, your upcoming events and reminders too. Nothing is published or changed until you approve it.")
+            Text("What you type or say is sent to Claude, by Anthropic, to make your posters and posts, and with Schedule, your upcoming events and reminders too. Nothing is published or changed until you approve it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Allow AI", systemImage: "checkmark") { Task { await model.setAIConsent(true) } }

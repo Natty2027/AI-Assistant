@@ -1,8 +1,9 @@
 # Hera
 
-**An iPhone, iPad and Mac app.** Type or speak what you want, and Hera builds a website and
-writes social posts for it. You review the exact content, and nothing is published until you
-approve it. Hera reads her replies aloud in a voice made on the device.
+**An iPhone, iPad and Mac app.** Type or speak what you want, and Hera writes social posts,
+posters and flyers, eBay listings, emails and texts, and proposes changes to your calendar and
+reminders. You review the exact content, and nothing is published until you approve it. Hera
+reads her replies aloud in a voice made on the device.
 
 See XCODE-TESTING.md to run it and PLATFORMS.md for what runs where.
 
@@ -11,7 +12,7 @@ See XCODE-TESTING.md to run it and PLATFORMS.md for what runs where.
 ```
 app/                        SwiftUI app (iOS 26 / macOS 26): on-device voice input and Hera's voice
 server/                     Node server the app talks to (Railway): auth, consent, account deletion
-server/agent/               the assistant, its rules, Netlify, Bluesky, X and Meta publishing
+server/agent/               the assistant, its rules, Bluesky, X, Meta and eBay publishing
 db/schema.sql               Postgres schema (Supabase), row-level security, encryption
 db/migrations/              changes for databases created from an older schema.sql
 scripts/mock-app-server.mjs a stand-in server for working on the app without a database or AI key

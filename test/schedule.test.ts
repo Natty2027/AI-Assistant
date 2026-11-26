@@ -3,19 +3,13 @@
  * The model is a scripted fake, so each case is exact. What's tested is what the harness lets
  * through: only real ids, real times, writable calendars, and nothing outside schedule mode.
  */
-import { test, before } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { runAgent, AGENT_MODEL } from "../server/agent/loop.ts";
 import { ActionStore } from "../server/agent/approvals.ts";
-import { SiteSandbox } from "../server/agent/sandbox.ts";
 import { describeSchedule, scheduleChange, ScheduleError, ScheduleSnapshot } from "../server/agent/schedule.ts";
 import { makeCtx } from "./helpers/agentCtx.ts";
 
-let base: string;
-before(async () => { base = await mkdtemp(path.join(tmpdir(), "hera-schedule-")); });
 
 const SNAPSHOT: ScheduleSnapshot = ScheduleSnapshot.parse({
   now: "2026-11-09T09:00:00-08:00",
@@ -42,12 +36,10 @@ function scripted(steps: Array<(params: any) => any>) {
   return { client, calls };
 }
 
-let n = 0;
 async function run(steps: Array<(params: any) => any>, opts: { schedule: ScheduleSnapshot | undefined } = { schedule: SNAPSHOT }) {
   const { schedule } = opts;
   const { client, calls } = scripted(steps);
-  const sandbox = await SiteSandbox.open(base, `s-${++n}`);
-  const out = await runAgent({ mode: "schedule", client, store: new ActionStore(), sandbox, userId: "u1", context: () => makeCtx(), schedule }, "do my schedule");
+  const out = await runAgent({ mode: "schedule", client, store: new ActionStore(), userId: "u1", context: () => makeCtx(), schedule }, "do my schedule");
   return { out, calls };
 }
 const lastResults = (params: any) => params.messages.at(-1).content as any[];
@@ -98,20 +90,19 @@ test("made-up ids, impossible times and read-only calendars are refused, so the 
   assert.match(results[3].content, /offset/);
 });
 
-test("website and post tools don't run in schedule mode, and schedule tools don't run elsewhere", async () => {
+test("post tools don't run in schedule mode, and schedule tools don't run elsewhere", async () => {
   const { out, calls } = await run([
-    () => msg([use("t1", "write_site_file", { path: "index.html", contents: "<h1>hi</h1>" })]),
+    () => msg([use("t1", "write_post", { platform: "x", text: "hi", link: null, sponsored: false })]),
     () => msg([{ type: "text", text: "ok" }], "end_turn"),
   ]);
-  assert.match(lastResults(calls[1])[0].content, /switch to Website/);
+  assert.match(lastResults(calls[1])[0].content, /switch to Posts/);
   assert.equal(out.scheduleChanges.length, 0);
 
   const { client, calls: postCalls } = scripted([
     () => msg([use("t1", "cancel_event", { event_id: "ev-dentist", summary: "Cancel" })]),
     () => msg([{ type: "text", text: "ok" }], "end_turn"),
   ]);
-  const sandbox = await SiteSandbox.open(base, `s-${++n}`);
-  const posts = await runAgent({ mode: "posts", client, store: new ActionStore(), sandbox, userId: "u1", context: () => makeCtx(), schedule: SNAPSHOT }, "x");
+  const posts = await runAgent({ mode: "posts", client, store: new ActionStore(), userId: "u1", context: () => makeCtx(), schedule: SNAPSHOT }, "x");
   assert.equal(posts.scheduleChanges.length, 0);
   assert.match(lastResults(postCalls[1])[0].content, /switch to Schedule/);
 });

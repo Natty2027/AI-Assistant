@@ -40,15 +40,22 @@ struct APIClient: Sendable {
 
     /* ---------------- the assistant ---------------- */
 
-    /// How often the app checks on a run, and how long it waits for one at most.
-    static let runCheckInterval: TimeInterval = 3
+    /// How long each check on a run asks the server to hold on until the run is done. The server
+    /// answers the moment the run finishes, so the answer shows as soon as it's ready.
+    static let runWait = 20
+    /// Each check's own time limit: the wait plus room for a slow network.
+    static let runCheckTimeout: TimeInterval = 35
+    /// The pause between checks when an older server answers "still running" straight away
+    /// (it doesn't hold the request), so the app doesn't ask over and over without a break.
+    static let runCheckInterval: TimeInterval = 1
     static let longestRun: TimeInterval = 30 * 60
 
     /// Asks Hera to do something and waits for her answer. The run happens in the background on
-    /// the server: building a website can take her ten minutes or more, longer than a phone keeps
-    /// one request open, so the app starts it and checks back every few seconds.
+    /// the server and can take a few minutes, longer than a phone keeps one request open. So the
+    /// app starts it, then asks the server to answer when it's done (or after 20 seconds, when the
+    /// app asks again), and shows the result the moment it's ready.
     func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil,
-                      schedule: ScheduleSnapshot? = nil, conversationID: String? = nil, brand: RunBrand? = nil,
+                      schedule: ScheduleSnapshot? = nil, conversationID: String? = nil,
                       receivedText: String? = nil) async throws -> AgentRunResponse {
         struct Body: Encodable {
             let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String?
@@ -56,8 +63,6 @@ struct APIClient: Sendable {
             let schedule: ScheduleSnapshot?
             /// Continues an earlier task, from the previous answer's conversationId.
             let conversationId: String?
-            /// The brand kit's name and colors, for the website.
-            let brand: RunBrand?
             /// A text message the person received and shared, to explain or help answer.
             let receivedText: String?
             /// This device's clock, for "Friday at 9" and scheduled posts.
@@ -73,7 +78,7 @@ struct APIClient: Sendable {
             let result: AgentRunResponse?
         }
         let body = Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID,
-                        schedule: schedule, conversationId: conversationID, brand: brand,
+                        schedule: schedule, conversationId: conversationID,
                         receivedText: receivedText,
                         localTime: LocalTime(now: HeraTime.nowWithOffset(), timeZone: TimeZone.current.identifier))
         let started: Started
@@ -85,16 +90,23 @@ struct APIClient: Sendable {
         }
 
         let deadline = Date.now.addingTimeInterval(Self.longestRun)
+        let wait = [URLQueryItem(name: "wait", value: String(Self.runWait))]
         var missedChecks = 0
         while Date.now < deadline {
-            try await sleep(Self.runCheckInterval)
+            let asked = Date.now
             do {
-                let progress: Progress = try await send("GET", "agent/runs/\(started.runId)")
+                let progress: Progress = try await send("GET", "agent/runs/\(started.runId)", query: wait, timeout: Self.runCheckTimeout)
                 if progress.status == "finished", let result = progress.result { return result }
                 missedChecks = 0
+                // Still running. A server that held the request is asked again at once; one that
+                // answered right away (from before it could wait) gets a short pause first.
+                if Date.now.timeIntervalSince(asked) < TimeInterval(Self.runWait) / 2 {
+                    try await sleep(Self.runCheckInterval)
+                }
             } catch is URLError where missedChecks < 20 {
                 // A dropped connection (a lift, a tunnel) doesn't stop the run on the server.
                 missedChecks += 1
+                try await sleep(Self.runCheckInterval)
             }
         }
         throw APIError.server(status: 504, message: "Hera is taking unusually long. Check back in a few minutes, or try again.",
@@ -173,20 +185,6 @@ struct APIClient: Sendable {
         let _: OKResponse = try await send("POST", "account/delete", body: Body(confirm: "DELETE"), timeout: 60)
     }
 
-    /* ---------------- the website ---------------- */
-
-    func site() async throws -> SiteResponse {
-        try await send("GET", "agent/site")
-    }
-
-    /// One file of the website, for the preview. Pictures arrive as base64.
-    func siteFile(_ path: String) async throws -> Data {
-        let out: FileResponse = try await send("GET", "agent/site/file", query: [URLQueryItem(name: "path", value: path)])
-        guard out.encoding == "base64" else { return Data(out.contents.utf8) }
-        guard let data = Data(base64Encoded: out.contents) else { throw APIError.invalidResponse }
-        return data
-    }
-
     /* ---------------- accounts ---------------- */
 
     func connections() async throws -> ConnectionsResponse {
@@ -207,12 +205,6 @@ struct APIClient: Sendable {
         let out: SignInStartResponse = try await send("GET", "agent/connections/oauth/\(provider.rawValue)")
         guard let url = URL(string: out.authUrl), url.scheme == "https" else { throw APIError.invalidResponse }
         return url
-    }
-
-    func connectNetlify(token netlifyToken: String) async throws -> Connection {
-        struct Body: Encodable { let token: String }
-        let out: ConnectionResponse = try await send("POST", "agent/connections/netlify", body: Body(token: netlifyToken))
-        return out.connection
     }
 
     func connectBluesky(handle: String, appPassword: String) async throws -> Connection {

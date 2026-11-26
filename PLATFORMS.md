@@ -13,16 +13,15 @@ One SwiftUI app, one codebase (`app/`), and the Node server (`server/`) it talks
 ## What runs where
 
 - **On the device:** voice recognition, Hera's spoken voice (Kokoro-82M via Core ML, bundled in
-  the app), the website preview, and the share sheet. The access token is kept in the Keychain.
+  the app), poster drawing, calendar and reminder changes, and the share sheet. The access token is kept in the Keychain.
 - **On the server:** the assistant (Claude), the rules every action must pass
-  (`server/agent/policy.ts`), the website files, photos attached to posts, and the encrypted
-  Netlify, Bluesky, X and Meta credentials. The app never holds an AI key or a provider credential.
+  (`server/agent/policy.ts`), photos attached to posts, and the encrypted Bluesky, X, Meta and
+  eBay credentials. The app never holds an AI key or a provider credential.
 
 ## Publishing, per platform
 
 | Platform | What the app does | Why |
 |---|---|---|
-| Website (Netlify) | Publishes after you approve | The person's own Netlify token |
 | Bluesky | Publishes after you approve | Official API with revocable app passwords |
 | X | Publishes after you approve | Official API v2, sign in with X (OAuth 2.0 + PKCE) |
 | Facebook Page | Publishes after you approve (text, link, or a photo) | Graph API, Continue with Facebook |

@@ -2,7 +2,7 @@ import AuthenticationServices
 import SwiftUI
 
 /// Where Hera can publish for you. One row per service: connected, or a Connect button.
-/// Netlify and Bluesky open a short guided sheet; X and Facebook & Instagram open the platform's
+/// Bluesky opens a short guided sheet; X and Facebook & Instagram open the platform's
 /// own sign-in page in a secure browser sheet, so the app never sees those passwords. Either way
 /// the server stores what it needs encrypted; the app never keeps it.
 struct AccountsView: View {
@@ -15,7 +15,7 @@ struct AccountsView: View {
     @State private var pendingDisconnect: Connection?
 
     enum Service: String, Identifiable {
-        case netlify, bluesky
+        case bluesky
         var id: Self { self }
     }
 
@@ -27,13 +27,6 @@ struct AccountsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    serviceRow(title: "Website hosting", subtitle: "Netlify publishes your website", systemImage: "globe",
-                               connections: connections("netlify")) { connecting = .netlify }
-                } header: {
-                    SectionLabel("Your website")
-                }
-
                 Section {
                     serviceRow(title: "Instagram & Facebook", subtitle: "Your Facebook Page and its Instagram account",
                                systemImage: "camera", connections: connections("facebook", "instagram"),
@@ -82,7 +75,6 @@ struct AccountsView: View {
             .task { await model.refreshConnections() }
             .sheet(item: $connecting) { service in
                 switch service {
-                case .netlify: ConnectNetlifySheet()
                 case .bluesky: ConnectBlueskySheet()
                 }
             }

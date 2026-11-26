@@ -50,7 +50,7 @@ struct WhatsOnMyDayIntent: AppIntent {
 
 struct TalkToHeraIntent: AppIntent {
     static let title: LocalizedStringResource = "Talk to Hera"
-    static let description = IntentDescription("Opens Hera, who asks whether you'd like to create a website or write posts, then listens.")
+    static let description = IntentDescription("Opens Hera, who asks whether you'd like posters and posts, a launch, or help with your schedule, then listens.")
     // Opens the app before perform() runs: the conversation needs the screen, mic and speaker.
     static var supportedModes: IntentModes { .foreground }
 
@@ -95,17 +95,18 @@ struct HeraShortcuts: AppShortcutsProvider {
 
 /// What the person's spoken answer means, for the conversation's first question.
 enum ConversationReply {
-    /// Website, posts or schedule from what was said; nil when it's none of them, or more than
-    /// one (Hera does one at a time, so she asks again).
+    /// Posts (posters too), schedule or a launch from what was said; nil when it's none of them,
+    /// or both posts and schedule (Hera does one at a time, so she asks again).
     static func mode(from reply: String) -> CreateMode? {
         let said = reply.lowercased()
-        let posts = ["post", "social", "tweet", "instagram", "caption", "bluesky", "announce", "flyer", "studio"].contains { said.contains($0) }
-        let site = ["website", "web site", "site", "web page", "webpage", "landing page"].contains { said.contains($0) }
+        // "post" also hears "poster".
+        let posts = ["post", "social", "tweet", "instagram", "caption", "bluesky", "announce", "flyer", "studio",
+                     "design", "ebay", "email"].contains { said.contains($0) }
         let schedule = ["schedule", "calendar", "meeting", "appointment", "remind", "plan my", "my day", "my week"].contains { said.contains($0) }
         let launch = ["launch", "everything", "all of it", "the works", "launch kit"].contains { said.contains($0) }
-        // "Launch" covers website and posts too, so it wins when said.
+        // A launch covers posts and the calendar too, so it wins when said.
         if launch { return .launch }
-        let matches = [(posts, CreateMode.posts), (site, .site), (schedule, .schedule)].filter(\.0)
+        let matches = [(posts, CreateMode.posts), (schedule, .schedule)].filter(\.0)
         return matches.count == 1 ? matches[0].1 : nil
     }
 }

@@ -15,7 +15,7 @@ struct ReviewView: View {
                     let history = model.proposals.filter { !$0.isPending && !$0.isScheduled }
                     if pending.isEmpty && history.isEmpty {
                         ContentUnavailableView("Nothing to review", systemImage: "checkmark.seal",
-                                               description: Text("When Hera has a website or post ready to publish, it appears here for you to approve."))
+                                               description: Text("When Hera has a post or listing ready to publish, it appears here for you to approve."))
                             .glowCard()
                     }
                     if !pending.isEmpty {
@@ -145,11 +145,11 @@ struct ProposalDetailView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel(proposal.isSite ? "Website" : proposal.isListing ? "Exactly what will be listed" : "Exactly what will be posted")
+            SectionLabel(proposal.isListing ? "Exactly what will be listed" : "Exactly what will be posted")
             VStack(alignment: .leading, spacing: 10) {
                 if proposal.isListing {
                     listing
-                } else if proposal.isPost {
+                } else {
                     Text(proposal.postText ?? "")
                         .font(.body)
                         .textSelection(.enabled)
@@ -162,9 +162,6 @@ struct ProposalDetailView: View {
                         Link(destination: url) { Label(link, systemImage: "link") }
                             .font(.callout)
                     }
-                } else {
-                    Text("Publishes every file currently in your website, exactly as you can preview it in the Website tab.")
-                        .foregroundStyle(.secondary)
                 }
             }
             .glowCard()
@@ -298,7 +295,7 @@ struct ProposalDetailView: View {
                     Button {
                         model.pro.showPlans = true
                     } label: {
-                        Label(proposal.isSite ? "Remove \u{201C}Built with Hera\u{201D} and get more requests with Hera Pro" : "Get more requests every month with Hera Pro",
+                        Label("Get more requests every month with Hera Pro",
                               systemImage: "sparkles")
                             .labelStyle(.alignedIcon)
                             .font(.footnote)
@@ -354,5 +351,5 @@ struct ProposalDetailView: View {
 
 private extension Proposal {
     /// The symbol for this kind of proposal, in lists and at the top of its page.
-    var icon: String { isSite ? "globe" : isListing ? "tag.fill" : "text.bubble.fill" }
+    var icon: String { isListing ? "tag.fill" : "text.bubble.fill" }
 }

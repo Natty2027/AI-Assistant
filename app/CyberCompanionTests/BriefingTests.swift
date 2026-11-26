@@ -43,7 +43,7 @@ struct BriefingTests {
         #expect(HeraGreeting.interpret("Hi Hera, what's on my day?") == .briefing)
         #expect(HeraGreeting.interpret("Hello Hera what does my day look like") == .briefing)
         #expect(HeraGreeting.interpret("what's on my day") == .briefing)
-        #expect(HeraGreeting.interpret("Hi Hera, make a website for my bakery") == .request("Make a website for my bakery"))
+        #expect(HeraGreeting.interpret("Hi Hera, make a poster for my bakery") == .request("Make a poster for my bakery"))
         #expect(HeraGreeting.interpret("Write posts about my class") == .request("Write posts about my class"))
     }
 

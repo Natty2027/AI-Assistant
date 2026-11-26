@@ -20,7 +20,7 @@ import { z } from "zod";
 export type Tier = "draft" | "publish" | "spend";
 
 export const ACTION_KINDS = [
-  "site.deploy", "social.post", "marketplace.listing", "email.campaign", "sms.campaign", "ads.campaign", "domain.purchase",
+  "social.post", "marketplace.listing", "email.campaign", "sms.campaign", "ads.campaign", "domain.purchase",
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -34,7 +34,6 @@ export interface ActionSpec {
 }
 
 export const ACTIONS: Record<ActionKind, ActionSpec> = {
-  "site.deploy":     { tier: "publish", label: "Publish a website",        connection: "hosting",   dailyLimit: 10 },
   "social.post":     { tier: "publish", label: "Publish a social post",    connection: "social",    dailyLimit: 5 },
   "marketplace.listing": { tier: "publish", label: "List an item for sale", connection: "marketplace", dailyLimit: 10 },
   "email.campaign":  { tier: "publish", label: "Send an email campaign",   connection: "email",     dailyLimit: 1 },
@@ -96,9 +95,6 @@ function measured(platform: Platform, text: string): number {
 }
 
 export const PAYLOADS = {
-  // contentHash fingerprints every file of the site, so an approval covers the content the
-  // person saw, not just "site X": edits made after approving cannot slip into the publish.
-  "site.deploy": z.object({ connectionId: id, siteId: id, contentHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   "social.post": z.object({
     connectionId: id,
     text: z.string().min(1).max(5000),
@@ -145,7 +141,7 @@ export type Payload<K extends ActionKind> = z.infer<(typeof PAYLOADS)[K]>;
 
 /* ------------------------------ the user's world ------------------------------ */
 
-export type ConnectionKind = "hosting" | "social" | "marketplace" | "email" | "sms" | "ads" | "registrar";
+export type ConnectionKind = "social" | "marketplace" | "email" | "sms" | "ads" | "registrar";
 
 /** Everything an action may point at is one of these, owned by the user. The model never
  *  supplies a raw address, handle or URL as a destination, so injected text cannot redirect
@@ -163,10 +159,6 @@ export interface Context {
   /** 0 means spending is switched off. */
   spendCapCents: number;
   spentThisMonthCents: number;
-  /** Results of scanning a site before it can be deployed, keyed by site id. */
-  siteScans: Record<string, Check[]>;
-  /** The current fingerprint of each site's files, keyed by site id. */
-  siteDigests: Record<string, string>;
 }
 
 /* ------------------------------ checks ------------------------------ */
@@ -349,16 +341,6 @@ export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, no
         out.push({ id: "over_spend_cap", level: "block", message: "This would go over your monthly spending limit." });
       }
       if (kind === "ads.campaign") { contentChecks(p.text, out); linkChecks(p.link, out); }
-      break;
-    }
-
-    case "site.deploy": {
-      const scan = ctx.siteScans[p.siteId];
-      if (!scan) { out.push({ id: "site_not_scanned", level: "block", message: "The site has not been checked yet." }); break; }
-      if (ctx.siteDigests[p.siteId] !== p.contentHash) {
-        out.push({ id: "site_changed", level: "block", message: "The site's files changed after this was proposed. Review the current version and approve that." });
-      }
-      out.push(...scan);
       break;
     }
   }

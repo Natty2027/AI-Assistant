@@ -5,7 +5,7 @@ The app is one SwiftUI project for iPhone, iPad and Mac: `app/CyberCompanion.xco
 ## What you need
 
 - Xcode 26 or later. The app targets iOS 26 / macOS 26, the first releases with on-device
-  `SpeechAnalyzer` and SwiftUI's `WebView`.
+  `SpeechAnalyzer`.
 - Node 20+ for the server (or the mock below).
 - A free Apple ID runs it on the Mac and in the Simulator. A device build or App Store
   submission needs the Apple Developer Program, and a team set under Signing & Capabilities.
@@ -51,13 +51,15 @@ Hera's replies are spoken by Kokoro-82M (voice `af_heart`), bundled in
 device she retries on the CPU, then falls back to the system's best voice and says so on screen.
 
 **Talk to Hera.** Say "Hey Siri, talk to Hera" (or "Hey Siri, Hey Hera", "Start Hera", "Create
-with Hera"), or run the "Talk to Hera" shortcut. The app opens on Create; Hera asks whether you'd
-like a website or posts, listens, asks what it's about, and starts on it. The mic stops on its own
+with Hera"), or run the "Talk to Hera" shortcut. The app opens on Create; Hera asks what it's
+about, listens, and starts on it. The mic stops on its own
 when you stop talking. Siri can take a few minutes after installing a new build to learn the
 phrases; Product → App Shortcuts Preview in Xcode shows how they match.
 
-**Website and posts are separate.** The Create tab's Website / Posts switch picks one per run;
-the server only gives the assistant that mode's tools (`AGENT_MODES` in `server/agent/loop.ts`).
+**Studio, Schedule and Launch Kit are separate.** The Create tab picks one per run; the server
+only gives the assistant that mode's tools (`AGENT_MODES` in `server/agent/loop.ts`). Website
+building was removed from the server (a run with `mode: "site"` gets HTTP 410, `mode_removed`),
+and the app no longer offers it.
 
 ## Tests
 

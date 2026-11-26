@@ -16,7 +16,7 @@ struct SignInView: View {
                 Text("Hera")
                     .font(Theme.heading())
                     .foregroundStyle(Theme.spectrumGradient)
-                Text("Speak an idea. Get a website and posts for it.\nNothing is published until you approve it.")
+                Text("Speak an idea. Get posters and posts for it.\nNothing is published until you approve it.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

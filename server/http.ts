@@ -165,8 +165,8 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<Record
 }
 
 /**
- * Log lines are capped. A database error's message can embed every bound parameter (a whole
- * website file, a long prompt), and hosted log pipes truncate long lines, cutting off the part
+ * Log lines are capped. A database error's message can embed every bound parameter (a saved
+ * conversation, a long prompt), and hosted log pipes truncate long lines, cutting off the part
  * that says what went wrong (Cognivate, LESSONS_LEARNED 2026-10-07). Capping keeps the cause
  * visible and keeps people's content out of the logs.
  */

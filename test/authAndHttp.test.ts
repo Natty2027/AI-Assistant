@@ -92,3 +92,55 @@ test("public pages are HTML under a CSP that allows nothing to load or run", asy
   assert.match(html, /Anthropic/);
   assert.match(html, /help@example\.com/);
 });
+
+/* ---------------- the app's routes ---------------- */
+
+const { buildRouter, checkMode, waitSeconds } = await import("../server/routes.ts");
+const app = createServer((req, res) => void buildRouter().handle(req, res));
+await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
+const appBase = `http://127.0.0.1:${(app.address() as any).port}`;
+after(() => app.close());
+const signedIn = { Authorization: `Bearer ${token(good)}`, "Content-Type": "application/json" };
+
+test("an app that still asks for a website is told to update, with its own code", async () => {
+  for (const path of ["/agent/run", "/agent/runs"]) {
+    const res = await fetch(`${appBase}${path}`, { method: "POST", headers: signedIn, body: JSON.stringify({ request: "Make me a website", mode: "site" }) });
+    assert.equal(res.status, 410, path);
+    const body = await res.json();
+    assert.equal(body.code, "mode_removed");
+    assert.match(body.error, /Building websites was removed from Hera\. Update the app/);
+  }
+});
+
+test("the website endpoints are gone", async () => {
+  for (const [method, path] of [["POST", "/agent/connections/netlify"], ["GET", "/agent/site"], ["GET", "/agent/site/file?path=index.html"]]) {
+    const res = await fetch(`${appBase}${path}`, { method, headers: signedIn, ...(method === "POST" ? { body: JSON.stringify({ token: "x".repeat(40) }) } : {}) });
+    assert.equal(res.status, 404, `${method} ${path}`);
+  }
+});
+
+test("modes: none means posts, unknown ones are refused, and the old website mode answers 410", () => {
+  assert.equal(checkMode(undefined), "posts");
+  assert.equal(checkMode("schedule"), "schedule");
+  assert.equal(checkMode("launch"), "launch");
+  assert.throws(() => checkMode("site"), (e: any) => e.status === 410 && e.code === "mode_removed" && e.expose === true);
+  assert.throws(() => checkMode("blog"), (e: any) => e.status === 400 && /'posts', 'schedule' or 'launch'/.test(e.message));
+});
+
+test("?wait= is whole seconds from 0 to 25; anything else means don't wait", () => {
+  assert.equal(waitSeconds(null), 0);
+  assert.equal(waitSeconds("10"), 10);
+  assert.equal(waitSeconds("2.7"), 2);
+  assert.equal(waitSeconds("600"), 25);
+  assert.equal(waitSeconds("-3"), 0);
+  assert.equal(waitSeconds("soon"), 0);
+  assert.equal(waitSeconds(""), 0);
+});
+
+test("checking a run this server doesn't have answers at once, even when asked to wait", async () => {
+  const started = Date.now();
+  const res = await fetch(`${appBase}/agent/runs/00000000-0000-0000-0000-00000000beef?wait=20`, { headers: signedIn });
+  assert.equal(res.status, 404);
+  assert.equal((await res.json()).code, "run_lost");
+  assert.ok(Date.now() - started < 2_000);
+});

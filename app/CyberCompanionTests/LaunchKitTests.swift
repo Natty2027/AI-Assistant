@@ -12,8 +12,6 @@ struct LaunchKitTests {
         let launch = try run("""
         { "status": "done", "text": "Ready.", "tainted": false,
           "proposals": [
-            { "id": "p1", "kind": "site.deploy", "label": "Publish a website", "summary": "Publish the page", "payload": {}, "payloadHash": "h1",
-              "checks": [], "tainted": false, "status": "pending", "expiresAt": "x", "result": null, "canBeCarriedOut": true },
             { "id": "p2", "kind": "social.post", "label": "Publish a social post", "summary": "Bluesky", "payload": {}, "payloadHash": "h2",
               "checks": [], "tainted": false, "status": "pending", "expiresAt": "x", "result": null, "canBeCarriedOut": true }
           ],
@@ -23,11 +21,13 @@ struct LaunchKitTests {
             { "id": "s2", "kind": "add_reminder", "summary": "Countdown" },
             { "id": "s3", "kind": "add_reminder", "summary": "Buy clay" }
           ],
-          "emailDrafts": [{ "id": "e1", "to": [], "cc": [], "subject": "Workshop", "body": "Join us." }] }
+          "emailDrafts": [{ "id": "e1", "to": [], "cc": [], "subject": "Workshop", "body": "Join us." }],
+          "posterDrafts": [{ "id": "pd1", "style": "elegant", "headline": "Workshop", "subheadline": null, "details": [], "callToAction": null,
+            "footer": null, "emoji": null, "usePhoto": false, "problems": [] }] }
         """)
         let kit = try #require(LaunchKitSummary(run: launch))
         #expect(kit.items.map(\.text) == [
-            "Website ready to publish", "A post ready to approve", "A post to share yourself",
+            "A poster in every size", "A post ready to approve", "A post to share yourself",
             "A calendar change", "2 reminders", "An email to send",
         ])
     }
@@ -39,7 +39,8 @@ struct LaunchKitTests {
 
     @Test func talkToHeraHearsALaunch() {
         #expect(ConversationReply.mode(from: "a full launch please") == .launch)
-        #expect(ConversationReply.mode(from: "launch my workshop with posts and a website") == .launch)
-        #expect(ConversationReply.mode(from: "just the website") == .site)
+        #expect(ConversationReply.mode(from: "launch my workshop with posts and a calendar entry") == .launch)
+        #expect(ConversationReply.mode(from: "let's plan a launch") == .launch)
+        #expect(ConversationReply.mode(from: "just the posts") == .posts)
     }
 }

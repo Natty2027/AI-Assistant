@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluate, isBlocked, type Check } from "../server/agent/policy.ts";
+import { ACTION_KINDS, evaluate, isActionKind, isBlocked, type Check } from "../server/agent/policy.ts";
 import { makeCtx, post } from "./helpers/agentCtx.ts";
 
 const ids = (c: Check[]) => c.map((x) => x.id);
@@ -20,8 +20,8 @@ test("a destination that is not one of the user's connections is blocked", () =>
   assert.deepEqual(ids(evaluate("social.post", post({ connectionId: "attacker" }), makeCtx(), NOW)), ["unknown_destination"]);
 });
 
-test("a connection of the wrong kind is blocked (hosting account used for a post)", () => {
-  assert.deepEqual(ids(evaluate("social.post", post({ connectionId: "host" }), makeCtx(), NOW)), ["unknown_destination"]);
+test("a connection of the wrong kind is blocked (email account used for a post)", () => {
+  assert.deepEqual(ids(evaluate("social.post", post({ connectionId: "mail" }), makeCtx(), NOW)), ["unknown_destination"]);
 });
 
 test("an extra field smuggled into the payload is rejected, not ignored", () => {
@@ -152,20 +152,9 @@ test("spending is off until the user sets a cap, and the cap is enforced", () =>
   assert.deepEqual(evaluate("ads.campaign", ad(), makeCtx({ spendCapCents: 5000 }), NOW), []);
 });
 
-/* ---------------- sites ---------------- */
+/* ---------------- websites (removed) ---------------- */
 
-test("a site that was never scanned cannot be deployed, and scan problems carry through", () => {
-  const H = "a".repeat(64);
-  const p = { connectionId: "host", siteId: "s1", contentHash: H };
-  assert.ok(ids(evaluate("site.deploy", p, makeCtx(), NOW)).includes("site_not_scanned"));
-  const scanned = makeCtx({ siteScans: { s1: [{ id: "password_field", level: "block", message: "x" }] }, siteDigests: { s1: H } });
-  assert.ok(ids(evaluate("site.deploy", p, scanned, NOW)).includes("password_field"));
-  assert.deepEqual(evaluate("site.deploy", p, makeCtx({ siteScans: { s1: [] }, siteDigests: { s1: H } }), NOW), []);
-});
-
-test("a site whose files changed after the proposal cannot be deployed", () => {
-  const p = { connectionId: "host", siteId: "s1", contentHash: "a".repeat(64) };
-  const changed = makeCtx({ siteScans: { s1: [] }, siteDigests: { s1: "b".repeat(64) } });
-  assert.ok(ids(evaluate("site.deploy", p, changed, NOW)).includes("site_changed"));
-  assert.ok(ids(evaluate("site.deploy", { ...p, contentHash: "not-a-hash" }, changed, NOW)).includes("invalid"));
+test("publishing a website is no longer an action Hera can take", () => {
+  assert.equal(isActionKind("site.deploy"), false);
+  assert.ok(!(ACTION_KINDS as readonly string[]).includes("site.deploy"));
 });

@@ -19,10 +19,7 @@ your domain's DNS at it.
 ## "Made with Hera"
 
 - Posters on the free plan have a small "Made with Hera" in the corner.
-- Websites published on the free plan end with "Built with Hera", linking to the home page (or
-  the App Store once `APP_STORE_ID` is set). It's added when publishing, so the preview and what
-  the person approved are unchanged.
-- Hera Pro removes both. `BUILT_WITH_HERA=off` turns the website link off for everyone.
+- Hera Pro removes it.
 
 ## Ratings
 
@@ -47,7 +44,7 @@ Connect → Analytics.
 
 ## Also worth doing (outside the app)
 
-- App Store screenshots: a poster, a website, an eBay listing, Review. Plus a 15–30 second
+- App Store screenshots: a poster, a set of posts, an eBay listing, Review. Plus a 15–30 second
   preview video.
 - A free trial on Hera Pro (an introductory offer in App Store Connect).
 - Apple Search Ads for "flyer maker", "small business marketing", "poster maker".

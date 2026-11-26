@@ -9,7 +9,7 @@ struct ModelsTests {
         let json = """
         {
           "status": "done",
-          "text": "Your site is ready to review.",
+          "text": "Your post is ready to review.",
           "tainted": false,
           "drafts": [
             { "id": "d_1", "connectionId": null, "platform": "instagram", "text": "Spring class!",
@@ -17,8 +17,8 @@ struct ModelsTests {
               "problems": [{ "id": "needs_media", "level": "warn", "message": "Add an image." }] }
           ],
           "proposals": [
-            { "id": "p1", "kind": "site.deploy", "label": "Publish a website", "summary": "Publish Clay Corner",
-              "payload": { "connectionId": "c1", "siteId": "u-abc", "contentHash": "ff" },
+            { "id": "p1", "kind": "social.post", "label": "Publish a social post", "summary": "Announce Clay Corner",
+              "payload": { "connectionId": "c1", "text": "Spring class!", "link": null, "sponsored": false, "mediaRefs": [] },
               "payloadHash": "abc123", "checks": [], "tainted": false, "status": "pending",
               "expiresAt": "2026-11-08T00:00:00.000Z", "result": null, "canBeCarriedOut": true }
           ]
@@ -27,7 +27,7 @@ struct ModelsTests {
         let run = try JSONDecoder().decode(AgentRunResponse.self, from: Data(json.utf8))
         #expect(run.drafts.first?.isForSharing == true)
         #expect(run.drafts.first?.knownPlatform == .instagram)
-        #expect(run.proposals.first?.isSite == true)
+        #expect(run.proposals.first?.isPost == true)
         #expect(run.proposals.first?.isPending == true)
         #expect(run.needsAnswer == false)
     }
@@ -94,15 +94,14 @@ struct ModelsTests {
 
     /// The server accepts exactly these (AGENT_MODES in server/agent/loop.ts).
     @Test func createModesMatchTheServer() throws {
-        #expect(CreateMode.allCases.map(\.rawValue) == ["site", "posts", "schedule", "launch"])
+        #expect(CreateMode.allCases.map(\.rawValue) == ["posts", "schedule", "launch"])
         let body = try JSONEncoder().encode(["mode": CreateMode.posts])
         #expect(String(decoding: body, as: UTF8.self) == #"{"mode":"posts"}"#)
     }
 
-    @Test func previewServesFilesWithTheRightTypes() {
-        #expect(SiteSchemeHandler.mimeType(for: "index.html") == "text/html")
-        #expect(SiteSchemeHandler.mimeType(for: "css/site.css") == "text/css")
-        #expect(SiteSchemeHandler.mimeType(for: "logo.SVG") == "image/svg+xml")
+    /// A photo goes on posts and posters; the schedule has no use for one.
+    @Test func onlyPostsAndLaunchesTakeAPhoto() {
+        #expect(CreateMode.allCases.filter(\.takesPhoto) == [.posts, .launch])
     }
 
     // The address rules are tested on ServerAddress directly: once AppConfig.serverURL is set for

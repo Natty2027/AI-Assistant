@@ -1,42 +1,5 @@
 import SwiftUI
 
-/// Connect Netlify: create a personal access token there, paste it here.
-struct ConnectNetlifySheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var token = ""
-    @State private var isWorking = false
-
-    var body: some View {
-        ConnectSheet(
-            title: "Connect Netlify",
-            intro: "Your website is published to your own Netlify account. It takes about a minute.",
-            steps: [
-                "Open Netlify and sign in (or create a free account).",
-                "Create a new personal access token. Any name works, for example \"Hera\".",
-                "Copy the token and paste it below.",
-            ],
-            link: ("Open Netlify tokens", URL(string: "https://app.netlify.com/user/applications#personal-access-tokens")!),
-            isWorking: isWorking,
-            canConnect: !token.trimmingCharacters(in: .whitespaces).isEmpty,
-            connect: connect
-        ) {
-            SecureField("Personal access token", text: $token)
-                .textContentType(.password)
-                .autocorrectionDisabled()
-        }
-    }
-
-    private func connect() {
-        Task {
-            isWorking = true
-            let ok = await model.connectNetlify(token: token)
-            isWorking = false
-            if ok { dismiss() }
-        }
-    }
-}
-
 /// Connect Bluesky with an app password, never the main password.
 struct ConnectBlueskySheet: View {
     @Environment(AppModel.self) private var model

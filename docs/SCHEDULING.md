@@ -20,8 +20,7 @@ were going out, then the server holds it and posts it at its time. Approved post
 - **In emails:** Hera attaches a calendar invite (.ics) to event emails. **Write here** (Apple Mail)
   attaches it; **Share invite** sends the file through Mail, Messages or AirDrop. Guests tap it to
   add the event to Apple, Google or Outlook calendars.
-- **On websites:** event pages get an "Add to my calendar" link to an .ics file on the site.
-- Launch Kit does both. Code: `server/agent/ics.ts`.
+- Launch Kit attaches one to its announcement email. Code: `server/agent/ics.ts`.
 
 ## Email reminders
 

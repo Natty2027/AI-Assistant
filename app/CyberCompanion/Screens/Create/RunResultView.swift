@@ -130,7 +130,7 @@ struct RunResultView: View {
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(waiting) { p in
                     HStack(spacing: 12) {
-                        IconTile(systemImage: p.isSite ? "globe" : "text.bubble.fill", size: 30)
+                        IconTile(systemImage: p.isListing ? "tag.fill" : "text.bubble.fill", size: 30)
                         Text(p.summary).font(.subheadline)
                     }
                 }
@@ -175,7 +175,7 @@ struct RunResultView: View {
 }
 
 /// What a run made ready, by kind. Shown as the Launch Kit overview when a run produced more than
-/// one kind of thing (a website and posts, posts and calendar entries, and so on).
+/// one kind of thing (a poster and posts, posts and calendar entries, and so on).
 struct LaunchKitSummary: Equatable {
     struct Item: Equatable {
         let text: String
@@ -187,9 +187,8 @@ struct LaunchKitSummary: Equatable {
     init?(run: AgentRunResponse) {
         func plural(_ n: Int, _ one: String, _ many: String) -> String { n == 1 ? one : "\(n) \(many)" }
         let pending = run.proposals.filter(\.isPending)
-        let site = pending.filter(\.isSite).count
         let listings = pending.filter(\.isListing).count
-        let posts = pending.count - site - listings
+        let posts = pending.count - listings
         let sharing = run.drafts.filter(\.isForSharing).count
         let calendar = run.scheduleChanges ?? []
         let events = calendar.filter { [.addEvent, .changeEvent, .cancelEvent].contains($0.kind) }.count
@@ -200,7 +199,6 @@ struct LaunchKitSummary: Equatable {
         var items: [Item] = []
         let posters = run.posterDrafts?.count ?? 0
         if posters > 0 { items.append(.init(text: plural(posters, "A poster in every size", "posters in every size"), systemImage: "photo.artframe")) }
-        if site > 0 { items.append(.init(text: "Website ready to publish", systemImage: "globe")) }
         if posts > 0 { items.append(.init(text: plural(posts, "A post ready to approve", "posts ready to approve"), systemImage: "text.bubble.fill")) }
         if listings > 0 { items.append(.init(text: plural(listings, "An eBay listing ready to approve", "eBay listings ready to approve"), systemImage: "tag.fill")) }
         if sharing > 0 { items.append(.init(text: plural(sharing, "A post to share yourself", "posts to share yourself"), systemImage: "square.and.arrow.up")) }

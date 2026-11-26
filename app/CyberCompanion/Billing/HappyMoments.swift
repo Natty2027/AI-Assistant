@@ -1,6 +1,6 @@
 import Foundation
 
-/// When to ask for an App Store rating: right after something went well (a post, website or
+/// When to ask for an App Store rating: right after something went well (a post or a
 /// listing went live), on the 3rd, 10th and 30th success, and at most once per app version.
 /// Apple decides whether the prompt actually appears (at most three times a year).
 enum HappyMoments {

@@ -90,16 +90,41 @@ struct NetworkingTests {
             if request.httpMethod == "POST" { return (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-000000000001"}"#) }
             checks += 1
             return checks < 3 ? (200, #"{"status":"running"}"#)
-                : (200, #"{"status":"finished","result":{"status":"done","text":"Your site is ready.","tainted":false,"drafts":[],"proposals":[]}}"#)
+                : (200, #"{"status":"finished","result":{"status":"done","text":"Your launch is ready.","tainted":false,"drafts":[],"proposals":[]}}"#)
         }
         let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
-        let run = try await client.runAssistant(request: "Make my website", mode: .site, allowWebSearch: false,
-                                                brand: RunBrand(businessName: "Clay Corner", primaryColor: "#1F6F5C", accentColor: "#F2A541"))
-        #expect(run.text == "Your site is ready.")
+        let run = try await client.runAssistant(request: "Launch my workshop", mode: .launch, allowWebSearch: false)
+        #expect(run.text == "Your launch is ready.")
         #expect(checks == 3)
         let start = try #require(StubProtocol.requests.first)
         #expect(start.url?.path() == "/agent/runs")
-        #expect(StubProtocol.requests.last?.url?.path() == "/agent/runs/6f1c2d3e-0000-4000-8000-000000000001")
+        let body = try #require(StubProtocol.bodies.first.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        #expect(body["brand"] == nil, "the server no longer uses the brand")
+        let checkRequests = StubProtocol.requests.dropFirst()
+        #expect(checkRequests.count == 3)
+        for check in checkRequests {
+            #expect(check.url?.path() == "/agent/runs/6f1c2d3e-0000-4000-8000-000000000001")
+            #expect(check.url?.query() == "wait=20")
+        }
+    }
+
+    /// Each check asks the server to hold on until the run is done, so a finished run is
+    /// answered on the first check, with no waiting in between.
+    @Test func aRunThatFinishesWhileWaitingIsAnsweredWithoutSleeping() async throws {
+        StubProtocol.handler = { request in
+            request.httpMethod == "POST" ? (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-000000000004"}"#)
+                : (200, #"{"status":"finished","result":{"status":"done","text":"Done.","tainted":false,"drafts":[],"proposals":[]}}"#)
+        }
+        let sleeps = SleepCounter()
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session,
+                               sleep: { _ in sleeps.count() })
+        let run = try await client.runAssistant(request: "Posts for Saturday", mode: .posts, allowWebSearch: false)
+        #expect(run.text == "Done.")
+        #expect(sleeps.total == 0)
+        #expect(StubProtocol.requests.count == 2)
+        let check = try #require(StubProtocol.requests.last)
+        #expect(check.url?.query() == "wait=20")
+        #expect(check.timeoutInterval == 35)
     }
 
     @Test func aRunThatFailsOnTheServerSaysWhy() async throws {
@@ -109,7 +134,7 @@ struct NetworkingTests {
         }
         let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
         do {
-            _ = try await client.runAssistant(request: "Make my website", mode: .site, allowWebSearch: false)
+            _ = try await client.runAssistant(request: "Launch my workshop", mode: .launch, allowWebSearch: false)
             Issue.record("expected the run to fail")
         } catch let error as APIClient.APIError {
             #expect(error.code == "run_lost")
@@ -175,6 +200,12 @@ private final class TokenBox: @unchecked Sendable {
         values.removeFirst()
         return true
     }
+}
+
+/// Counts the injected sleeps.
+private final class SleepCounter: @unchecked Sendable {
+    private(set) var total = 0
+    func count() { total += 1 }
 }
 
 /// Answers requests from a closure instead of the network.

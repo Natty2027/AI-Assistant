@@ -39,7 +39,7 @@ struct VoiceTests {
     @Test(.timeLimit(.minutes(2))) @MainActor func stopEndsWhatSheIsSaying() async throws {
         let voice = HeraVoice()
         var finishedAnyway = false
-        voice.speak(String(repeating: "Here is a long reply about your new website and the posts that go with it. ", count: 6)) {
+        voice.speak(String(repeating: "Here is a long reply about your new poster and the posts that go with it. ", count: 6)) {
             finishedAnyway = true
         }
         // Wait until sound is actually coming out.
@@ -59,20 +59,24 @@ struct VoiceTests {
         #expect(!finishedAnyway)
     }
 
-    /// "Talk to Hera" asks "website or posts?": one at a time, so both or neither means ask again.
-    @Test func spokenAnswersPickWebsiteOrPosts() {
-        #expect(ConversationReply.mode(from: "Let's make a website") == .site)
-        #expect(ConversationReply.mode(from: "a landing page for my bakery") == .site)
+    /// "Talk to Hera" asks "posters and posts, a launch, or your schedule?": one at a time, so
+    /// posts and schedule together, or neither, means ask again.
+    @Test func spokenAnswersPickPostsLaunchOrSchedule() {
         #expect(ConversationReply.mode(from: "Posts please") == .posts)
+        #expect(ConversationReply.mode(from: "Make me a poster") == .posts)
+        #expect(ConversationReply.mode(from: "a flyer for the bake sale") == .posts)
+        #expect(ConversationReply.mode(from: "Studio") == .posts)
         #expect(ConversationReply.mode(from: "I want to announce my class on Instagram") == .posts)
-        #expect(ConversationReply.mode(from: "both a website and some posts") == nil)
+        #expect(ConversationReply.mode(from: "Work on my schedule") == .schedule)
+        #expect(ConversationReply.mode(from: "Plan a launch") == .launch)
+        #expect(ConversationReply.mode(from: "both some posts and my calendar") == nil)
         #expect(ConversationReply.mode(from: "um, not sure") == nil)
         #expect(ConversationReply.mode(from: "") == nil)
     }
 
     @Test func repliesAreCleanedUpBeforeSpeaking() {
-        #expect(HeraVoice.spokenText(from: "**Done!** See [your site](https://x.netlify.app).") == "Done! See your site.")
-        #expect(HeraVoice.spokenText(from: "Live at https://x.netlify.app now") == "Live at the link now")
+        #expect(HeraVoice.spokenText(from: "**Done!** See [your post](https://bsky.app/x).") == "Done! See your post.")
+        #expect(HeraVoice.spokenText(from: "Live at https://bsky.app/x now") == "Live at the link now")
         #expect(HeraVoice.spokenText(from: "# Title\n\n`code`  here") == "Title code here")
         #expect(HeraVoice.spokenText(from: "  ") == "")
     }

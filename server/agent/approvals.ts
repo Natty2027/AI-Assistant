@@ -132,10 +132,13 @@ export class ActionStore {
 
   /**
    * Puts saved proposals back after a restart. One that was being carried out when the server
-   * stopped is marked failed rather than run again: it may have partly happened.
+   * stopped is marked failed rather than run again: it may have partly happened. A kind Hera no
+   * longer has (website publishing, from before it was removed) is skipped: nothing could show or
+   * carry it out, and loading it would break every list that looks its kind up.
    */
   restore(saved: SavedProposal[]): void {
     for (const { proposal: raw, tokenHash } of saved) {
+      if (!isActionKind(raw.kind)) continue;
       const date = (v: unknown) => (v ? new Date(String(v)) : undefined);
       const p = {
         ...raw,

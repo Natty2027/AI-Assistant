@@ -77,11 +77,12 @@ export const config = {
 
   anthropicApiKey: opt("ANTHROPIC_API_KEY"),
 
-  /** Where the assistant keeps each person's website files until they publish them. On a host
-   *  with an ephemeral disk (Railway's default), point this at a mounted volume. */
+  /** Where Hera kept people's website files before website building was removed. Still read so
+   *  account deletion can remove an old folder, and to place the photos folder next to it. */
   sitesDir,
   /** Photos people attach to posts (Instagram needs one). Next to the sites folder by default,
-   *  so it lands on the same Railway volume. */
+   *  so it lands on the same Railway volume. On a host with an ephemeral disk (Railway's
+   *  default), point AGENT_SITES_DIR or this at a mounted volume. */
   mediaDir: opt("AGENT_MEDIA_DIR") ?? path.join(path.dirname(sitesDir), "media"),
 
   /** This server's public https address, e.g. https://ai-assistant-production-e789.up.railway.app.
@@ -109,12 +110,10 @@ export const config = {
   ebaySandbox: opt("EBAY_ENV") === "sandbox",
 
   /** Selling Hera: its App Store id (numbers only, once it's live) or a public TestFlight link,
-   *  for the home page and the "Built with Hera" link; and the owner's dashboard password. */
+   *  for the home page; and the owner's dashboard password. */
   appStoreId: opt("APP_STORE_ID"),
   testflightUrl: opt("TESTFLIGHT_URL"),
   adminToken: opt("ADMIN_TOKEN"),
-  /** "off" removes "Built with Hera" from free-plan websites. */
-  builtWithHera: opt("BUILT_WITH_HERA") !== "off",
 
   /** Hera Pro and monthly limits. BILLING=on turns the limits on; until then nothing is stopped
    *  (the subscription has to exist in App Store Connect first). */

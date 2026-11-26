@@ -17,7 +17,7 @@ struct RecognitionTests {
         }
         let analyzerFormat = try #require(await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]))
 
-        let speech = try await Self.synthesize("Make a website for my bakery on Main Street.")
+        let speech = try await Self.synthesize("Make a poster for my bakery on Main Street.")
         let inputFormat = try #require(speech.first?.format)
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
