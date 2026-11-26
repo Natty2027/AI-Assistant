@@ -19,6 +19,9 @@ struct CyberCompanionApp: App {
         // Registered here, not from a view: Siri can launch the app cold and run the intent
         // before any screen appears, and an unregistered dependency is a crash.
         AppDependencyManager.shared.add(dependency: conversations)
+        // "What needs my approval?" and "What's coming up?" answer from the app's own client and
+        // proposals. AppModel is main-actor isolated, which is what makes it safe to share.
+        AppDependencyManager.shared.add(dependency: model)
         // Also before launch finishes, so tapping a reminder that opened the app is still heard.
         reminderDelivery = ReminderDelivery(
             speak: { [weak model] spoken in model?.speech.speak(spoken) },
@@ -44,7 +47,11 @@ struct CyberCompanionApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
-                        Task { await model.refreshWidget() }
+                        Task {
+                            await model.refreshWidget()
+                            // A scheduled post may have gone out while Hera was closed.
+                            await model.refreshScheduledPosts()
+                        }
                         // A text shared to Hera from Messages while she was closed.
                         model.collectSharedText()
                     case .background: EventReminders.scheduleBackgroundUpdate()

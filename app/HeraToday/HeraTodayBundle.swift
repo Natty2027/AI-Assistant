@@ -12,5 +12,9 @@ import SwiftUI
 struct HeraTodayBundle: WidgetBundle {
     var body: some Widget {
         HeraToday()
+        #if os(iOS)
+        // Scheduled posts counting down on the Lock Screen and in the Dynamic Island.
+        ScheduledPostLiveActivity()
+        #endif
     }
 }

@@ -27,6 +27,10 @@ final class AppModel {
     let brand = BrandKitStore()
     /// Quick rewrites, hashtags and reply ideas with Apple's on-device model: no server request.
     let onDevice = OnDeviceHera()
+    #if os(iOS)
+    /// Scheduled posts counting down on the Lock Screen and in the Dynamic Island.
+    private let scheduledPosts = ScheduledPostActivities()
+    #endif
     /// The photo sent with the latest run, so its posters can use it.
     private(set) var lastRunPhoto: Data?
 
@@ -128,6 +132,8 @@ final class AppModel {
     func signOut() async {
         await session.signOut()
         resetLocalState()
+        // Nothing of this account's stays on the Lock Screen.
+        await syncLiveActivities()
     }
 
     /// Deletes the account on the server (data and sign-in), then signs out on this device.
@@ -139,6 +145,7 @@ final class AppModel {
         session.clear()
         saveSettings(serverURL: serverURLString, accessToken: "")
         resetLocalState()
+        await syncLiveActivities()
         return true
     }
 
@@ -309,7 +316,24 @@ final class AppModel {
         // The widget's calendar part doesn't need the server, so it's refreshed even when signed out.
         guard let client else { await refreshWidget(); return }
         await perform { proposals = try await client.proposals() }
+        await syncLiveActivities()
         await refreshWidget()
+    }
+
+    /// Brings the Lock Screen's scheduled posts in line with the proposals. iPhone and iPad only.
+    func syncLiveActivities() async {
+        #if os(iOS)
+        await scheduledPosts.sync(with: proposals, connections: connections)
+        #endif
+    }
+
+    /// Back in the app: a post may have gone out while Hera was closed. Fetches only when one is
+    /// waiting for its time, and quietly, since a moment offline isn't worth an error on screen.
+    func refreshScheduledPosts() async {
+        if proposals.contains(where: \.isScheduled), let client, let latest = try? await client.proposals() {
+            proposals = latest
+        }
+        await syncLiveActivities()
     }
 
     /// Approves exactly what was shown (by its payload hash) and carries it out straight away.
@@ -325,6 +349,7 @@ final class AppModel {
                 : try await client.execute(proposal, token: approval.token)
             proposals = try await client.proposals()
         }
+        await syncLiveActivities()
         await refreshWidget()
         return updated
     }
@@ -335,6 +360,7 @@ final class AppModel {
             try await client.reject(proposal)
             proposals = try await client.proposals()
         }
+        await syncLiveActivities()
         await refreshWidget()
     }
 

@@ -9,6 +9,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(ConversationRequests.self) private var conversations
     @State private var selection: Section = .create
+    /// A proposal to open on the Review tab, from a tapped Lock Screen countdown.
+    @State private var reviewTarget: String?
 
     var body: some View {
         if model.needsSignIn {
@@ -21,6 +23,16 @@ struct RootView: View {
                 // "Talk to Hera" happens on the Create tab.
                 .onChange(of: conversations.isPending, initial: true) { _, pending in
                     if pending { selection = .create }
+                }
+                // "Ask Hera to make something" from Siri or a Shortcuts automation, too.
+                .onChange(of: conversations.pendingCreation, initial: true) { _, creation in
+                    if creation != nil { selection = .create }
+                }
+                // A scheduled post tapped on the Lock Screen or in the Dynamic Island.
+                .onOpenURL { url in
+                    guard case .review(let id) = DeepLink.parse(url) else { return }
+                    selection = .review
+                    reviewTarget = id
                 }
                 .sheet(isPresented: Bindable(model.pro).showPlans) { PlanSheet() }
                 // An email reminder was tapped: the email, ready to send.
@@ -62,7 +74,7 @@ struct RootView: View {
                 AssistantView(openSettings: { selection = .settings }, openReview: { selection = .review })
             }
             Tab("Review", systemImage: "checkmark.seal", value: .review) {
-                ReviewView()
+                ReviewView(open: $reviewTarget)
             }
             .badge(model.pendingCount)
             Tab("Accounts", systemImage: "person.crop.circle.badge.plus", value: .accounts) {

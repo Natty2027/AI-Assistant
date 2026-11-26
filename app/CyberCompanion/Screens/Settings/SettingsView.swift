@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage(EventReminders.enabledKey) private var eventReminders = true
     @AppStorage(EventReminders.leadKey) private var reminderLead = 15
     @AppStorage(EventReminders.spokenKey) private var spokenReminders = true
+    @AppStorage(ScheduledPostPlan.enabledKey) private var scheduledPostsOnLockScreen = true
 
     var body: some View {
         NavigationStack {
@@ -26,6 +27,9 @@ struct SettingsView: View {
                 brandSection
                 if model.isConfigured { memorySection }
                 remindersSection
+                #if os(iOS)
+                lockScreenSection
+                #endif
                 if HeraVoice.isAvailable { voiceSection }
                 onDeviceSection
                 legal
@@ -207,6 +211,20 @@ struct SettingsView: View {
         .onChange(of: reminderLead) { Task { await model.refreshReminders() } }
         .onChange(of: spokenReminders) { Task { await model.refreshReminders() } }
     }
+
+    #if os(iOS)
+    /// Live Activities: a countdown on the Lock Screen to each post that's about to go out.
+    private var lockScreenSection: some View {
+        Section {
+            Toggle("Show scheduled posts on the Lock Screen", isOn: $scheduledPostsOnLockScreen)
+        } header: {
+            SectionLabel("Lock Screen")
+        } footer: {
+            Text("When an approved post is set to go out within eight hours, the Lock Screen and Dynamic Island count down to it. Tap it to open the post in Review.")
+        }
+        .onChange(of: scheduledPostsOnLockScreen) { Task { await model.syncLiveActivities() } }
+    }
+    #endif
 
     /// Hera Pro: this month's requests, and upgrading or managing the subscription.
     private var planSection: some View {

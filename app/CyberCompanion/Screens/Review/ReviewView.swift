@@ -3,10 +3,13 @@ import SwiftUI
 
 /// Everything the assistant proposed. Nothing reaches the public until it's approved here.
 struct ReviewView: View {
+    /// A proposal to open, by id; cleared once it's shown (or can't be found).
+    @Binding var open: String?
     @Environment(AppModel.self) private var model
+    @State private var path: [Proposal] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     let pending = model.proposals.filter(\.isPending)
@@ -40,7 +43,16 @@ struct ReviewView: View {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refreshProposals() } }
             }
             .task { await model.refreshProposals() }
+            .task(id: open) { await openRequested() }
         }
+    }
+
+    /// Opens the proposal a Lock Screen tap asked for, loading the latest first if it isn't here.
+    private func openRequested() async {
+        guard let id = open else { return }
+        if !model.proposals.contains(where: { $0.id == id }) { await model.refreshProposals() }
+        if let proposal = model.proposals.first(where: { $0.id == id }) { path = [proposal] }
+        open = nil
     }
 
     private func group(_ title: String, _ proposals: [Proposal], color: Color = Theme.spectrum[0]) -> some View {
@@ -345,7 +357,7 @@ struct ProposalDetailView: View {
 }
 
 #Preview {
-    ReviewView()
+    ReviewView(open: .constant(nil))
         .environment(AppModel())
 }
 

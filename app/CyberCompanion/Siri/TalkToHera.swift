@@ -13,9 +13,19 @@ final class ConversationRequests {
     private(set) var isPending = false
     /// "What's on my day?": the same, for the spoken briefing.
     private(set) var isBriefingPending = false
+    /// "Ask Hera to make something": a request to send as it is, from Siri or an automation.
+    private(set) var pendingCreation: Creation?
+
+    /// What to ask Hera for, and which kind of task it is.
+    struct Creation: Equatable, Sendable {
+        let request: String
+        let mode: CreateMode
+    }
 
     func request() { isPending = true }
     func requestBriefing() { isBriefingPending = true }
+    /// A newer request replaces one that hasn't been sent yet.
+    func requestCreation(_ request: String, mode: CreateMode) { pendingCreation = Creation(request: request, mode: mode) }
 
     /// Returns true once per request.
     func take() -> Bool {
@@ -28,6 +38,12 @@ final class ConversationRequests {
         guard isBriefingPending else { return false }
         isBriefingPending = false
         return true
+    }
+
+    /// Returns each creation request once.
+    func takeCreation() -> Creation? {
+        defer { pendingCreation = nil }
+        return pendingCreation
     }
 }
 
@@ -89,6 +105,40 @@ struct HeraShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "What's on My Day",
             systemImageName: "sun.horizon"
+        )
+        // The request itself can't be part of a phrase (it's free text), so Siri asks for it.
+        AppShortcut(
+            intent: CreateWithHeraIntent(),
+            phrases: [
+                "Make something with \(.applicationName)",
+                "Ask \(.applicationName) to make something",
+                "Ask \(.applicationName) to make a post",
+                "Make a post with \(.applicationName)",
+            ],
+            shortTitle: "Ask Hera to Make Something",
+            systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: WhatNeedsApprovalIntent(),
+            phrases: [
+                "What needs my approval in \(.applicationName)",
+                "What's waiting in \(.applicationName)",
+                "What needs approving in \(.applicationName)",
+                "Ask \(.applicationName) what needs my approval",
+            ],
+            shortTitle: "What Needs My Approval",
+            systemImageName: "checkmark.seal"
+        )
+        AppShortcut(
+            intent: ComingUpIntent(),
+            phrases: [
+                "What's coming up in \(.applicationName)",
+                "What's scheduled in \(.applicationName)",
+                "Ask \(.applicationName) what's coming up",
+                "When do my \(.applicationName) posts go out",
+            ],
+            shortTitle: "What's Coming Up",
+            systemImageName: "calendar.badge.clock"
         )
     }
 }

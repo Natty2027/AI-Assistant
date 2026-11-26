@@ -130,6 +130,10 @@ struct AssistantView: View {
         .onChange(of: conversations.isBriefingPending, initial: true) { _, pending in
             if pending, conversations.takeBriefing() { Task { await briefMe() } }
         }
+        // "Ask Hera to make something" (CreateWithHeraIntent) lands here, and waits for a run
+        // that's already going to finish.
+        .onChange(of: conversations.pendingCreation, initial: true) { sendRequestedCreation() }
+        .onChange(of: model.isRunning) { sendRequestedCreation() }
         // "Hi Hera" said into the orb: a greeting starts the conversation, "what's on my day" gets
         // the briefing, and a greeting in front of a request is dropped.
         .onChange(of: voice.isListening) { wasListening, isListening in
@@ -489,6 +493,24 @@ struct AssistantView: View {
         if continuing || model.isContinuing(mode) {
             prompt = ""
             promptBeforeVoice = ""
+        }
+    }
+
+    /// A request from Siri or Shortcuts: a new task in its mode, sent as it is.
+    private func sendRequestedCreation() {
+        guard !model.isRunning, let creation = conversations.takeCreation() else { return }
+        model.speech.stop()
+        if model.lastRun != nil { model.clearLastRun() }
+        mode = creation.mode
+        // An earlier photo belongs to an earlier task.
+        photoItem = nil
+        photo = nil
+        Task {
+            // The mic, if it was on, would otherwise write over the request.
+            await voice.stop()
+            promptBeforeVoice = ""
+            prompt = creation.request
+            await send()
         }
     }
 
