@@ -10,7 +10,7 @@
 		F16886CF30A185A9000D33C3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F16886CE30A185A9000D33C3 /* WidgetKit.framework */; };
 		F16886D130A185A9000D33C3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F16886D030A185A9000D33C3 /* SwiftUI.framework */; };
 		F16886DC30A185AB000D33C3 /* HeraTodayExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F16886CD30A185A9000D33C3 /* HeraTodayExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		F1AA926530ACF4410004C05F /* HeraShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F1AA925B30ACF4410004C05F /* HeraShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F1AA926530ACF4410004C05F /* HeraShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F1AA925B30ACF4410004C05F /* HeraShare.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F1B20D9730A10C5E00B408C4 /* KokoroCoreML in Frameworks */ = {isa = PBXBuildFile; productRef = F1B20D9630A10C5E00B408C4 /* KokoroCoreML */; };
 /* End PBXBuildFile section */
 
@@ -408,6 +408,7 @@
 		};
 		F1AA926430ACF4410004C05F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilter = ios;
 			target = F1AA925A30ACF4410004C05F /* HeraShare */;
 			targetProxy = F1AA926330ACF4410004C05F /* PBXContainerItemProxy */;
 		};
