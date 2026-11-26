@@ -6,10 +6,17 @@ import AppKit
 #endif
 
 /// A post the assistant wrote for a platform with no connected account. The person posts it
-/// themselves through the share sheet, so it goes out from their own app and account.
+/// themselves through the share sheet, so it goes out from their own app and account. The words
+/// can be edited (or rewritten on this device) first; Share and Copy use them as edited.
 struct DraftCard: View {
     let draft: Draft
+    @State private var text: String
     @State private var copied = false
+
+    init(draft: Draft) {
+        self.draft = draft
+        _text = State(initialValue: draft.text)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -27,27 +34,42 @@ struct DraftCard: View {
                 }
                 Spacer()
                 if let platform = draft.knownPlatform {
-                    LengthRing(length: platform.measuredLength(of: draft.shareableText), limit: platform.characterLimit)
+                    LengthRing(length: platform.measuredLength(of: shareable), limit: platform.characterLimit)
                 }
             }
 
-            Text(draft.shareableText)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            TextEditor(text: $text)
+                .frame(minHeight: 90, maxHeight: 320)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityLabel("Post text")
+            if let link = draft.link, !link.isEmpty, shareable != text {
+                Label(link, systemImage: "link")
+                    .labelStyle(.alignedIcon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            OnDeviceTools(text: $text, characterLimit: draft.textCharacterLimit,
+                          measure: { draft.knownPlatform?.measuredLength(of: $0) ?? $0.count },
+                          offersHashtags: true)
 
             if !draft.problems.isEmpty {
                 CheckList(checks: draft.problems)
             }
 
             HStack(spacing: 10) {
-                ShareLink(item: draft.shareableText) {
+                ShareLink(item: shareable) {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.glassProminent)
                 .disabled(hasBlockingProblem)
 
                 Button {
-                    copyToClipboard(draft.shareableText)
+                    copyToClipboard(shareable)
                     withAnimation(.spring(duration: 0.3)) { copied = true }
                 } label: {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
@@ -66,7 +88,12 @@ struct DraftCard: View {
             }
         }
         .glowCard()
+        // A fresh copy was made, so the old "Copied" no longer applies.
+        .onChange(of: text) { copied = false }
     }
+
+    /// What goes out: the text as edited, with the link the platform adds.
+    private var shareable: String { draft.shareable(text) }
 
     private var hasBlockingProblem: Bool { draft.problems.contains { $0.level == .block } }
 
@@ -115,4 +142,5 @@ private struct LengthRing: View {
             .padding()
     }
     .auroraBackground()
+    .environment(AppModel())
 }

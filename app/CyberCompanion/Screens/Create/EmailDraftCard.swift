@@ -48,6 +48,7 @@ struct EmailDraftCard: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            OnDeviceTools(text: $draft.body)
             if let invite = draft.invite { inviteRow(invite) }
             if let sendAt = draft.sendAt.flatMap(HeraTime.parse) { reminderRow(sendAt) }
             HStack(spacing: 10) {
@@ -178,6 +179,7 @@ struct EmailDraftCard: View {
     EmailDraftCard(draft: EmailDraft(id: "e1", to: ["sam@example.com"], cc: [], subject: "Your Saturday pottery class",
                                      body: "Hi Sam,\n\nThanks for booking! Class starts at 10 AM this Saturday at Clay Corner, 12 Main St.\n\nSee you there,\nNat"))
         .padding()
+        .environment(AppModel())
 }
 
 /// A mailto: link (RFC 6068), which the system hands to the person's default email app. Every

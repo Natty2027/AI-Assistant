@@ -482,6 +482,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Hera reads your upcoming events so she can plan around them, and adds or changes events only when you approve each change.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Point your camera at a product, business card or flyer and Hera turns it into a listing, a contact or an event.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Hera finds the people you ask her to text in your Contacts. Their numbers stay on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Speak your request instead of typing it. Your voice is recognized on this device.";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Hera reads your open reminders and adds or completes them only when you approve each change.";
@@ -527,6 +528,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Hera reads your upcoming events so she can plan around them, and adds or changes events only when you approve each change.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Point your camera at a product, business card or flyer and Hera turns it into a listing, a contact or an event.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Hera finds the people you ask her to text in your Contacts. Their numbers stay on this device.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Speak your request instead of typing it. Your voice is recognized on this device.";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Hera reads your open reminders and adds or completes them only when you approve each change.";

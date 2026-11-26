@@ -84,10 +84,20 @@ struct Draft: Codable, Hashable, Identifiable, Sendable {
     var isForSharing: Bool { connectionId == nil }
 
     /// What to copy or hand to the share sheet.
-    var shareableText: String {
+    var shareableText: String { shareable(text) }
+
+    /// The same, for the text as the person edited it.
+    func shareable(_ text: String) -> String {
         if let knownPlatform { return knownPlatform.composedText(text, link: link) }
         guard let link, !link.isEmpty, !text.contains(link) else { return text }
         return "\(text)\n\n\(link)"
+    }
+
+    /// How many characters the text itself may use: the platform's limit, less the link the
+    /// platform adds to it. nil when the platform isn't known.
+    var textCharacterLimit: Int? {
+        guard let knownPlatform else { return nil }
+        return knownPlatform.characterLimit - knownPlatform.measuredLength(of: knownPlatform.composedText("", link: link))
     }
 }
 

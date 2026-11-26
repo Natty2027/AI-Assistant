@@ -19,6 +19,12 @@ struct AssistantView: View {
     @State private var photo: PostPhoto?
     @State private var isLoadingPhoto = false
     @State private var photoProblem: String?
+    /// "Snap it": the camera is open, then the photo it took is worked out in a sheet.
+    @State private var showCamera = false
+    @State private var captured: Data?
+    @State private var snap: Snap?
+    /// A quick reply to a received text, made on this device, as a text message to send.
+    @State private var quickReply: TextDraft?
     @State private var voice = VoiceInput()
     /// What was typed before the mic started, so dictation is added to it rather than replacing it.
     @State private var promptBeforeVoice = ""
@@ -66,6 +72,11 @@ struct AssistantView: View {
                 }
                 if let text = model.receivedText {
                     receivedTextCard(text)
+                        .transition(.opacity)
+                }
+                if let quickReply {
+                    TextDraftCard(draft: quickReply)
+                        .id(quickReply.id)
                         .transition(.opacity)
                 }
                 composer
@@ -144,6 +155,21 @@ struct AssistantView: View {
         }
         .sensoryFeedback(.start, trigger: voice.isListening) { _, listening in listening }
         .sensoryFeedback(.success, trigger: model.lastRun)
+        // A new text (or none): the quick reply was for the old one.
+        .onChange(of: model.receivedText) { quickReply = nil }
+        #if os(iOS)
+        // The sheet opens once the camera has gone, since one can't present over the other.
+        .fullScreenCover(isPresented: $showCamera, onDismiss: {
+            if let captured { snap = Snap(jpeg: captured) }
+            captured = nil
+        }) {
+            CameraPicker { captured = $0 }
+                .ignoresSafeArea()
+        }
+        #endif
+        .sheet(item: $snap) { snap in
+            SnapSheet(snap: snap) { action in Task { await handle(action) } }
+        }
     }
 
     /* ---------------- header ---------------- */
@@ -258,6 +284,20 @@ struct AssistantView: View {
                 .accessibilityLabel(title)
             }
 
+            #if os(iOS)
+            if CameraPicker.isAvailable {
+                Button { showCamera = true } label: {
+                    Label("Snap it", systemImage: "camera.viewfinder")
+                        .composerButtonLabel()
+                }
+                .labelStyle(compact ? AnyLabelStyle(.iconOnly) : AnyLabelStyle(.titleAndIcon))
+                .buttonStyle(.glass)
+                .disabled(model.isRunning)
+                .help("Point the camera at a business card, flyer or product and Hera works out what to do.")
+                .accessibilityLabel("Snap it")
+            }
+            #endif
+
             Toggle(isOn: $allowWebSearch) {
                 Label("Web search", systemImage: "globe")
                     .composerButtonLabel()
@@ -290,9 +330,17 @@ struct AssistantView: View {
                 .scaledToFill()
                 .frame(width: 64, height: 64)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            Text("Hera will add this photo to your posters and posts.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Hera will add this photo to your posters and posts.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                // The same look the camera gets, for a photo from the library (and on the Mac).
+                Button("What's this?", systemImage: "text.viewfinder") { snap = Snap(jpeg: photo.jpeg) }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .lineLimit(1)
+                    .disabled(model.isRunning)
+            }
             Spacer()
             Button("Remove photo", systemImage: "xmark.circle.fill") {
                 photoItem = nil
@@ -417,6 +465,7 @@ struct AssistantView: View {
             photo = nil
             photoProblem = nil
             conversation = .none
+            quickReply = nil
         }
         proxy.scrollTo("top", anchor: .top)
     }
@@ -440,6 +489,43 @@ struct AssistantView: View {
         if continuing || model.isContinuing(mode) {
             prompt = ""
             promptBeforeVoice = ""
+        }
+    }
+
+    /* ---------------- "Snap it" ---------------- */
+
+    /// What the person chose in "Here's what I see". A snap starts a new Studio task.
+    private func handle(_ action: SnapAction) async {
+        if case .receive(let text) = action {
+            model.receive(text: text)
+            return
+        }
+        model.speech.stop()
+        if model.lastRun != nil { model.clearLastRun() }
+        mode = .posts
+        photoProblem = nil
+        var photoData: Data?
+        switch action {
+        case .run(_, let jpeg), .prefill(_, let jpeg): photoData = jpeg
+        case .receive: break
+        }
+        // The snap's photo, or none: a business card shouldn't go out on a follow-up email's posts.
+        photoItem = nil
+        photo = nil
+        if let photoData {
+            // Sized and shaped for Instagram, like a photo from the library.
+            let jpeg = await Task.detached(priority: .userInitiated) { PostPhoto.prepare(from: photoData) }.value
+            photo = jpeg.flatMap(PostPhoto.init(jpeg:))
+        }
+        switch action {
+        case .run(let request, _):
+            prompt = request
+            await send()
+        case .prefill(let request, _):
+            prompt = request
+            promptFocused = true
+        case .receive:
+            break
         }
     }
 
@@ -504,7 +590,10 @@ struct AssistantView: View {
                 Spacer()
                 Button("Close", systemImage: "xmark") {
                     model.speech.stop()
-                    withAnimation { model.receivedText = nil }
+                    withAnimation {
+                        model.receivedText = nil
+                        quickReply = nil
+                    }
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
@@ -516,6 +605,9 @@ struct AssistantView: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            QuickReplies(text: text) { reply in
+                withAnimation { quickReply = TextDraft(id: UUID().uuidString, to: [], body: reply) }
+            }
             HStack(spacing: 10) {
                 Button("Help me reply", systemImage: "arrowshape.turn.up.left.fill") {
                     Task { await send() }

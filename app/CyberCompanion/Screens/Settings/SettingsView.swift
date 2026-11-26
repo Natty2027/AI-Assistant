@@ -27,6 +27,7 @@ struct SettingsView: View {
                 if model.isConfigured { memorySection }
                 remindersSection
                 if HeraVoice.isAvailable { voiceSection }
+                onDeviceSection
                 legal
                 // Server addresses and the staging token are for development only. Release builds
                 // (TestFlight, App Store) connect through AppConfig and sign in with Apple.
@@ -251,6 +252,30 @@ struct SettingsView: View {
             SectionLabel("Voice")
         } footer: {
             Text("Hera reads her replies aloud. Her voice is made on this device, so nothing is sent anywhere to speak.")
+        }
+    }
+
+    /// Rewrites, hashtags and quick replies made with Apple Intelligence on this device.
+    private var onDeviceSection: some View {
+        Section {
+            if let reason = model.onDevice.unavailableReason {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Not available")
+                        Text(reason).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.circle")
+                }
+                .labelStyle(.alignedIcon)
+            } else {
+                Label("Ready on this \(ThisDevice.name)", systemImage: "checkmark.circle.fill")
+                    .labelStyle(.alignedIcon)
+            }
+        } header: {
+            SectionLabel("On-device")
+        } footer: {
+            Text("Rewrites and quick replies run on this \(ThisDevice.name) with Apple Intelligence: instant, private, and free. They don't use your monthly requests.")
         }
     }
 

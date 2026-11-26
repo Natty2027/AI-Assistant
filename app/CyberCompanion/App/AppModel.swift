@@ -25,6 +25,8 @@ final class AppModel {
     let pro = HeraPro()
     /// The business's name, colors and logo, used on every poster.
     let brand = BrandKitStore()
+    /// Quick rewrites, hashtags and reply ideas with Apple's on-device model: no server request.
+    let onDevice = OnDeviceHera()
     /// The photo sent with the latest run, so its posters can use it.
     private(set) var lastRunPhoto: Data?
 

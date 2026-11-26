@@ -250,6 +250,25 @@ final class ScheduleManager {
         }
     }
 
+    /// Adds one event the person asked for directly, from a snapped flyer ("Add to calendar"),
+    /// on the default calendar. One hour long if no end was found. Returns its occurrence id.
+    @discardableResult
+    func addEvent(title: String, start: Date, end: Date?, location: String?) async throws -> String {
+        try await requestAccess()
+        guard let calendar = store.defaultCalendarForNewEvents else {
+            throw ScheduleError(message: "There's no calendar to add it to. Add one in the Calendar app first.")
+        }
+        let event = EKEvent(eventStore: store)
+        event.title = title
+        event.startDate = start
+        event.endDate = end.flatMap { $0 > start ? $0 : nil } ?? start.addingTimeInterval(3600)
+        event.location = location
+        event.calendar = calendar
+        try store.save(event, span: .thisEvent, commit: true)
+        guard let added = Self.occurrenceID(event) else { throw Self.incomplete }
+        return added
+    }
+
     /// Puts one applied change back as it was.
     func undo(_ undo: ScheduleUndo) async throws {
         try await requestAccess()

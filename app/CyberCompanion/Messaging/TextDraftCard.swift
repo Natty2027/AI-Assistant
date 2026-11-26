@@ -55,6 +55,7 @@ struct TextDraftCard: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            OnDeviceTools(text: $body_)
             HStack(spacing: 10) {
                 Button("Send in Messages", systemImage: "paperplane.fill") { send() }
                     .buttonStyle(.glassProminent)
