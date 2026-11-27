@@ -3,6 +3,7 @@ import Foundation
 import KokoroCoreML
 import Observation
 import os
+import Synchronization
 
 /// Hera's spoken voice: Kokoro-82M with its "af_heart" voice, run entirely on this device with
 /// Core ML. Nothing is sent anywhere to speak, and it works offline.
@@ -54,6 +55,7 @@ final class HeraVoice {
     private var sessionActive = false
     private var speakTask: Task<Void, Never>?
     private let systemVoice = AVSpeechSynthesizer()
+    /// One delegate for every utterance; it says which one finished.
     private var systemVoiceDelegate: SystemVoiceDelegate?
 
     /// Bumped on every speak/stop so callbacks from an earlier reply are ignored.
@@ -62,7 +64,7 @@ final class HeraVoice {
     private var pendingBuffers = 0
     private var synthesisFinished = false
     /// System-voice utterances handed over and not yet finished.
-    private var systemPending = 0
+    private var systemPending = PendingUtterances()
 
     /// The reply being spoken, a piece at a time (see beginReply): what's still to say, whether
     /// more may come, and the speaking task waiting for it.
@@ -73,6 +75,14 @@ final class HeraVoice {
     /// Her own voice failed during this reply, so the rest of it goes to the system voice
     /// rather than trying (and waiting on) her voice again for every sentence.
     private var usingSystemVoice = false
+    /// Bumped whenever the player is replaced, so a buffer from an old one (after the sound
+    /// setup changed) isn't counted against the new one.
+    private var audioEpoch = 0
+    private var configurationObserver: (any NSObjectProtocol)?
+    /// How long a piece waits for her voice to load before the system voice says it instead.
+    /// The first load on a device compiles the model and can take much longer than this; it
+    /// carries on loading for the next reply.
+    private static let loadWait: Duration = .seconds(6)
     /// Run when Hera finishes speaking on her own (not when she's stopped).
     private var onFinished: (@MainActor () -> Void)?
 
@@ -178,17 +188,38 @@ final class HeraVoice {
     /* ---------------- choosing a voice ---------------- */
 
     private func say(_ text: String, generation current: Int) async {
+        // The sound first: if it isn't free yet (Siri handing over), waiting here is better than
+        // taking the failure for a broken voice model.
+        await ensureSession(generation: current)
+        guard current == generation else { return }
         if !usingSystemVoice, let directory = Self.modelDirectory {
             // Her own voice as configured, then once more on the CPU only.
             for attempt in 1...2 {
                 do {
-                    if try await speakWithKokoro(text, from: directory, generation: current) {
+                    switch try await speakWithKokoro(text, from: directory, generation: current) {
+                    case .spoke:
                         problem = nil
                         return
+                    case .stillLoading:
+                        // Said by the system voice this time; her voice is used once it has loaded.
+                        TalkLog.note("voice: model still loading, system voice says this piece")
+                        guard current == generation else { return }
+                        usingSystemVoice = true  // the rest of this reply too, in one voice
+                        speakWithSystemVoice(text, generation: current)
+                        return
+                    case .failed:
+                        Self.log.error("Hera's voice produced no audio (attempt \(attempt), CPU only: \(self.cpuOnly))")
+                        TalkLog.note("voice: no audio from her voice (try \(attempt), cpu \(self.cpuOnly))")
                     }
-                    Self.log.error("Hera's voice produced no audio (attempt \(attempt), CPU only: \(self.cpuOnly))")
+                } catch let error as AudioOutputError {
+                    // The speaker, not the model: her voice is fine, so don't reload it on the CPU.
+                    TalkLog.note("voice: speaker couldn't start: \(error.underlying.localizedDescription)")
+                    guard current == generation else { return }
+                    speakWithSystemVoice(text, generation: current)
+                    return
                 } catch {
                     Self.log.error("Hera's voice failed (attempt \(attempt)): \(error.localizedDescription, privacy: .public)")
+                    TalkLog.note("voice: her voice failed (try \(attempt)): \(error.localizedDescription)")
                 }
                 guard current == generation else { return }
                 if cpuOnly { break }
@@ -201,6 +232,17 @@ final class HeraVoice {
         guard current == generation else { return }
         problem = "Hera's own voice couldn't start on this device, so the system voice is speaking for her."
         speakWithSystemVoice(text, generation: current)
+    }
+
+    /// How one piece went with her own voice.
+    private enum KokoroOutcome { case spoke, stillLoading, failed }
+
+    /// The speaker couldn't start; her voice model itself is fine.
+    private struct AudioOutputError: Error { let underlying: any Error }
+
+    /// Her voice model, or nil if it's still loading after `limit` (it carries on loading).
+    private func loadedEngine(_ directory: URL, within limit: Duration) async throws -> KokoroEngine? {
+        try await Deadline.value(of: loadingTask(directory), within: limit)
     }
 
     private func loadingTask(_ directory: URL) -> Task<KokoroEngine, any Error> {
@@ -217,33 +259,41 @@ final class HeraVoice {
     /* ---------------- Hera's own voice (Kokoro) ---------------- */
 
     /// Streams one piece of the reply into the speaker, after whatever is already playing.
-    /// Returns false if no audio came out at all, which is how a model that failed to load shows
-    /// up (every chunk fails).
-    private func speakWithKokoro(_ text: String, from directory: URL, generation current: Int) async throws -> Bool {
-        let engine = try await loadingTask(directory).value
+    /// It failed if no audio came out and parts of it failed, which is how a model that failed
+    /// to load shows up (every chunk fails). A piece with nothing to say out loud (an emoji, a
+    /// dash) makes no audio and no failures: that's fine, not a broken voice.
+    private func speakWithKokoro(_ text: String, from directory: URL, generation current: Int) async throws -> KokoroOutcome {
+        guard let engine = try await loadedEngine(directory, within: Self.loadWait) else { return .stillLoading }
+        guard current == generation else { return .spoke }
         // Turning text into phonemes takes a moment; keep it off the main thread.
         let stream = try await Task.detached(priority: .userInitiated) {
             try engine.speak(text, voice: Self.voiceName)
         }.value
 
         var madeAudio = false
+        var failures = 0
         for await event in stream {
-            guard current == generation else { return true }  // stopped: nothing more to do
+            guard current == generation else { return .spoke }  // stopped: nothing more to do
             switch event {
             case .audio(let buffer):
                 // One player for the whole reply: each piece's audio is queued after the last.
-                let player = try self.player ?? startAudio()
+                let player: AVAudioPlayerNode
+                do { player = try self.player ?? startAudio() } catch { throw AudioOutputError(underlying: error) }
                 phase = .speaking
                 madeAudio = true
                 pendingBuffers += 1
+                let epoch = audioEpoch
+                // Called once the sound has been played out, not just handed to the hardware.
                 player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                    Task { @MainActor in self?.bufferPlayed(generation: current) }
+                    Task { @MainActor in self?.bufferPlayed(generation: current, epoch: epoch) }
                 }
             case .chunkFailed(let error):
+                failures += 1
                 Self.log.error("Part of Hera's reply couldn't be spoken: \(error.localizedDescription, privacy: .public)")
             }
         }
-        return current != generation || madeAudio
+        if current != generation || madeAudio { return .spoke }
+        return failures > 0 ? .failed : .spoke
     }
 
     private func startAudio() throws -> AVAudioPlayerNode {
@@ -257,17 +307,44 @@ final class HeraVoice {
         player.play()
         self.audio = audio
         self.player = player
+        // A route or format change (headphones in or out, Bluetooth switching) stops the engine,
+        // and the buffers still queued are never played, so their callbacks never come.
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: audio, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.audioConfigurationChanged() }
+        }
+        TalkLog.note("voice: playback engine started")
         return player
     }
 
-    private func bufferPlayed(generation current: Int) {
-        guard current == generation else { return }
+    /// The engine stopped itself: what was queued on it won't be heard. The rest of the reply
+    /// plays on a new one; if nothing more is coming, she's done.
+    private func audioConfigurationChanged() {
+        TalkLog.note("voice: playback engine configuration changed; replacing it")
+        releasePlayer()
+        finishIfDone()
+    }
+
+    private func releasePlayer() {
+        audioEpoch += 1
+        pendingBuffers = 0
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
+        player?.stop()
+        audio?.stop()
+        player = nil
+        audio = nil
+    }
+
+    private func bufferPlayed(generation current: Int, epoch: Int) {
+        guard current == generation, epoch == audioEpoch else { return }
         pendingBuffers -= 1
         finishIfDone()
     }
 
     private func finishIfDone() {
-        guard synthesisFinished, pendingBuffers <= 0, systemPending <= 0 else { return }
+        guard synthesisFinished, pendingBuffers <= 0, systemPending.isEmpty else { return }
         finish()
     }
 
@@ -305,18 +382,22 @@ final class HeraVoice {
     /* ---------------- the system voice, as a last resort ---------------- */
 
     private func speakWithSystemVoice(_ text: String, generation current: Int) {
+        TalkLog.note("voice: system voice speaking")
         try? activateSession()
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.bestSystemVoice()
         // The synthesizer queues utterances itself, so later pieces follow without a gap.
-        let delegate = SystemVoiceDelegate { [weak self] in
-            guard let self, current == self.generation else { return }
-            self.systemPending -= 1
-            self.finishIfDone()
+        if systemVoiceDelegate == nil {
+            let delegate = SystemVoiceDelegate { [weak self] finished in
+                // Only utterances this reply is still waiting for: a late callback from one that
+                // was stopped earlier mustn't finish this reply before it's been said.
+                guard let self, self.systemPending.finish(finished) else { return }
+                self.finishIfDone()
+            }
+            systemVoiceDelegate = delegate
+            systemVoice.delegate = delegate
         }
-        systemVoiceDelegate = delegate
-        systemVoice.delegate = delegate
-        systemPending += 1
+        systemPending.add(ObjectIdentifier(utterance))
         phase = .speaking
         systemVoice.speak(utterance)
     }
@@ -335,12 +416,72 @@ final class HeraVoice {
     /* ---------------- audio session ---------------- */
 
     private func activateSession() throws {
+        // In a conversation the session is already set up for both speaking and listening
+        // (TalkAudio); changing it here would reroute the sound every turn.
+        if TalkAudio.isHeld {
+            TalkAudio.reassert()
+            return
+        }
+        // Already set up for this reply (ensureSession, off the main thread).
+        if sessionActive { return }
         #if os(iOS)
+        try Self.setUpSessionForSpeaking()
+        #endif
+        sessionActive = true
+    }
+
+    #if os(iOS)
+    nonisolated private static func setUpSessionForSpeaking() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try session.setActive(true)
+    }
+    #endif
+
+    /// Activates the session, waiting a little and trying again if it's busy (Siri still
+    /// finishing as Hera opens). Errors are left for the speaker to report. Gives up as soon as
+    /// she's stopped, so a stale retry can't change the session after a conversation has set it
+    /// up; and the queued setup itself is skipped if a conversation holds the session by then.
+    private func ensureSession(generation current: Int) async {
+        for wait in [Duration.zero] + TalkAudio.retryWaits.prefix(3) {
+            if wait > .zero { try? await Task.sleep(for: wait) }
+            guard current == generation else { return }
+            do {
+                if TalkAudio.isHeld || sessionActive {
+                    try activateSession()
+                } else {
+                    #if os(iOS)
+                    let setUp = try await AudioSessionQueue.run { () throws -> Bool in
+                        if TalkAudio.heldForQueue.load(ordering: .sequentiallyConsistent) { return false }
+                        try Self.setUpSessionForSpeaking()
+                        return true
+                    }
+                    #else
+                    let setUp = true
+                    #endif
+                    guard current == generation else {
+                        // Stopped while it was being set up: let it go again, unless Talk has it.
+                        if setUp { Self.releaseSessionUnlessHeld() }
+                        return
+                    }
+                    if setUp { sessionActive = true }
+                }
+                return
+            } catch {
+                TalkLog.note("voice: sound not available yet: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Lets the session go, on the session queue, unless a conversation holds it by the time
+    /// that runs.
+    private static func releaseSessionUnlessHeld() {
+        #if os(iOS)
+        AudioSessionQueue.later {
+            guard !TalkAudio.heldForQueue.load(ordering: .sequentiallyConsistent) else { return }
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         #endif
-        sessionActive = true
     }
 
     /// Ends playback and hands the session back.
@@ -353,17 +494,13 @@ final class HeraVoice {
     }
 
     private func tearDownAudio() {
-        pendingBuffers = 0
-        systemPending = 0
+        releasePlayer()
+        systemPending.clear()
         synthesisFinished = false
-        player?.stop()
-        audio?.stop()
-        player = nil
-        audio = nil
         // Only release a session Hera activated: it's shared with voice input, and stop() is
         // also called when she isn't speaking (e.g. just before the mic starts).
         #if os(iOS)
-        if sessionActive { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+        if sessionActive { Self.releaseSessionUnlessHeld() }
         #endif
         sessionActive = false
     }
@@ -386,13 +523,75 @@ final class HeraVoice {
 /// Tells HeraVoice when the system voice has finished. AVSpeechSynthesizer calls its delegate
 /// off the main actor, so this hops back before touching HeraVoice.
 private final class SystemVoiceDelegate: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
-    private let finished: @MainActor @Sendable () -> Void
+    private let finished: @MainActor @Sendable (ObjectIdentifier) -> Void
 
-    init(finished: @escaping @MainActor @Sendable () -> Void) {
+    init(finished: @escaping @MainActor @Sendable (ObjectIdentifier) -> Void) {
         self.finished = finished
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in finished() }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in finished(id) }
+    }
+
+    /// Cancelled by the system (an interruption) rather than by Hera stopping it, which HeraVoice
+    /// ignores by then: either way, it's over, so the conversation isn't left waiting.
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in finished(id) }
+    }
+}
+
+/// The system-voice utterances a reply is still waiting to hear finish. Only those count: a
+/// callback for one from an earlier reply (stopped, then finished or cancelled late) is ignored.
+struct PendingUtterances: Equatable {
+    private var owed: Set<ObjectIdentifier> = []
+
+    var isEmpty: Bool { owed.isEmpty }
+
+    mutating func add(_ utterance: ObjectIdentifier) { owed.insert(utterance) }
+
+    /// True if this reply was waiting for it; it's then no longer owed.
+    mutating func finish(_ utterance: ObjectIdentifier) -> Bool { owed.remove(utterance) != nil }
+
+    mutating func clear() { owed.removeAll() }
+}
+
+/// Waits for a task's value, but only so long: whichever comes first, the value or the time
+/// limit, decides, and the task carries on either way. (A task group would wait for the slower
+/// one too, since waiting on another task's value can't be cancelled.)
+enum Deadline {
+    /// The task's value, or nil if it isn't ready within `limit`. Its error, if it fails first.
+    static func value<T: Sendable>(of task: Task<T, any Error>, within limit: Duration) async throws -> T? {
+        let once = ResumeOnce<T?>()
+        return try await withCheckedThrowingContinuation { continuation in
+            once.set(continuation)
+            let sleeper = Task {
+                try? await Task.sleep(for: limit)
+                once.resume(with: .success(nil))
+            }
+            Task {
+                let result = await task.result
+                sleeper.cancel()
+                once.resume(with: result.map { $0 })
+            }
+        }
+    }
+}
+
+/// A continuation resumed by whichever caller gets there first; later ones are ignored.
+private final class ResumeOnce<T: Sendable>: Sendable {
+    private let state = Mutex<CheckedContinuation<T, any Error>?>(nil)
+
+    func set(_ continuation: CheckedContinuation<T, any Error>) {
+        state.withLock { $0 = continuation }
+    }
+
+    func resume(with result: Result<T, any Error>) {
+        let continuation = state.withLock { held -> CheckedContinuation<T, any Error>? in
+            defer { held = nil }
+            return held
+        }
+        continuation?.resume(with: result)
     }
 }

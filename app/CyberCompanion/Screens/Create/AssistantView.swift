@@ -62,6 +62,14 @@ struct AssistantView: View {
                 // While Hera is reading a reply out, the orb stays usable as her Stop button.
                 .disabled(model.isRunning && !model.speech.isSpeaking)
                 voiceStatus
+                // Why the last turn of a conversation didn't work, until the next one does.
+                if let problem = talk?.problem, !voice.isListening, voice.state != .unavailable(problem) {
+                    Label(problem, systemImage: "exclamationmark.bubble")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .transition(.opacity)
+                }
                 if let briefing = model.briefing {
                     briefingCard(briefing)
                         .transition(.opacity)
@@ -134,9 +142,9 @@ struct AssistantView: View {
         }
         .auroraBackground()
         // "Hey Siri, talk to Hera" (TalkToHeraIntent) lands here: Hera says hello and listens.
-        .onChange(of: conversations.isPending, initial: true) { _, pending in
-            if pending, conversations.take() { startTalk(greet: true) }
-        }
+        // Siri opens the app before it's fully in front; the conversation waits until it is,
+        // since the mic can't start before then.
+        .onChange(of: conversations.isPending, initial: true) { startRequestedTalk() }
         .onChange(of: allowWebSearch) { _, allowed in talk?.allowsWebSearch = allowed }
         // "Siri, hi Hera, what's on my day?" (WhatsOnMyDayIntent) lands here.
         .onChange(of: conversations.isBriefingPending, initial: true) { _, pending in
@@ -150,11 +158,15 @@ struct AssistantView: View {
         .task { if speakReplies { model.speech.prepare() } }
         // In the background the system pauses Hera's audio mid-sentence; stop cleanly instead, and
         // end a conversation, since the mic can't keep listening there.
+        // Only the background: a notification banner, Control Center, the permission prompt or Siri
+        // handing over all pass through inactive, and mustn't end it.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
+            if TalkSession.endsConversation(in: phase) {
+                if talk?.isActive == true { TalkLog.note("talk: app went to the background") }
                 talk?.end(sayingGoodbye: false)
                 model.speech.stop()
             }
+            if phase == .active { startRequestedTalk() }
             // Back in the app, the widget is freshened by CyberCompanionApp, not again here.
         }
         .sensoryFeedback(.start, trigger: voice.isListening) { _, listening in listening }
@@ -699,6 +711,13 @@ struct AssistantView: View {
 
     /* ---------------- Talk ---------------- */
 
+    /// A conversation asked for by Siri, once the app is in front.
+    private func startRequestedTalk() {
+        guard conversations.isPending, TalkSession.canStartFromSiri(in: scenePhase), conversations.take() else { return }
+        TalkLog.note("talk: requested by Siri")
+        startTalk(greet: true)
+    }
+
     /// Starts a spoken conversation: from the orb Hera listens straight away; from Siri ("Talk to
     /// Hera") she says hello first. Nothing is published: anything she makes waits for approval.
     private func startTalk(greet: Bool) {
@@ -724,12 +743,8 @@ struct AssistantView: View {
         let voice = voice
         let model = model
         let session = TalkSession(hooks: .init(
-            listen: {
-                let heard = await voice.listenUntilSilence()
-                // The mic is off or failed: the status under the orb says why.
-                if case .unavailable = voice.state { return nil }
-                return heard
-            },
+            // The mic is off or failed: the status under the orb says why.
+            listen: { await voice.listenUntilSilence() },
             stopListening: { await voice.stop() },
             speak: { text, done in
                 // With Hera's voice off in Settings, the reply is shown and she listens straight away.
@@ -743,8 +758,11 @@ struct AssistantView: View {
             continueReply: { sentence in model.speech.enqueue(sentence) },
             endReply: { model.speech.endReply() },
             stopSpeaking: { model.speech.stop() },
-            send: { said, allowWebSearch, onText in await model.talk(said, allowWebSearch: allowWebSearch, onText: onText) }
+            send: { said, allowWebSearch, onText in await model.talk(said, allowWebSearch: allowWebSearch, onText: onText) },
+            prepareAudio: { await TalkAudio.begin() },
+            releaseAudio: { TalkAudio.end() }
         ))
+        TalkAudio.onInterruption = { [weak session] reason in session?.stop(because: reason) }
         talk = session
         return session
     }

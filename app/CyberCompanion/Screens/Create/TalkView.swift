@@ -130,3 +130,14 @@ struct TalkControls: View {
         }
     }
 }
+
+extension TalkSession {
+    /// Leaving the app ends a conversation, since the mic can't listen in the background. Only
+    /// the background counts: inactive is also a notification banner, Control Center, the
+    /// microphone prompt, or Siri handing the app over, and those mustn't end it.
+    static func endsConversation(in phase: ScenePhase) -> Bool { phase == .background }
+
+    /// A conversation from Siri starts once the app is fully in front: Siri opens it while it's
+    /// still inactive, and the mic and speaker can't start before it's active.
+    static func canStartFromSiri(in phase: ScenePhase) -> Bool { phase == .active }
+}

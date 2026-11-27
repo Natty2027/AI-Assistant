@@ -266,6 +266,8 @@ struct SettingsView: View {
         Section {
             Toggle("Hera speaks her replies", isOn: $speakReplies)
                 .onChange(of: speakReplies) { _, on in if !on { model.speech.stop() } }
+            NavigationLink("Talk diagnostics") { TalkDiagnosticsView() }
+                .foregroundStyle(.secondary)
         } header: {
             SectionLabel("Voice")
         } footer: {
@@ -433,4 +435,53 @@ private struct DeleteAccountSheet: View {
 #Preview {
     SettingsView()
         .environment(AppModel())
+}
+
+/// What Talk did recently, step by step, for sending to support when a conversation goes wrong.
+/// Kept in memory only (it's gone when Hera closes), with at most the first few words of
+/// anything said.
+struct TalkDiagnosticsView: View {
+    @State private var lines: [String] = []
+    @State private var copied = false
+
+    var body: some View {
+        List {
+            Section {
+                if lines.isEmpty {
+                    Text("Nothing yet. Talk with Hera, then come back here.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(lines.enumerated().reversed()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+            } footer: {
+                Text("The last \(TalkLog.capacity) steps of Talk since Hera opened, newest first. If a conversation went wrong, copy or share this and send it to support. It holds at most the first few words of what was said.")
+            }
+        }
+        .navigationTitle("Talk diagnostics")
+        .toolbar {
+            ToolbarItemGroup {
+                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc", action: copy)
+                    .disabled(lines.isEmpty)
+                ShareLink(item: TalkLog.shared.text)
+                    .disabled(lines.isEmpty)
+            }
+        }
+        .onAppear { lines = TalkLog.shared.recent }
+        .refreshable { lines = TalkLog.shared.recent }
+    }
+
+    private func copy() {
+        let text = TalkLog.shared.text
+        #if os(iOS)
+        UIPasteboard.general.string = text
+        #else
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
+        copied = true
+    }
 }
