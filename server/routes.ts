@@ -23,6 +23,8 @@ import { Billing, BillingError } from "./billing.ts";
 const writeLimiter = createLimiter({ windowMs: 60_000, max: 20 });
 // Each assistant run can be many model calls, so it gets a much tighter budget.
 const agentRunLimiter = createLimiter({ windowMs: 3_600_000, max: 10 });
+// A Talk turn is one thing said in a conversation: short, and many of them in a few minutes.
+const talkTurnLimiter = createLimiter({ windowMs: 3_600_000, max: 240 });
 
 let agentService: AgentService | null = null;
 /** Resolves once saved proposals are back in memory after a restart. */
@@ -382,7 +384,11 @@ export function buildRouter(): Router {
     // What the person writes is sent to the model provider, so the AI consent switch applies.
     await requireAiConsent(userId);
     // Counted only once the run can actually happen, so refused requests don't use up the hour.
-    if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
+    if (mode === "talk" ? !talkTurnLimiter.hit(userId) : !agentRunLimiter.hit(userId)) {
+      throw new HttpError(429, mode === "talk"
+        ? "We've talked a lot this hour. Let's take a short break, then talk again."
+        : "That's the limit of assistant runs for this hour. Try again later.");
+    }
     // This month's requests: counted now, refused when used up (only once BILLING is on).
     await billed(() => billing.useOne(userId));
     return async (report) => {
@@ -413,10 +419,14 @@ export function buildRouter(): Router {
   /** Starts a request in the background and returns its id; the app checks /agent/runs/:id. */
   r.post("/agent/runs", async (ctx) => {
     const userId = requireAuth(ctx);
+    // The same start sent again (the app didn't hear back): the run that's already going.
+    const clientKey = typeof ctx.body?.client_run_id === "string" && ctx.body.client_run_id.length <= 100 ? ctx.body.client_run_id : null;
+    const already = clientKey ? runJobs.findByClientKey(userId, clientKey) : null;
+    if (already) return { run_id: already };
     if (runJobs.draining) throw new HttpError(503, "Hera is updating. Try again in a minute.", true, "updating");
     if (runJobs.isRunning(userId)) throw new HttpError(409, "Hera is still working on your last request. Wait for it to finish, then try again.", true, "run_in_progress");
     const work = await prepareRun(userId, ctx.body);
-    return { run_id: runJobs.start(userId, work) };
+    return { run_id: runJobs.start(userId, work, clientKey) };
   });
 
   /** With ?wait=<seconds> (up to 25), answers as soon as the run finishes instead of right away,

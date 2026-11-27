@@ -19,7 +19,7 @@ export type RunState =
   | { status: "finished"; result: unknown }
   | { status: "failed"; failure: RunFailure };
 
-interface Job { userId: string; state: RunState; endedAt: number | null; waiters: Set<() => void>; partial: string }
+interface Job { userId: string; state: RunState; endedAt: number | null; waiters: Set<() => void>; partial: string; clientKey: string | null }
 
 /** What work is given, to report the reply so far as it's written (Talk streams it). */
 export type ReportText = (partial: string) => void;
@@ -61,11 +61,20 @@ export class RunJobs {
     return [...this.jobs.values()].some((j) => j.userId === userId && j.state.status === "running");
   }
 
+  /** The run this person's app already started with `clientKey`, if it's still kept. An app whose
+   *  connection dropped before it heard back sends the same start again with the same key, and
+   *  gets the run that's already going instead of a second one. */
+  findByClientKey(userId: string, clientKey: string): string | null {
+    this.sweep();
+    for (const [id, job] of this.jobs) if (job.userId === userId && job.clientKey === clientKey) return id;
+    return null;
+  }
+
   /** Starts `work` and returns the run's id at once. Callers check isRunning first. `work` may
    *  report the reply so far (see partial), so the app can show and speak it as it's written. */
-  start(userId: string, work: (report: ReportText) => Promise<unknown>): string {
+  start(userId: string, work: (report: ReportText) => Promise<unknown>, clientKey: string | null = null): string {
     const id = randomUUID();
-    const job: Job = { userId, state: { status: "running" }, endedAt: null, waiters: new Set(), partial: "" };
+    const job: Job = { userId, state: { status: "running" }, endedAt: null, waiters: new Set(), partial: "", clientKey };
     this.jobs.set(id, job);
     // Saved as running too: during a deploy the new server answers the app's check-ins while this
     // one finishes the run, and it reads this to say "still working" rather than "lost".

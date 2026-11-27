@@ -108,6 +108,26 @@ struct NetworkingTests {
         }
     }
 
+    /// A connection that went stale while Hera was talking drops the start: it's sent again, with
+    /// the same clientRunId both times so the server never starts two runs.
+    @Test func aDroppedStartIsSentAgainWithTheSameKey() async throws {
+        var starts = 0
+        StubProtocol.handler = { request in
+            if request.httpMethod == "POST" {
+                starts += 1
+                return starts == 1 ? (0, "") : (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-00000000000a"}"#)
+            }
+            return (200, #"{"status":"finished","result":{"status":"done","text":"Hello again.","tainted":false,"drafts":[],"proposals":[]}}"#)
+        }
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        let run = try await client.runAssistant(request: "Hi", mode: .talk, allowWebSearch: false)
+        #expect(run.text == "Hello again.")
+        #expect(starts == 2)
+        let keys = StubProtocol.bodies.prefix(2).compactMap { (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["client_run_id"] as? String }
+        #expect(keys.count == 2 && keys[0] == keys[1])
+        #expect(!APIClient.startCanBeSentAgain(URLError(.cancelled)), "a cancelled start isn't sent again")
+    }
+
     /// Talk asks for the answer as it's written: each check says how much the app has, every new
     /// piece is passed on and asked after again at once, and the body asks the server to stream.
     @Test func talkHearsTheAnswerAsItsWritten() async throws {
@@ -265,6 +285,11 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         Self.requests.append(request)
         Self.bodies.append(Self.read(request))
         let (status, body) = Self.handler(request)
+        // Status 0 stands for a connection that dropped before any answer.
+        if status == 0 {
+            client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            return
+        }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(body.utf8))

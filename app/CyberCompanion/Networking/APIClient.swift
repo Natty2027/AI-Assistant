@@ -74,6 +74,9 @@ struct APIClient: Sendable {
             let localTime: LocalTime
             /// Talk: send the answer so far with each check. Left out otherwise.
             var stream: Bool?
+            /// The same for every try of this one request, so a start sent again after a dropped
+            /// connection gets the run that's already going rather than a second one.
+            let clientRunId: String
         }
         struct LocalTime: Encodable { let now: String; let timeZone: String }
         struct Started: Decodable {
@@ -91,13 +94,22 @@ struct APIClient: Sendable {
                         schedule: schedule, conversationId: conversationID,
                         receivedText: receivedText,
                         localTime: LocalTime(now: HeraTime.nowWithOffset(), timeZone: TimeZone.current.identifier),
-                        stream: onText == nil ? nil : true)
+                        stream: onText == nil ? nil : true, clientRunId: UUID().uuidString)
         let started: Started
-        do {
-            started = try await send("POST", "agent/runs", body: body, timeout: 60)
-        } catch APIError.server(status: 404, _, _, _) {
-            // A server from before background runs: ask and wait, as before.
-            return try await send("POST", "agent/run", body: body, timeout: 300)
+        var startAttempt = 1
+        while true {
+            do {
+                started = try await send("POST", "agent/runs", body: body, timeout: 60)
+                break
+            } catch APIError.server(status: 404, _, _, _) {
+                // A server from before background runs: ask and wait, as before.
+                return try await send("POST", "agent/run", body: body, timeout: 300)
+            } catch let error as URLError where startAttempt < 3 && Self.startCanBeSentAgain(error) {
+                // Usually a connection that went stale while Hera was talking: send it again on a
+                // fresh one. The server knows it by clientRunId, so it never starts twice.
+                startAttempt += 1
+                try await sleep(0.4 * Double(startAttempt - 1))
+            }
         }
 
         let deadline = Date.now.addingTimeInterval(Self.longestRun)
@@ -131,6 +143,13 @@ struct APIClient: Sendable {
         }
         throw APIError.server(status: 504, message: "Hera is taking unusually long. Check back in a few minutes, or try again.",
                               code: "run_slow", requestID: nil)
+    }
+
+    /// A start that failed this way is safe to send again: it never got an answer, and a repeat
+    /// with the same clientRunId gets the run already going.
+    nonisolated static func startCanBeSentAgain(_ error: URLError) -> Bool {
+        [.networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+         .notConnectedToInternet, .secureConnectionFailed, .badServerResponse, .cannotParseResponse].contains(error.code)
     }
 
     /* ---------------- Hera Pro ---------------- */

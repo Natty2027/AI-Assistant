@@ -42,6 +42,10 @@ export class MemoryStore {
   /** The saved conversation, if it's this person's, in this mode, and recent enough. */
   async conversation(userId: string, id: string, mode: AgentMode): Promise<ConversationState | null> {
     const since = new Date(this.clock() - KEEP_DAYS * 86_400_000);
+    // Kept here when the database couldn't take it (a mode newer than its migrations): the
+    // database has no copy, so asking it would lose the conversation.
+    const kept = this.fallback?.conversations.get(id);
+    if (kept) return kept.userId === userId && kept.mode === mode && kept.at > since.getTime() ? kept.state : null;
     try {
       const { rows } = await this.run(
         `select state from agent_conversations where id = $1 and user_id = $2 and mode = $3 and updated_at > $4`,

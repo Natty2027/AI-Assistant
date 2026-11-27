@@ -178,3 +178,11 @@ test("after must be a whole number of characters; anything else means the old be
   assert.equal(afterLength("0"), 0);
   assert.equal(afterLength("42"), 42);
 });
+
+test("a start sent again with the same client key gets the run already going, not a second one", async () => {
+  const jobs = new RunJobs((e) => ({ status: 500, message: String(e) }));
+  const id = jobs.start("u1", () => new Promise(() => {}), "key-1");
+  assert.equal(jobs.findByClientKey("u1", "key-1"), id);
+  assert.equal(jobs.findByClientKey("u1", "key-2"), null);
+  assert.equal(jobs.findByClientKey("someone-else", "key-1"), null, "only the person's own runs");
+});

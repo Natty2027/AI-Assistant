@@ -158,3 +158,16 @@ test("before the migration is run, memory still works in-process instead of fail
   assert.equal(await store.conversation(OTHER, id!, "posts"), null);
   assert.equal(await store.forgetMemory(U, saved.saved!.id), true);
 });
+
+test("a talk conversation the database can't take yet (migration 009) is still remembered turn to turn", async () => {
+  // The database works, but its mode check predates talk: saving a talk conversation is refused.
+  const refused = Object.assign(new Error("violates check constraint"), { code: "23514" });
+  const store = new MemoryStore(async (sql: string) => {
+    if (sql.startsWith("insert into agent_conversations")) throw refused;
+    return { rows: [] };
+  });
+  const state = { messages: [{ role: "user", content: "Hi Hera" }], drafts: [], tainted: false, pending: null } as any;
+  const id = await store.saveConversation(U, null, "talk", state);
+  assert.deepEqual(await store.conversation(U, id!, "talk"), state, "the next turn continues it");
+  assert.equal(await store.conversation(OTHER, id!, "talk"), null);
+});
