@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import CyberCompanion
 
-/// Launch Kit: the overview of what one request made ready, and asking for a launch by voice.
+/// Launch Kit: the overview of what one request made ready.
 struct LaunchKitTests {
     private func run(_ json: String) throws -> AgentRunResponse {
         try JSONDecoder().decode(AgentRunResponse.self, from: Data(json.utf8))
@@ -35,12 +35,5 @@ struct LaunchKitTests {
     @Test func aSingleKindOfResultHasNoOverview() throws {
         let posts = try run(#"{"status":"done","text":"","tainted":false,"proposals":[],"drafts":[],"emailDrafts":[{"id":"e1","to":[],"cc":[],"subject":"s","body":"b"}]}"#)
         #expect(LaunchKitSummary(run: posts) == nil)
-    }
-
-    @Test func talkToHeraHearsALaunch() {
-        #expect(ConversationReply.mode(from: "a full launch please") == .launch)
-        #expect(ConversationReply.mode(from: "launch my workshop with posts and a calendar entry") == .launch)
-        #expect(ConversationReply.mode(from: "let's plan a launch") == .launch)
-        #expect(ConversationReply.mode(from: "just the posts") == .posts)
     }
 }

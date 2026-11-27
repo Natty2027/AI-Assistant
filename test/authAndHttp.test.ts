@@ -123,8 +123,9 @@ test("modes: none means posts, unknown ones are refused, and the old website mod
   assert.equal(checkMode(undefined), "posts");
   assert.equal(checkMode("schedule"), "schedule");
   assert.equal(checkMode("launch"), "launch");
+  assert.equal(checkMode("talk"), "talk");
   assert.throws(() => checkMode("site"), (e: any) => e.status === 410 && e.code === "mode_removed" && e.expose === true);
-  assert.throws(() => checkMode("blog"), (e: any) => e.status === 400 && /'posts', 'schedule' or 'launch'/.test(e.message));
+  assert.throws(() => checkMode("blog"), (e: any) => e.status === 400 && /'posts', 'schedule', 'launch' or 'talk'/.test(e.message));
 });
 
 test("?wait= is whole seconds from 0 to 25; anything else means don't wait", () => {

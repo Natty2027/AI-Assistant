@@ -94,7 +94,7 @@ struct ModelsTests {
 
     /// The server accepts exactly these (AGENT_MODES in server/agent/loop.ts).
     @Test func createModesMatchTheServer() throws {
-        #expect(CreateMode.allCases.map(\.rawValue) == ["posts", "schedule", "launch"])
+        #expect(CreateMode.allCases.map(\.rawValue) == ["posts", "schedule", "launch", "talk"])
         let body = try JSONEncoder().encode(["mode": CreateMode.posts])
         #expect(String(decoding: body, as: UTF8.self) == #"{"mode":"posts"}"#)
     }

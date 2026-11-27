@@ -47,6 +47,8 @@ final class AppModel {
     var briefing: String?
     /// The task in progress: a reply continues it until "Start something new".
     private(set) var conversation: (id: String, mode: CreateMode)?
+    /// The spoken conversation in progress (Talk): every turn continues it until it ends.
+    private var talkConversationID: String?
     /// A text message the person pasted or shared to Hera: read aloud, and sent with the next
     /// request so Hera can explain it or write the reply.
     var receivedText: String?
@@ -159,6 +161,7 @@ final class AppModel {
         scheduleUndos = [:]
         briefing = nil
         conversation = nil
+        talkConversationID = nil
         memories = []
         aiConsent = nil
         errorMessage = nil
@@ -210,6 +213,49 @@ final class AppModel {
             scheduleOutcomes = [:]
         scheduleUndos = [:]
             proposals = try await client.proposals()
+        }
+    }
+
+    /* ---------------- Talk ---------------- */
+
+    /// A new spoken conversation: it doesn't continue the last one.
+    func startTalk() {
+        talkConversationID = nil
+    }
+
+    /// One spoken turn in Talk: what the person said, and Hera's answer, in the same conversation
+    /// as the turns before. Never throws: a problem comes back as words for Hera to say. It
+    /// doesn't touch the composer's result (`lastRun`), so the two never mix.
+    func talk(_ said: String, allowWebSearch: Bool) async -> TalkReply {
+        guard let client else { return .stop("I can't reach Hera until you sign in. Open Settings to sign in, then talk to me again.") }
+        if aiConsent == false { return .stop("First, tap Allow AI on this screen, then talk to me again.") }
+        guard connectivity.isOnline else { return .problem("I can't reach Hera right now. Check your internet connection, then try again.") }
+        do {
+            // Their calendar, read on this device for this turn. Only asked for when they're asking
+            // about it; otherwise it's sent if they already allowed it.
+            let snapshot: ScheduleSnapshot?
+            if TalkFlow.mentionsSchedule(said) { snapshot = try? await schedule.snapshot() }
+            else { snapshot = await schedule.snapshotIfAllowed() }
+            let shared = receivedText
+            let run = try await client.runAssistant(request: said, mode: .talk, allowWebSearch: allowWebSearch,
+                                                    schedule: snapshot, conversationID: talkConversationID, receivedText: shared)
+            if shared != nil { receivedText = nil }
+            talkConversationID = run.conversationId
+            Task { await pro.refresh(client: client) }
+            if !run.proposals.isEmpty {
+                if let latest = try? await client.proposals() { proposals = latest }
+                await syncLiveActivities()
+            }
+            return .answer(run)
+        } catch is CancellationError {
+            return .problem("That didn't go through. Please say it again.")
+        } catch {
+            // This month's requests are used up: offer Hera Pro, and stop talking.
+            if case APIClient.APIError.server(_, _, "limit_reached", _) = error {
+                pro.showPlans = true
+                return .stop(RetryPolicy.message(for: error))
+            }
+            return .problem(RetryPolicy.message(for: error))
         }
     }
 

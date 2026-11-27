@@ -59,21 +59,6 @@ struct VoiceTests {
         #expect(!finishedAnyway)
     }
 
-    /// "Talk to Hera" asks "posters and posts, a launch, or your schedule?": one at a time, so
-    /// posts and schedule together, or neither, means ask again.
-    @Test func spokenAnswersPickPostsLaunchOrSchedule() {
-        #expect(ConversationReply.mode(from: "Posts please") == .posts)
-        #expect(ConversationReply.mode(from: "Make me a poster") == .posts)
-        #expect(ConversationReply.mode(from: "a flyer for the bake sale") == .posts)
-        #expect(ConversationReply.mode(from: "Studio") == .posts)
-        #expect(ConversationReply.mode(from: "I want to announce my class on Instagram") == .posts)
-        #expect(ConversationReply.mode(from: "Work on my schedule") == .schedule)
-        #expect(ConversationReply.mode(from: "Plan a launch") == .launch)
-        #expect(ConversationReply.mode(from: "both some posts and my calendar") == nil)
-        #expect(ConversationReply.mode(from: "um, not sure") == nil)
-        #expect(ConversationReply.mode(from: "") == nil)
-    }
-
     @Test func repliesAreCleanedUpBeforeSpeaking() {
         #expect(HeraVoice.spokenText(from: "**Done!** See [your post](https://bsky.app/x).") == "Done! See your post.")
         #expect(HeraVoice.spokenText(from: "Live at https://bsky.app/x now") == "Live at the link now")

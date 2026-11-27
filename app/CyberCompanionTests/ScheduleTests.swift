@@ -52,13 +52,6 @@ struct ScheduleTests {
         #expect(ScheduleManager.parse("tomorrow", allDay: false) == nil)
     }
 
-    @Test func talkToHeraHearsScheduleRequests() {
-        #expect(ConversationReply.mode(from: "my schedule please") == .schedule)
-        #expect(ConversationReply.mode(from: "move my dentist appointment") == .schedule)
-        #expect(ConversationReply.mode(from: "remind me to call mom") == .schedule)
-        #expect(ConversationReply.mode(from: "posts about my calendar") == nil, "two things at once: ask again")
-    }
-
     /// Reminders on a real device list: add one, see it in the snapshot (EventKit hands reminders
     /// back on a background queue), then complete it.
     @Test(.enabled(if: EKEventStore.authorizationStatus(for: .reminder) == .fullAccess, "needs reminders access granted to the test host"))

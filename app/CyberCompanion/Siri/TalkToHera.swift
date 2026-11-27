@@ -3,7 +3,7 @@ import Foundation
 import Observation
 
 /// "Hey Siri, talk to Hera": Siri (or Shortcuts, Spotlight, the Action button) opens the app and
-/// asks it to start a spoken conversation. The intent only raises the request; AssistantView
+/// asks it to start a spoken conversation (Talk). The intent only raises the request; AssistantView
 /// runs the conversation, because it owns the mic, Hera's voice and the composer.
 @MainActor
 @Observable
@@ -66,7 +66,7 @@ struct WhatsOnMyDayIntent: AppIntent {
 
 struct TalkToHeraIntent: AppIntent {
     static let title: LocalizedStringResource = "Talk to Hera"
-    static let description = IntentDescription("Opens Hera, who asks whether you'd like posters and posts, a launch, or help with your schedule, then listens.")
+    static let description = IntentDescription("Opens Hera for a spoken conversation: ask her anything, or have her draft posts, emails, texts and calendar changes for you to approve.")
     // Opens the app before perform() runs: the conversation needs the screen, mic and speaker.
     static var supportedModes: IntentModes { .foreground }
 
@@ -140,23 +140,5 @@ struct HeraShortcuts: AppShortcutsProvider {
             shortTitle: "What's Coming Up",
             systemImageName: "calendar.badge.clock"
         )
-    }
-}
-
-/// What the person's spoken answer means, for the conversation's first question.
-enum ConversationReply {
-    /// Posts (posters too), schedule or a launch from what was said; nil when it's none of them,
-    /// or both posts and schedule (Hera does one at a time, so she asks again).
-    static func mode(from reply: String) -> CreateMode? {
-        let said = reply.lowercased()
-        // "post" also hears "poster".
-        let posts = ["post", "social", "tweet", "instagram", "caption", "bluesky", "announce", "flyer", "studio",
-                     "design", "ebay", "email"].contains { said.contains($0) }
-        let schedule = ["schedule", "calendar", "meeting", "appointment", "remind", "plan my", "my day", "my week"].contains { said.contains($0) }
-        let launch = ["launch", "everything", "all of it", "the works", "launch kit"].contains { said.contains($0) }
-        // A launch covers posts and the calendar too, so it wins when said.
-        if launch { return .launch }
-        let matches = [(posts, CreateMode.posts), (schedule, .schedule)].filter(\.0)
-        return matches.count == 1 ? matches[0].1 : nil
     }
 }

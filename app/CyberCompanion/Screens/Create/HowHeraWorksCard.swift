@@ -7,7 +7,7 @@ struct HowHeraWorksCard: View {
 
     private let steps: [(String, String, String)] = [
         ("square.split.2x1", "Choose Launch, Studio or Schedule", "Studio makes posters, flyers and posts. Launch does everything at once."),
-        ("mic.fill", "Say or type what you'd like", "For example: a page for my bakery, or posts announcing Saturday's sale."),
+        ("mic.fill", "Say or type what you'd like", "Tap the orb and just talk: Hera answers out loud and keeps the conversation going until you say bye."),
         ("checkmark.seal.fill", "Review and approve", "Nothing is published until you approve the exact content."),
     ]
 
@@ -24,7 +24,7 @@ struct HowHeraWorksCard: View {
                 }
             }
             // In the same columns as the steps: icon over the tiles, text in line with theirs.
-            Label("Tip: tap the orb and say \"Hi Hera\", or from anywhere say \"Siri, hi Hera, what's on my day?\"", systemImage: "waveform")
+            Label("Tip: from anywhere, say \"Siri, talk to Hera\" to start a conversation, or \"Siri, hi Hera, what's on my day?\"", systemImage: "waveform")
                 .labelStyle(AlignedIconLabelStyle(iconWidth: 30, spacing: 12))
                 .font(.footnote)
                 .foregroundStyle(.secondary)

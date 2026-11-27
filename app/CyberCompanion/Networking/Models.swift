@@ -200,13 +200,16 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
 }
 
 /// What one assistant run is for. Posts, schedule and launch are separate runs; the server
-/// enforces it, so a posts run can't change the schedule.
+/// enforces it, so a posts run can't change the schedule. Talk is the spoken conversation: it
+/// isn't one of the composer's choices, the orb starts it.
 enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case posts
     /// The person's calendar and reminders, read and changed on their device.
     case schedule
     /// Launch Kit: one request, and the posts, poster, calendar and email are all made ready.
     case launch
+    /// Talk: a spoken back-and-forth with Hera, who can draft anything the other modes can.
+    case talk
 
     /// A photo can go on posts and posters, alone or in a launch. The schedule has no use for one.
     var takesPhoto: Bool { self == .posts || self == .launch }
@@ -219,6 +222,7 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .posts: "Studio"
         case .schedule: "Schedule"
         case .launch: "Launch"
+        case .talk: "Talk"
         }
     }
 
@@ -230,6 +234,7 @@ enum CreateMode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .posts: "paintpalette"
         case .schedule: "calendar"
         case .launch: "sparkles"
+        case .talk: "waveform"
         }
     }
 }

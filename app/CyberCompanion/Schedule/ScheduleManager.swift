@@ -37,6 +37,13 @@ final class ScheduleManager {
 
     /* ---------------- reading ---------------- */
 
+    /// The snapshot, only when calendar access was already given: it never asks, so a spoken
+    /// conversation isn't interrupted by a permission prompt for a question that doesn't need it.
+    func snapshotIfAllowed(now: Date = .now) async -> ScheduleSnapshot? {
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
+        return try? await snapshot(now: now)
+    }
+
     /// What's on the person's calendar from the start of today, and their open reminders.
     func snapshot(now: Date = .now) async throws -> ScheduleSnapshot {
         try await requestAccess()

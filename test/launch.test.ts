@@ -104,3 +104,25 @@ test("a launch without calendar access still runs and skips the calendar", async
   assert.equal(out.scheduleChanges.length, 0);
   assert.match(calls[1].messages.at(-1).content[0].content, /wasn't shared/);
 });
+
+test("a spoken conversation (talk) sees the calendar when it's shared and only proposes changes", async () => {
+  const calls: any[] = [];
+  const client = { beta: { messages: { create: async (p: any) => {
+    calls.push(structuredClone(p));
+    return calls.length === 1
+      ? msg([use("c1", "add_event", { title: "Gym", start: "2026-11-20T07:00:00-08:00", end: "2026-11-20T08:00:00-08:00", all_day: false, location: null, notes: null, calendar: null, summary: "Gym on Friday morning" })])
+      : msg([{ type: "text", text: "I've added the gym on Friday at 7; it's waiting for your OK in the app." }], "end_turn");
+  } } } };
+  const out = await service(client).run(U, "Add the gym on Friday at 7 in the morning", { mode: "talk", schedule: SNAPSHOT });
+  assert.equal(out.status, "done");
+  assert.deepEqual(out.scheduleChanges.map((c) => c.kind), ["add_event"]);
+  assert.match(calls[0].system, /talking with one person out loud/);
+  assert.doesNotMatch(calls[0].system, /calendar wasn't shared/);
+  assert.ok(out.conversationId, "the conversation continues on the next spoken turn");
+
+  // Without calendar access it still talks, and says it can't see the calendar.
+  const plain = { beta: { messages: { create: async (p: any) => { calls.push(structuredClone(p)); return msg([{ type: "text", text: "Hi!" }], "end_turn"); } } } };
+  const hello = await service(plain).run(U, "Hi Hera", { mode: "talk" });
+  assert.equal(hello.status, "done");
+  assert.match(calls.at(-1).system, /calendar wasn't shared/);
+});

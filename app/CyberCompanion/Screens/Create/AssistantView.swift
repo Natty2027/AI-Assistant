@@ -1,7 +1,8 @@
 import PhotosUI
 import SwiftUI
 
-/// Type or speak a request: "make a poster for my pottery class and write posts announcing it".
+/// Type a request ("make a poster for my pottery class and write posts announcing it"), or tap
+/// the orb and talk with Hera: a spoken back-and-forth that goes on until the person is done.
 struct AssistantView: View {
     var openSettings: () -> Void
     var openReview: () -> Void
@@ -26,18 +27,14 @@ struct AssistantView: View {
     /// A quick reply to a received text, made on this device, as a text message to send.
     @State private var quickReply: TextDraft?
     @State private var voice = VoiceInput()
-    /// What was typed before the mic started, so dictation is added to it rather than replacing it.
-    @State private var promptBeforeVoice = ""
+    /// The spoken conversation (Talk). Made on first use, since it needs the mic and Hera's voice.
+    @State private var talk: TalkSession?
     @FocusState private var promptFocused: Bool
     @AppStorage(HeraVoice.speakRepliesKey) private var speakReplies = true
     /// The "How Hera works" card shows until it's dismissed once.
     @AppStorage("seenHowHeraWorks") private var seenHowHeraWorks = false
     /// Set when the upgrade card is closed, so it goes at once (it stays closed for the month).
     @State private var nudgeDismissed = false
-
-    /// Where the spoken "Talk to Hera" conversation is.
-    private enum Conversation { case none, choosing, describing }
-    @State private var conversation: Conversation = .none
 
     private let suggestions: [(CreateMode, String, String)] = [
         (.posts, "photo.artframe", "Make a poster and posts for Saturday's open house, 10 AM to 2 PM"),
@@ -59,10 +56,9 @@ struct AssistantView: View {
                 if UpgradeNudge.shouldShow(model.pro.status) && !nudgeDismissed {
                     upgradeNudge
                 }
-                VoiceOrb(isListening: voice.isListening, isBusy: isPreparingVoice,
-                         isHeraSpeaking: model.speech.isSpeaking, level: voice.level) {
-                    if model.speech.isSpeaking { stopHera() } else { Task { await toggleVoice() } }
-                }
+                VoiceOrb(isListening: voice.isListening, isBusy: isPreparingVoice || talk?.phase == .thinking,
+                         isHeraSpeaking: model.speech.isSpeaking, isInConversation: isTalking, level: voice.level,
+                         action: orbTapped)
                 // While Hera is reading a reply out, the orb stays usable as her Stop button.
                 .disabled(model.isRunning && !model.speech.isSpeaking)
                 voiceStatus
@@ -79,26 +75,33 @@ struct AssistantView: View {
                         .id(quickReply.id)
                         .transition(.opacity)
                 }
-                composer
-                if model.receivedText == nil && model.lastRun == nil && !model.isRunning {
-                    pasteATextRow
+                if let talk, talk.isActive || !talk.turns.isEmpty {
+                    TalkView(session: talk, liveWords: voice.transcript, openReview: openReview)
+                        .transition(.opacity)
                 }
-                if prompt.isEmpty && model.lastRun == nil && !model.isRunning {
-                    suggestionChips
-                }
-                if model.isRunning {
-                    working
-                }
-                if let message = model.errorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                        .glowCard(padding: 14)
-                }
-                if let run = model.lastRun, !model.isRunning {
-                    RunResultView(run: run, openReview: openReview, startOver: { startOver(scrollingWith: proxy) })
-                        .id("results")
-                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                // While talking, the conversation is the screen; the box comes back when it ends.
+                if !isTalking {
+                    composer
+                    if model.receivedText == nil && model.lastRun == nil && !model.isRunning {
+                        pasteATextRow
+                    }
+                    if prompt.isEmpty && model.lastRun == nil && !model.isRunning {
+                        suggestionChips
+                    }
+                    if model.isRunning {
+                        working
+                    }
+                    if let message = model.errorMessage {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                            .glowCard(padding: 14)
+                    }
+                    if let run = model.lastRun, !model.isRunning {
+                        RunResultView(run: run, openReview: openReview, startOver: { startOver(scrollingWith: proxy) })
+                            .id("results")
+                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -107,8 +110,21 @@ struct AssistantView: View {
             .frame(maxWidth: .infinity)
             .animation(.spring(duration: 0.45), value: model.isRunning)
             .animation(.spring(duration: 0.45), value: model.lastRun)
+            .animation(.spring(duration: 0.45), value: isTalking)
         }
         .scrollDismissesKeyboard(.interactively)
+        // End and Interrupt stay in reach however long the conversation gets.
+        .safeAreaInset(edge: .bottom) {
+            if let talk, talk.isActive {
+                TalkControls(session: talk)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        // Each new turn scrolls into view, like Messages.
+        .onChange(of: talk?.turns.last?.id) { _, id in
+            guard let id else { return }
+            withAnimation(reduceMotion ? nil : .spring(duration: 0.5)) { proxy.scrollTo(id, anchor: .bottom) }
+        }
         .onChange(of: model.isRunning) { wasRunning, isRunning in
             // Results appear when a run finishes, usually below the fold: bring them into view.
             guard wasRunning, !isRunning, let run = model.lastRun else { return }
@@ -117,15 +133,11 @@ struct AssistantView: View {
         }
         }
         .auroraBackground()
-        .onChange(of: voice.transcript) { _, spoken in
-            // The answer to "posts, launch or schedule?" isn't part of the request.
-            guard conversation != .choosing else { return }
-            prompt = [promptBeforeVoice, spoken].filter { !$0.isEmpty }.joined(separator: " ")
-        }
-        // "Hey Siri, talk to Hera" (TalkToHeraIntent) lands here.
+        // "Hey Siri, talk to Hera" (TalkToHeraIntent) lands here: Hera says hello and listens.
         .onChange(of: conversations.isPending, initial: true) { _, pending in
-            if pending, conversations.take() { startConversation() }
+            if pending, conversations.take() { startTalk(greet: true) }
         }
+        .onChange(of: allowWebSearch) { _, allowed in talk?.allowsWebSearch = allowed }
         // "Siri, hi Hera, what's on my day?" (WhatsOnMyDayIntent) lands here.
         .onChange(of: conversations.isBriefingPending, initial: true) { _, pending in
             if pending, conversations.takeBriefing() { Task { await briefMe() } }
@@ -134,26 +146,15 @@ struct AssistantView: View {
         // that's already going to finish.
         .onChange(of: conversations.pendingCreation, initial: true) { sendRequestedCreation() }
         .onChange(of: model.isRunning) { sendRequestedCreation() }
-        // "Hi Hera" said into the orb: a greeting starts the conversation, "what's on my day" gets
-        // the briefing, and a greeting in front of a request is dropped.
-        .onChange(of: voice.isListening) { wasListening, isListening in
-            guard wasListening, !isListening, conversation == .none, promptBeforeVoice.isEmpty else { return }
-            switch HeraGreeting.interpret(prompt) {
-            case .conversation:
-                prompt = ""
-                startConversation()
-            case .briefing:
-                prompt = ""
-                Task { await briefMe() }
-            case .request(let request):
-                prompt = request
-            }
-        }
         // The first load on a device compiles the voice model; start it now, not at the first reply.
         .task { if speakReplies { model.speech.prepare() } }
-        // In the background the system pauses Hera's audio mid-sentence; stop cleanly instead.
+        // In the background the system pauses Hera's audio mid-sentence; stop cleanly instead, and
+        // end a conversation, since the mic can't keep listening there.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { model.speech.stop() }
+            if phase == .background {
+                talk?.end(sayingGoodbye: false)
+                model.speech.stop()
+            }
             // Back in the app: the calendar may have changed elsewhere, so freshen the widget.
             if phase == .active { Task { await model.refreshWidget() } }
         }
@@ -184,7 +185,7 @@ struct AssistantView: View {
                 .font(Theme.heading())
                 .foregroundStyle(Theme.spectrumGradient)
                 .multilineTextAlignment(.center)
-            Text("Posters, posts, emails and your schedule. Speak or type; nothing goes out until you approve it.")
+            Text("Posters, posts, emails and your schedule. Talk or type; nothing goes out until you approve it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -196,12 +197,16 @@ struct AssistantView: View {
     private var voiceStatus: some View {
         Group {
             switch voice.state {
+            case .idle where talk?.phase == .thinking:
+                Text("Hera is thinking…")
+            case .idle where talk?.phase == .speaking:
+                Text("Tap the orb to interrupt and speak")
             case .idle where model.speech.isSpeaking:
                 Button("Hera is speaking · Stop", systemImage: "stop.fill", action: stopHera)
                     .buttonStyle(.glass)
                     .controlSize(.small)
             case .idle:
-                Text("Tap to speak")
+                Text("Tap and talk with Hera")
             case .listening:
                 Label("Listening · recognized on this device", systemImage: "lock.fill")
             case .preparing(let message):
@@ -423,6 +428,7 @@ struct AssistantView: View {
         case .posts: "What should we promote? A poster, posts, a flyer…"
         case .schedule: "Tell Hera what to plan, move or remind you about…"
         case .launch: "What are you launching? The date, place, price and how to sign up…"
+        case .talk: "Tap the orb and talk with Hera…"
         }
     }
 
@@ -431,8 +437,12 @@ struct AssistantView: View {
         case .posts: "Designing your posters and posts. This can take a minute."
         case .schedule: "Looking at your schedule. This can take a minute."
         case .launch: "Putting your launch together: posts, a poster, calendar and email. This can take a few minutes."
+        case .talk: "Hera is thinking…"
         }
     }
+
+    /// A spoken conversation is going.
+    private var isTalking: Bool { talk?.isActive ?? false }
 
     private var isPreparingVoice: Bool {
         if case .preparing = voice.state { return true }
@@ -444,18 +454,23 @@ struct AssistantView: View {
             && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.receivedText != nil)
     }
 
-    /// Ends what Hera is saying and, if she was in the middle of "Talk to Hera", the conversation
-    /// too, so she doesn't carry on to the next question.
+    /// Ends what Hera is saying and, if she was in a conversation, the conversation too, so she
+    /// doesn't carry on listening.
     private func stopHera() {
+        talk?.end(sayingGoodbye: false)
         model.speech.stop()
-        conversation = .none
     }
 
-    private func toggleVoice() async {
-        if !voice.isListening { promptBeforeVoice = prompt.trimmingCharacters(in: .whitespacesAndNewlines) }
-        promptFocused = false
-        model.speech.stop()  // Hera stops talking as soon as the person starts
-        await voice.toggle()
+    /// The orb starts a conversation. During one, it interrupts Hera while she speaks (and listens
+    /// at once), and otherwise ends it.
+    private func orbTapped() {
+        if let talk, talk.isActive {
+            talk.tapOrb()
+        } else if model.speech.isSpeaking {
+            stopHera()
+        } else {
+            startTalk(greet: false)
+        }
     }
 
     /// Clears the last result and the box, ready for the next request, and scrolls back up.
@@ -464,11 +479,10 @@ struct AssistantView: View {
         withAnimation(.spring(duration: 0.45)) {
             model.clearLastRun()
             prompt = ""
-            promptBeforeVoice = ""
             photoItem = nil
             photo = nil
             photoProblem = nil
-            conversation = .none
+            talk?.clear()
             quickReply = nil
         }
         proxy.scrollTo("top", anchor: .top)
@@ -480,7 +494,8 @@ struct AssistantView: View {
 
     private func send() async {
         promptFocused = false
-        conversation = .none
+        // A typed request starts its own task; the conversation's cards go with it.
+        talk?.clear()
         model.speech.stop()
         let continuing = model.isContinuing(mode)
         // A shared text with nothing typed: Hera helps reply to it.
@@ -492,7 +507,6 @@ struct AssistantView: View {
         // In a conversation the box is for the next reply, so it starts empty again.
         if continuing || model.isContinuing(mode) {
             prompt = ""
-            promptBeforeVoice = ""
         }
     }
 
@@ -506,9 +520,9 @@ struct AssistantView: View {
         photoItem = nil
         photo = nil
         Task {
-            // The mic, if it was on, would otherwise write over the request.
+            // A conversation that was going ends: this request is its own task.
+            talk?.end(sayingGoodbye: false)
             await voice.stop()
-            promptBeforeVoice = ""
             prompt = creation.request
             await send()
         }
@@ -653,8 +667,8 @@ struct AssistantView: View {
     /* ---------------- "What's on my day?" ---------------- */
 
     private func briefMe() async {
+        talk?.end(sayingGoodbye: false)
         model.speech.stop()
-        conversation = .none
         guard model.isConfigured else { return }
         guard let text = await model.briefMe() else { return }
         model.speech.speak(text)
@@ -684,69 +698,50 @@ struct AssistantView: View {
         .glowCard()
     }
 
-    /* ---------------- "Talk to Hera" ---------------- */
+    /* ---------------- Talk ---------------- */
 
-    /// Hera asks posts, launch or schedule, listens, then asks what it's about and starts on it. Each step
-    /// waits for her to finish speaking before the mic opens. Nothing is published: the run ends
-    /// in proposals the person approves, as always.
-    private func startConversation() {
+    /// Starts a spoken conversation: from the orb Hera listens straight away; from Siri ("Talk to
+    /// Hera") she says hello first. Nothing is published: anything she makes waits for approval.
+    private func startTalk(greet: Bool) {
         model.speech.stop()
         guard model.isConfigured else { return }  // the sign-in screen is showing instead
         if model.aiConsent == false {
-            model.speech.speak("Hi, I'm Hera. First, tap Allow AI on this screen, then call me again.")
+            model.speech.speak("Hi, I'm Hera. First, tap Allow AI on this screen, then talk to me again.")
             return
         }
-        askWhatToMake(firstTime: true)
+        promptFocused = false
+        let session = talkSession()
+        session.allowsWebSearch = allowWebSearch
+        model.startTalk()
+        withAnimation { session.start(greet: greet) }
     }
 
-    private func askWhatToMake(firstTime: Bool) {
-        conversation = .choosing
-        let question = firstTime
-            ? "Hi, I'm Hera. Should we make posters and posts, plan a launch, or work on your schedule?"
-            : "Let's do one at a time. Posters and posts, a launch, or your schedule?"
-        model.speech.speak(question) {
-            Task { await hearWhatToMake(firstTime: firstTime) }
-        }
-    }
-
-    private func hearWhatToMake(firstTime: Bool) async {
-        let reply = await voice.listenUntilSilence()
-        guard conversation == .choosing else { return }
-        if let chosen = ConversationReply.mode(from: reply) {
-            mode = chosen
-            askWhatAbout()
-        } else if firstTime && !reply.isEmpty {
-            askWhatToMake(firstTime: false)
-        } else {
-            conversation = .none
-            model.speech.speak("No problem. Choose Launch, Studio or Schedule, then tell me what you'd like.")
-        }
-    }
-
-    private func askWhatAbout() {
-        conversation = .describing
-        prompt = ""
-        promptBeforeVoice = ""
-        let question = switch mode {
-        case .posts: "Great. What would you like to post about?"
-        case .schedule: "Great. What do you need done on your schedule?"
-        case .launch: "Great. What are you launching? Tell me the date, the place, the price and how people sign up."
-        }
-        model.speech.speak(question) {
-            Task { await hearRequest() }
-        }
-    }
-
-    private func hearRequest() async {
-        let said = await voice.listenUntilSilence()
-        guard conversation == .describing else { return }
-        conversation = .none
-        guard !said.isEmpty else {
-            model.speech.speak("I didn't catch that. Tap the orb when you're ready.")
-            return
-        }
-        prompt = said
-        await send()
+    /// The conversation, wired to this screen's mic and Hera's voice.
+    private func talkSession() -> TalkSession {
+        if let talk { return talk }
+        let voice = voice
+        let model = model
+        let session = TalkSession(hooks: .init(
+            listen: {
+                let heard = await voice.listenUntilSilence()
+                // The mic is off or failed: the status under the orb says why.
+                if case .unavailable = voice.state { return nil }
+                return heard
+            },
+            stopListening: { await voice.stop() },
+            speak: { text, done in
+                // With Hera's voice off in Settings, the reply is shown and she listens straight away.
+                guard UserDefaults.standard.object(forKey: HeraVoice.speakRepliesKey) as? Bool ?? true else {
+                    done()
+                    return
+                }
+                model.speech.speak(text, then: done)
+            },
+            stopSpeaking: { model.speech.stop() },
+            send: { said, allowWebSearch in await model.talk(said, allowWebSearch: allowWebSearch) }
+        ))
+        talk = session
+        return session
     }
 
     /* ---------------- notices ---------------- */

@@ -3,7 +3,8 @@
 **An iPhone, iPad and Mac app.** Type or speak what you want, and Hera writes social posts,
 posters and flyers, eBay listings, emails and texts, and proposes changes to your calendar and
 reminders. You review the exact content, and nothing is published until you approve it. Hera
-reads her replies aloud in a voice made on the device.
+reads her replies aloud in a voice made on the device, and in Talk you can simply speak with her,
+back and forth, like a digital assistant.
 
 See XCODE-TESTING.md to run it and PLATFORMS.md for what runs where.
 

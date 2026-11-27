@@ -85,7 +85,7 @@ test("phone numbers are read as digits", () => {
 });
 
 test("texts can be written in every mode", async () => {
-  for (const mode of ["posts", "schedule", "launch"]) {
+  for (const mode of ["posts", "schedule", "launch", "talk"]) {
     const calls: any[] = [];
     const client = { beta: { messages: { create: async (p: any) => { calls.push(p); return done(); } } } };
     await runAgent({ mode, client, store: new ActionStore(), userId: "u1", context: () => makeCtx() } as any, "hi");

@@ -159,7 +159,7 @@ const OPTIONAL_TABLES = new Set<string>(["agent_conversations", "agent_memories"
 export function checkMode(raw: unknown): AgentMode {
   const mode = raw ?? "posts";
   if (mode === "site") throw new HttpError(410, "Building websites was removed from Hera. Update the app to the latest version.", true, "mode_removed");
-  if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'posts', 'schedule' or 'launch'.");
+  if (!(AGENT_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "mode must be 'posts', 'schedule', 'launch' or 'talk'.");
   return mode as AgentMode;
 }
 
@@ -382,10 +382,10 @@ export function buildRouter(): Router {
     return async () => {
       const out = await guarded(() => agent().run(userId, request, {
         mode, allowWebSearch: body.allow_web_search === true,
-        // A photo goes on posts, posters and listings, in Posts or a launch.
-        photoId: mode === "posts" || mode === "launch" ? body.photo_id ?? null : null,
+        // A photo goes on posts, posters and listings, in Posts, a launch or a conversation.
+        photoId: mode === "posts" || mode === "launch" || mode === "talk" ? body.photo_id ?? null : null,
         // Their calendar and reminders as their device sees them, for this request; never stored on its own.
-        schedule: mode === "schedule" || mode === "launch" ? body.schedule : undefined,
+        schedule: mode === "schedule" || mode === "launch" || mode === "talk" ? body.schedule : undefined,
         // Continue an earlier task: the id from the previous answer.
         conversationId: body.conversation_id,
         // A text message the person received and shared, to explain or help answer.

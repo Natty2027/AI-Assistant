@@ -36,7 +36,9 @@ after checking the App Store's signature back to Apple's root certificate (`serv
 ## Which AI model answers
 
 Every mode (Studio, Schedule and Launch Kit) uses Claude Sonnet 5.5 (`claude-sonnet-5-5`) at
-medium effort (`MODEL_FOR` in `server/agent/loop.ts`). Prompt caching reuses the tools, system
+medium effort (`MODEL_FOR` in `server/agent/loop.ts`). Talk, the spoken back-and-forth
+conversation, uses the same model at low effort with a smaller output budget, so replies come back
+quickly enough to talk to; it can draft the same things, always as proposals. Prompt caching reuses the tools, system
 prompt and conversation between the turns of a run, and several tools asked for in one turn run in
 parallel. A launch has up to 40 steps and takes a few minutes.
 

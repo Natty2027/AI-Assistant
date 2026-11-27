@@ -13,6 +13,84 @@ struct RunResultView: View {
         VStack(alignment: .leading, spacing: 24) {
             if !run.text.isEmpty { reply }
 
+            if RunOutputsView.hasOutputs(run) {
+                RunOutputsView(run: run, openReview: openReview)
+            }
+
+            Button(action: startOver) {
+                Label("Start something new", systemImage: "plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.large)
+        }
+    }
+
+    /* ---------------- sections ---------------- */
+
+    private var reply: some View {
+        HStack(alignment: .top, spacing: 14) {
+            IconTile(systemImage: run.needsAnswer ? "questionmark" : "sparkles", size: 34)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(run.needsAnswer ? "A question for you" : "Hera")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    if HeraVoice.isAvailable { listenButton }
+                }
+                Text(run.text)
+                    .textSelection(.enabled)
+                if model.speech.phase == .preparing {
+                    Label("Getting Hera's voice ready…", systemImage: "waveform")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let problem = model.speech.problem {
+                    Text(problem)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if run.needsAnswer {
+                    Text("Answer in the box above and tap Send. Hera carries on from here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .glowCard()
+    }
+
+    /// Replays the reply in Hera's voice, or stops her mid-sentence.
+    private var listenButton: some View {
+        let speaking = model.speech.isSpeaking
+        return Button {
+            if speaking { model.speech.stop() } else { model.speech.speak(run.text) }
+        } label: {
+            Label(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop.fill" : "speaker.wave.2.fill")
+                .font(.footnote.weight(.semibold))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.glass)
+        .controlSize(.small)
+    }
+}
+
+/// Everything a run made, ready to act on: Launch Kit overview, schedule changes, posters, texts,
+/// emails, what's waiting for approval, posts to share, and what couldn't be proposed. Shared by
+/// the composer's result and the spoken conversation (Talk).
+struct RunOutputsView: View {
+    let run: AgentRunResponse
+    var openReview: () -> Void
+
+    /// True when the run made anything to show here.
+    static func hasOutputs(_ run: AgentRunResponse) -> Bool {
+        run.tainted || !(run.scheduleChanges ?? []).isEmpty || !(run.posterDrafts ?? []).isEmpty
+            || !(run.textDrafts ?? []).isEmpty || !(run.emailDrafts ?? []).isEmpty || !run.proposals.isEmpty
+            || run.drafts.contains(where: \.isForSharing)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
             if let kit = LaunchKitSummary(run: run) {
                 launchKit(kit)
             }
@@ -62,48 +140,7 @@ struct RunResultView: View {
 
             let blocked = run.proposals.filter { $0.status == "blocked" }
             if !blocked.isEmpty { couldntBeProposed(blocked) }
-
-            Button(action: startOver) {
-                Label("Start something new", systemImage: "plus")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.glass)
-            .controlSize(.large)
         }
-    }
-
-    /* ---------------- sections ---------------- */
-
-    private var reply: some View {
-        HStack(alignment: .top, spacing: 14) {
-            IconTile(systemImage: run.needsAnswer ? "questionmark" : "sparkles", size: 34)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(run.needsAnswer ? "A question for you" : "Hera")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    if HeraVoice.isAvailable { listenButton }
-                }
-                Text(run.text)
-                    .textSelection(.enabled)
-                if model.speech.phase == .preparing {
-                    Label("Getting Hera's voice ready…", systemImage: "waveform")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let problem = model.speech.problem {
-                    Text(problem)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if run.needsAnswer {
-                    Text("Answer in the box above and tap Send. Hera carries on from here.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .glowCard()
     }
 
     /// Launch Kit: everything one request made ready, at a glance, before the details below.
@@ -157,20 +194,6 @@ struct RunResultView: View {
                 .glowCard()
             }
         }
-    }
-
-    /// Replays the reply in Hera's voice, or stops her mid-sentence.
-    private var listenButton: some View {
-        let speaking = model.speech.isSpeaking
-        return Button {
-            if speaking { model.speech.stop() } else { model.speech.speak(run.text) }
-        } label: {
-            Label(speaking ? "Stop" : "Listen", systemImage: speaking ? "stop.fill" : "speaker.wave.2.fill")
-                .font(.footnote.weight(.semibold))
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .buttonStyle(.glass)
-        .controlSize(.small)
     }
 }
 

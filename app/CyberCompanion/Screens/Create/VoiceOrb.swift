@@ -1,12 +1,15 @@
 import SwiftUI
 
-/// The signature control: a glowing glass orb. Tap to speak; while listening, rings ripple out
-/// and the glow swells with the speaker's voice.
+/// The signature control: a glowing glass orb. Tap to talk with Hera; while listening, rings
+/// ripple out and the glow swells with the speaker's voice.
 struct VoiceOrb: View {
     let isListening: Bool
     let isBusy: Bool
     /// Hera is talking: the orb becomes her Stop button.
     var isHeraSpeaking = false
+    /// In a conversation (Talk), tapping while Hera speaks interrupts her and listens, and tapping
+    /// otherwise ends the conversation.
+    var isInConversation = false
     /// 0...1, how loud the speaker is.
     let level: Double
     let action: () -> Void
@@ -21,7 +24,7 @@ struct VoiceOrb: View {
                 if isBusy {
                     ProgressView().controlSize(.large).tint(.white)
                 } else {
-                    Image(systemName: isHeraSpeaking ? "stop.fill" : isListening ? "waveform" : "mic.fill")
+                    Image(systemName: isHeraSpeaking ? (isInConversation ? "mic.fill" : "stop.fill") : isListening ? "waveform" : "mic.fill")
                         .font(.system(size: 34, weight: .semibold))
                         .foregroundStyle(.white)
                         .symbolEffect(.variableColor.iterative, isActive: isListening && !reduceMotion)
@@ -34,9 +37,22 @@ struct VoiceOrb: View {
             .background { if isListening { ripples } }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isHeraSpeaking ? "Stop Hera" : isListening ? "Stop listening" : "Speak your request")
-        .accessibilityHint(isHeraSpeaking ? "Ends what Hera is saying" : "Your voice is recognized on this device")
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
         .animation(.spring(duration: 0.35), value: isListening)
+    }
+
+    private var accessibilityLabel: String {
+        if isInConversation {
+            return isHeraSpeaking ? "Interrupt Hera" : "End conversation"
+        }
+        return isHeraSpeaking ? "Stop Hera" : isListening ? "Stop listening" : "Talk with Hera"
+    }
+
+    private var accessibilityHint: String {
+        if isInConversation && isHeraSpeaking { return "Stops Hera and listens to you now" }
+        if isHeraSpeaking { return "Ends what Hera is saying" }
+        return "Your voice is recognized on this device"
     }
 
     /// Light mode needs a deeper tint so the white symbol stays legible on the pale background.

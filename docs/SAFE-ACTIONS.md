@@ -27,7 +27,8 @@ not be treated as a security control". So every rule below is enforced in code, 
 ### 1. The model proposes; the person approves; the server executes
 - The model's tools: draft posts, design posters, draft emails and texts, look up eBay categories
   and item details, propose posts, listings and calendar changes, remember facts the person gives
-  it, and ask a question. Nothing else. (`server/agent/loop.ts`, `schedule.ts`)
+  it, and ask a question. Nothing else. (`server/agent/loop.ts`, `schedule.ts`) Talk, the spoken
+  conversation, has the same drafting and proposing tools and no others.
 - A proposal is only a record. It becomes real through `ActionStore` (`server/agent/approvals.ts`)
   and only after the person approves it in the app.
 - The model cannot send email or texts, or buy ads or domains, at all. It only drafts emails and

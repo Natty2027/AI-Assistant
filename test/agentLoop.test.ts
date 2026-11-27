@@ -30,7 +30,7 @@ function scripted(steps: Array<(params: any) => any>) {
 const lastResults = (params: any) => params.messages[params.messages.length - 1].content as any[];
 const draftIdFrom = (params: any) => JSON.parse(lastResults(params).find((r) => r.content.includes("draft_id")).content).draft_id;
 
-async function setup(opts: { allowWebSearch?: boolean; mode?: "posts" | "schedule" | "launch"; marketplace?: unknown } = {}) {
+async function setup(opts: { allowWebSearch?: boolean; mode?: "posts" | "schedule" | "launch" | "talk"; marketplace?: unknown } = {}) {
   const store = new ActionStore();
   const { mode = "posts", ...rest } = opts;
   return { store, deps: (client: any) => ({ mode, client, store, userId: "u1", context: () => makeCtx(), ...rest }) as any };
@@ -270,10 +270,10 @@ test("write_post only accepts known platforms", async () => {
   assert.match(lastResults(calls[1])[0].content, /INVALID_INPUT/);
 });
 
-test("every mode uses the fast model at medium effort", async () => {
+test("every mode uses the fast model at medium effort, and Talk at low effort for quick spoken replies", async () => {
   const { MODEL_FOR } = await import("../server/agent/loop.ts");
   const seen: Record<string, any> = {};
-  for (const mode of ["launch", "posts", "schedule"] as const) {
+  for (const mode of ["launch", "posts", "schedule", "talk"] as const) {
     const client = { beta: { messages: { create: async (p: any) => {
       seen[mode] = p;
       return { id: "m", type: "message", role: "assistant", model: p.model, content: [{ type: "text", text: "ok" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } } as any;
@@ -286,6 +286,66 @@ test("every mode uses the fast model at medium effort", async () => {
     assert.equal(seen[mode].output_config.effort, "medium", mode);
     assert.deepEqual(MODEL_FOR[mode], { model: AGENT_MODEL, effort: "medium" });
   }
+  assert.equal(seen.talk.model, AGENT_MODEL);
+  assert.equal(seen.talk.output_config.effort, "low");
+  assert.deepEqual(MODEL_FOR.talk, { model: AGENT_MODEL, effort: "low" });
+  assert.ok(seen.talk.max_tokens < seen.posts.max_tokens, "a spoken reply gets a smaller output budget");
+});
+
+/* ---------------- Talk: a spoken conversation ---------------- */
+
+test("a talk run is offered the drafting and calendar tools, never a tool that acts, and no ask_user", async () => {
+  const { deps } = await setup({ mode: "talk" });
+  const { client, calls } = scripted([() => msg([say("Hi! What can I do for you?")], "end_turn")]);
+  const out = await runAgent(deps(client), "Hi Hera");
+  assert.equal(out.status, "done");
+  assertNoActingTools(calls[0]);
+  assert.deepEqual(calls[0].tools.map((t: any) => t.name).sort(),
+    ["add_event", "add_reminder", "cancel_event", "change_event", "complete_reminder", "design_poster", "draft_email", "draft_post",
+      "draft_text", "propose_post", "remember", "write_post"]);
+  // Written to be heard: short, plain, one question at a time, and only ever proposals.
+  assert.match(calls[0].system, /read aloud/);
+  assert.match(calls[0].system, /No Markdown/);
+  assert.match(calls[0].system, /one question at a time/);
+  assert.match(calls[0].system, /Never say you sent, posted, booked/);
+  assert.match(calls[0].system, /Web search is off/);
+  assert.match(calls[0].system, /calendar wasn't shared/);
+  assert.ok(calls[0].tools.at(-1).cache_control, "the tools are still cached");
+});
+
+test("talk with web search allowed can look things up, and says so in its instructions", async () => {
+  const { deps } = await setup({ mode: "talk", allowWebSearch: true });
+  const { client, calls } = scripted([() => msg([say("It's sunny today.")], "end_turn")]);
+  await runAgent(deps(client), "What's the weather like?");
+  assert.ok(calls[0].tools.some((t: any) => t.type === "web_search_20260209"));
+  assert.match(calls[0].system, /look it up with web search/);
+});
+
+test("talk can draft and propose like the other modes, and a tool outside its set is refused", async () => {
+  const { store, deps } = await setup({ mode: "talk" });
+  const { client, calls } = scripted([
+    () => msg([use("t1", "draft_post", { connection_id: "x1", text: "Pottery class Saturday at 10am.", link: null, sponsored: false })]),
+    (p) => msg([use("t2", "propose_post", { draft_id: draftIdFrom(p), summary: "Saturday's class" }),
+      use("t3", "ask_user", { question: "Anything else?" })]),
+    () => msg([say("I've written that post; it's waiting for your approval in the app.")], "end_turn"),
+  ]);
+  const out = await runAgent(deps(client), "Post about my pottery class on Saturday at 10");
+  assert.equal(out.status, "done", "ask_user doesn't pause a conversation");
+  assert.equal(out.proposalIds.length, 1);
+  assert.equal(store.get(out.proposalIds[0], "u1").status, "pending", "proposed, not posted");
+  const refused = lastResults(calls[2]).find((r) => r.tool_use_id === "t3");
+  assert.equal(refused.is_error, true);
+  assert.match(refused.content, /ask your question in your reply/);
+});
+
+test("a talk conversation continues across turns with the person's earlier words", async () => {
+  const { deps } = await setup({ mode: "talk" });
+  const first = scripted([() => msg([say("Sure. Who's it for?")], "end_turn")]);
+  const one = await runAgent(deps(first.client), "Help me write a text");
+  const second = scripted([() => msg([say("Got it.")], "end_turn")]);
+  await runAgent(deps(second.client), "My mom", one.state);
+  const sent = second.calls[0].messages.map((m: any) => typeof m.content === "string" ? m.content : m.content.map((b: any) => b.text).join(""));
+  assert.deepEqual(sent, ["Help me write a text", "Sure. Who's it for?", "My mom"]);
 });
 
 /** Every cache marker in one request: on tools, the system prompt and message blocks. */
