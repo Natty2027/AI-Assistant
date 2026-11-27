@@ -61,6 +61,18 @@ final class HeraVoice {
     /// Buffers scheduled but not yet heard, and whether synthesis has produced its last one.
     private var pendingBuffers = 0
     private var synthesisFinished = false
+    /// System-voice utterances handed over and not yet finished.
+    private var systemPending = 0
+
+    /// The reply being spoken, a piece at a time (see beginReply): what's still to say, whether
+    /// more may come, and the speaking task waiting for it.
+    private var queue: [String] = []
+    private var queueOpen = false
+    private var silent = false
+    private var moreQueued: CheckedContinuation<Void, Never>?
+    /// Her own voice failed during this reply, so the rest of it goes to the system voice
+    /// rather than trying (and waiting on) her voice again for every sentence.
+    private var usingSystemVoice = false
     /// Run when Hera finishes speaking on her own (not when she's stopped).
     private var onFinished: (@MainActor () -> Void)?
 
@@ -82,19 +94,55 @@ final class HeraVoice {
     /// Speaks `text`, interrupting anything Hera was already saying. `onFinished` runs once she
     /// has finished speaking, unless she's stopped first.
     func speak(_ text: String, then onFinished: (@MainActor () -> Void)? = nil) {
+        beginReply(then: onFinished)
+        enqueue(text)
+        endReply()
+    }
+
+    /// Starts a reply that arrives a piece at a time (Talk, as Hera writes it), interrupting
+    /// anything she was already saying. Each `enqueue` is said straight after the one before,
+    /// with no gap or restart; `onFinished` runs once the last piece has been heard after
+    /// `endReply`, unless she's stopped first. `silently` (her voice is off in Settings) says
+    /// nothing and finishes as soon as the reply ends.
+    func beginReply(silently: Bool = false, then onFinished: (@MainActor () -> Void)? = nil) {
         stop()
-        let spoken = Self.spokenText(from: text)
-        guard !spoken.isEmpty else { onFinished?(); return }
         generation += 1
-        let current = generation
         self.onFinished = onFinished
-        phase = .preparing
-        speakTask = Task { await run(spoken, generation: current) }
+        silent = silently
+        queueOpen = true
+    }
+
+    /// More of the reply begun with beginReply. Markdown and links are cleaned up per piece.
+    func enqueue(_ text: String) {
+        guard queueOpen, !silent else { return }
+        let spoken = Self.spokenText(from: text)
+        guard !spoken.isEmpty else { return }
+        queue.append(spoken)
+        if speakTask == nil {
+            phase = .preparing
+            let current = generation
+            speakTask = Task { await runQueue(generation: current) }
+        } else {
+            wakeQueue()
+        }
+    }
+
+    /// Nothing more is coming: she finishes what's queued, then `onFinished` runs.
+    func endReply() {
+        guard queueOpen else { return }
+        queueOpen = false
+        if speakTask == nil { finish() } else { wakeQueue() }
     }
 
     func stop() {
         generation += 1
         onFinished = nil
+        queue = []
+        queueOpen = false
+        silent = false
+        usingSystemVoice = false
+        // A speaking task waiting for more sees the new generation and ends.
+        wakeQueue()
         speakTask?.cancel()
         speakTask = nil
         // Unconditionally: an utterance can be queued without isSpeaking being true yet.
@@ -103,10 +151,34 @@ final class HeraVoice {
         phase = .idle
     }
 
+    /* ---------------- the queue ---------------- */
+
+    /// Says each queued piece in turn, waiting when the queue is empty but the reply isn't over.
+    /// A piece is made into audio as soon as the one before it is, while that one still plays.
+    private func runQueue(generation current: Int) async {
+        while current == generation {
+            if queue.isEmpty {
+                if !queueOpen { break }
+                await withCheckedContinuation { moreQueued = $0 }
+                continue
+            }
+            await say(queue.removeFirst(), generation: current)
+        }
+        guard current == generation else { return }
+        synthesisFinished = true
+        finishIfDone()
+    }
+
+    private func wakeQueue() {
+        let waiting = moreQueued
+        moreQueued = nil
+        waiting?.resume()
+    }
+
     /* ---------------- choosing a voice ---------------- */
 
-    private func run(_ text: String, generation current: Int) async {
-        if let directory = Self.modelDirectory {
+    private func say(_ text: String, generation current: Int) async {
+        if !usingSystemVoice, let directory = Self.modelDirectory {
             // Her own voice as configured, then once more on the CPU only.
             for attempt in 1...2 {
                 do {
@@ -123,6 +195,8 @@ final class HeraVoice {
                 cpuOnly = true
                 loading = nil
             }
+            guard current == generation else { return }
+            usingSystemVoice = true
         }
         guard current == generation else { return }
         problem = "Hera's own voice couldn't start on this device, so the system voice is speaking for her."
@@ -142,8 +216,9 @@ final class HeraVoice {
 
     /* ---------------- Hera's own voice (Kokoro) ---------------- */
 
-    /// Streams the reply into the speaker. Returns false if no audio came out at all, which is
-    /// how a model that failed to load shows up (every chunk fails).
+    /// Streams one piece of the reply into the speaker, after whatever is already playing.
+    /// Returns false if no audio came out at all, which is how a model that failed to load shows
+    /// up (every chunk fails).
     private func speakWithKokoro(_ text: String, from directory: URL, generation current: Int) async throws -> Bool {
         let engine = try await loadingTask(directory).value
         // Turning text into phonemes takes a moment; keep it off the main thread.
@@ -151,30 +226,24 @@ final class HeraVoice {
             try engine.speak(text, voice: Self.voiceName)
         }.value
 
-        var player: AVAudioPlayerNode?
-        pendingBuffers = 0
-        synthesisFinished = false
+        var madeAudio = false
         for await event in stream {
             guard current == generation else { return true }  // stopped: nothing more to do
             switch event {
             case .audio(let buffer):
-                if player == nil {
-                    player = try startAudio()
-                    phase = .speaking
-                }
+                // One player for the whole reply: each piece's audio is queued after the last.
+                let player = try self.player ?? startAudio()
+                phase = .speaking
+                madeAudio = true
                 pendingBuffers += 1
-                player?.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                     Task { @MainActor in self?.bufferPlayed(generation: current) }
                 }
             case .chunkFailed(let error):
                 Self.log.error("Part of Hera's reply couldn't be spoken: \(error.localizedDescription, privacy: .public)")
             }
         }
-        guard current == generation else { return true }
-        guard player != nil else { return false }
-        synthesisFinished = true
-        finishIfDone()
-        return true
+        return current != generation || madeAudio
     }
 
     private func startAudio() throws -> AVAudioPlayerNode {
@@ -198,7 +267,7 @@ final class HeraVoice {
     }
 
     private func finishIfDone() {
-        guard synthesisFinished, pendingBuffers <= 0 else { return }
+        guard synthesisFinished, pendingBuffers <= 0, systemPending <= 0 else { return }
         finish()
     }
 
@@ -239,12 +308,15 @@ final class HeraVoice {
         try? activateSession()
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.bestSystemVoice()
+        // The synthesizer queues utterances itself, so later pieces follow without a gap.
         let delegate = SystemVoiceDelegate { [weak self] in
             guard let self, current == self.generation else { return }
-            self.finish()
+            self.systemPending -= 1
+            self.finishIfDone()
         }
         systemVoiceDelegate = delegate
         systemVoice.delegate = delegate
+        systemPending += 1
         phase = .speaking
         systemVoice.speak(utterance)
     }
@@ -282,6 +354,7 @@ final class HeraVoice {
 
     private func tearDownAudio() {
         pendingBuffers = 0
+        systemPending = 0
         synthesisFinished = false
         player?.stop()
         audio?.stop()

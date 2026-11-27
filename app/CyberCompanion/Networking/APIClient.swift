@@ -54,9 +54,14 @@ struct APIClient: Sendable {
     /// the server and can take a few minutes, longer than a phone keeps one request open. So the
     /// app starts it, then asks the server to answer when it's done (or after 20 seconds, when the
     /// app asks again), and shows the result the moment it's ready.
+    ///
+    /// With `onText` (Talk), the server is also asked to send the answer so far as Hera writes it:
+    /// each check then returns as soon as there's more (`after` is how much the app has), and
+    /// `onText` hears it. A server from before this just answers at the end, as it always did.
     func runAssistant(request: String, mode: CreateMode, allowWebSearch: Bool, photoID: String? = nil,
                       schedule: ScheduleSnapshot? = nil, conversationID: String? = nil,
-                      receivedText: String? = nil) async throws -> AgentRunResponse {
+                      receivedText: String? = nil,
+                      onText: (@Sendable (String) async -> Void)? = nil) async throws -> AgentRunResponse {
         struct Body: Encodable {
             let request: String; let mode: CreateMode; let allowWebSearch: Bool; let photoId: String?
             /// Schedule runs only: the person's calendar and reminders for this one request.
@@ -67,6 +72,8 @@ struct APIClient: Sendable {
             let receivedText: String?
             /// This device's clock, for "Friday at 9" and scheduled posts.
             let localTime: LocalTime
+            /// Talk: send the answer so far with each check. Left out otherwise.
+            var stream: Bool?
         }
         struct LocalTime: Encodable { let now: String; let timeZone: String }
         struct Started: Decodable {
@@ -76,11 +83,15 @@ struct APIClient: Sendable {
         struct Progress: Decodable {
             let status: String
             let result: AgentRunResponse?
+            /// The answer so far, while it's being written (only when asked for with after).
+            let partialText: String?
+            enum CodingKeys: String, CodingKey { case status, result, partialText = "partial_text" }
         }
         let body = Body(request: request, mode: mode, allowWebSearch: allowWebSearch, photoId: photoID,
                         schedule: schedule, conversationId: conversationID,
                         receivedText: receivedText,
-                        localTime: LocalTime(now: HeraTime.nowWithOffset(), timeZone: TimeZone.current.identifier))
+                        localTime: LocalTime(now: HeraTime.nowWithOffset(), timeZone: TimeZone.current.identifier),
+                        stream: onText == nil ? nil : true)
         let started: Started
         do {
             started = try await send("POST", "agent/runs", body: body, timeout: 60)
@@ -91,13 +102,22 @@ struct APIClient: Sendable {
 
         let deadline = Date.now.addingTimeInterval(Self.longestRun)
         let wait = [URLQueryItem(name: "wait", value: String(Self.runWait))]
+        // How much of the answer the app has, counted the way the server counts (UTF-16).
+        var have = 0
         var missedChecks = 0
         while Date.now < deadline {
             let asked = Date.now
             do {
-                let progress: Progress = try await send("GET", "agent/runs/\(started.runId)", query: wait, timeout: Self.runCheckTimeout)
+                let query = onText == nil ? wait : wait + [URLQueryItem(name: "after", value: String(have))]
+                let progress: Progress = try await send("GET", "agent/runs/\(started.runId)", query: query, timeout: Self.runCheckTimeout)
                 if progress.status == "finished", let result = progress.result { return result }
                 missedChecks = 0
+                if let onText, let soFar = progress.partialText, soFar.utf16.count != have {
+                    // More of the answer: pass it on and ask again at once.
+                    have = soFar.utf16.count
+                    await onText(soFar)
+                    continue
+                }
                 // Still running. A server that held the request is asked again at once; one that
                 // answered right away (from before it could wait) gets a short pause first.
                 if Date.now.timeIntervalSince(asked) < TimeInterval(Self.runWait) / 2 {
@@ -218,6 +238,12 @@ struct APIClient: Sendable {
     }
 
     /* ---------------- consent ---------------- */
+
+    /// A cheap signed-in request, made when a conversation starts so the connection (and a fresh
+    /// sign-in token) is ready by the time the person has finished speaking. The answer is unused.
+    func warmUp() async {
+        _ = try? await aiConsent()
+    }
 
     func aiConsent() async throws -> Bool {
         let out: ConsentResponse = try await send("GET", "consent/ai")

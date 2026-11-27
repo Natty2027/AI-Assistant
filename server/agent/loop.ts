@@ -137,8 +137,16 @@ const MODE_NAMES: Record<AgentMode, { doing: string; button: string }> = {
 export interface AgentDeps {
   /** Posts, schedule, launch or talk; see AGENT_MODES. */
   mode: AgentMode;
-  /** Only the beta messages surface is used; tests pass a scripted fake. */
-  client: { beta: { messages: { create: (params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, options?: { signal?: AbortSignal; timeout?: number }) => Promise<Anthropic.Beta.Messages.BetaMessage> } } };
+  /** Only the beta messages surface is used; tests pass a scripted fake. `stream` is used only
+   *  when onText is given. */
+  client: { beta: { messages: {
+    create: (params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, options?: { signal?: AbortSignal; timeout?: number }) => Promise<Anthropic.Beta.Messages.BetaMessage>;
+    stream?: (params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, options?: { signal?: AbortSignal; timeout?: number }) => ModelStream;
+  } } };
+  /** Talk: told the reply so far each time the model writes more of it, so the app can start
+   *  speaking before the whole answer is ready. With it, the reply is everything Hera said this
+   *  request, including what she said before using a tool, so what was spoken is what's kept. */
+  onText?: (soFar: string) => void;
   /** Injected in tests so retry backoff costs nothing. */
   sleep?: (ms: number) => Promise<void>;
   store: ActionStore;
@@ -202,6 +210,12 @@ export interface AgentResult {
   turns: number;
   /** To save, so the next request in this conversation continues from here. */
   state: ConversationState;
+}
+
+/** The part of the SDK's message stream the loop uses (client.beta.messages.stream). */
+export interface ModelStream {
+  on(event: "streamEvent", listener: (event: Anthropic.Beta.Messages.BetaRawMessageStreamEvent) => void): unknown;
+  finalMessage(): Promise<Anthropic.Beta.Messages.BetaMessage>;
 }
 
 /* ------------------------------ tools ------------------------------ */
@@ -498,11 +512,19 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
   // Anthropic reuse them (tools come first, then the system prompt) instead of reading them again.
   const cachedTools = tools.map((t, i) => (i === tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t)) as Anthropic.Beta.Messages.BetaToolUnion[];
 
+  // Streaming (Talk): what Hera said in earlier steps of this request, before a tool call. The
+  // reply is that plus this step's words, so it's exactly what the app was shown and spoke.
+  const streaming = Boolean(deps.onText && deps.client.beta.messages.stream);
+  let saidBefore = "";
+  const joined = (a: string, b: string) => [a, b].filter(Boolean).join("\n");
+
   const result = (status: AgentResult["status"], text: string, turns: number): AgentResult => {
-    // A finished answer is part of the conversation too, so a follow-up can refer to it.
+    // A finished answer is part of the conversation too, so a follow-up can refer to it. Only this
+    // step's words: earlier steps' words are already in the conversation, in their own turns.
     if (status === "done" && text) messages.push({ role: "assistant", content: text });
+    const reply = streaming ? joined(saidBefore, text) : text;
     return {
-      status, text, proposalIds, drafts: [...drafts.values()], scheduleChanges, emailDrafts, textDrafts, posterDrafts, tainted, turns,
+      status, text: reply, proposalIds, drafts: [...drafts.values()], scheduleChanges, emailDrafts, textDrafts, posterDrafts, tainted, turns,
       state: { messages: compact(messages), drafts: [...drafts.values()], tainted, pending, personWords: personWords.slice(-50) },
     };
   };
@@ -524,17 +546,24 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
       messages: withCacheMarker(messages),
     };
     // A transient failure on one turn is retried rather than throwing away the turns before it.
-    const res = await withAiRetry((signal) => deps.client.beta.messages.create(params, { signal, timeout: STEP_TIMEOUT_MS.sdk }),
-      { sleep: deps.sleep, attemptTimeoutMs: STEP_TIMEOUT_MS.attempt });
+    const res = await withAiRetry((signal) => streaming
+      ? streamStep(deps, params, { signal, timeout: STEP_TIMEOUT_MS.sdk }, (step) => deps.onText!(joined(saidBefore, step.trim())))
+      : deps.client.beta.messages.create(params, { signal, timeout: STEP_TIMEOUT_MS.sdk }),
+    { sleep: deps.sleep, attemptTimeoutMs: STEP_TIMEOUT_MS.attempt });
     tokens += (res.usage?.input_tokens ?? 0) + (res.usage?.output_tokens ?? 0);
     const text = res.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
+    if (streaming) deps.onText!(joined(saidBefore, text));
 
     // Anything read from the web this turn makes every later proposal suspect.
     if (res.content.some((b) => b.type === "web_search_tool_result")) tainted = true;
 
     // A refusal can cut a tool call off mid-input: never run that turn's tools.
     if (res.stop_reason === "refusal") return result("refused", text || "The assistant declined this request.", turn);
-    if (res.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: res.content as any }); continue; }
+    if (res.stop_reason === "pause_turn") {
+      messages.push({ role: "assistant", content: res.content as any });
+      saidBefore = joined(saidBefore, text);
+      continue;
+    }
 
     const uses = res.content.filter((b): b is ToolUse => b.type === "tool_use");
     if (uses.length === 0) {
@@ -545,6 +574,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     if (res.stop_reason === "max_tokens") return result("stopped", "The assistant ran out of room mid-step. Try a smaller request.", turn);
 
     messages.push({ role: "assistant", content: res.content as any });
+    saidBefore = joined(saidBefore, text);
     // Several tools in one turn run at the same time (eBay lookups, mostly, wait on the network),
     // and their results go back in the order they were asked for. Tools that read and then write
     // the person's saved data take turns, so two of them can't both pass the same check.
@@ -571,6 +601,30 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     if (tokens > limits.tokens) return result("stopped", "This task used its token budget. Here is where it got to.", turn);
   }
   return result("stopped", "This task took too many steps and was stopped.", limits.turns);
+}
+
+/**
+ * One step, streamed: `onStep` hears this step's words so far as they're written (text blocks
+ * joined with a new line, as the finished reply joins them). A retried attempt starts again from
+ * nothing. Returns the whole message, the same as create would.
+ */
+async function streamStep(
+  deps: AgentDeps, params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+  options: { signal: AbortSignal; timeout: number }, onStep: (soFar: string) => void,
+): Promise<Anthropic.Beta.Messages.BetaMessage> {
+  const stream = deps.client.beta.messages.stream!(params, options);
+  let step = "";
+  let blocks = 0;
+  onStep(step);
+  stream.on("streamEvent", (event) => {
+    if (event.type === "content_block_start" && event.content_block.type === "text") {
+      if (blocks++ > 0) step += "\n";
+    } else if (event.type === "content_block_delta" && event.delta.type === "text_delta" && event.delta.text) {
+      step += event.delta.text;
+      onStep(step);
+    }
+  });
+  return await stream.finalMessage();
 }
 
 /** Tools that check the person's saved data and then add to it (memories, listings), run one at a

@@ -155,8 +155,7 @@ struct AssistantView: View {
                 talk?.end(sayingGoodbye: false)
                 model.speech.stop()
             }
-            // Back in the app: the calendar may have changed elsewhere, so freshen the widget.
-            if phase == .active { Task { await model.refreshWidget() } }
+            // Back in the app, the widget is freshened by CyberCompanionApp, not again here.
         }
         .sensoryFeedback(.start, trigger: voice.isListening) { _, listening in listening }
         .sensoryFeedback(.success, trigger: model.lastRun)
@@ -716,6 +715,9 @@ struct AssistantView: View {
         withAnimation { session.start(greet: greet) }
     }
 
+    /// The Settings switch "Hera speaks her replies", read for every reply.
+    private static var speaksReplies: Bool { UserDefaults.standard.object(forKey: HeraVoice.speakRepliesKey) as? Bool ?? true }
+
     /// The conversation, wired to this screen's mic and Hera's voice.
     private func talkSession() -> TalkSession {
         if let talk { return talk }
@@ -731,14 +733,17 @@ struct AssistantView: View {
             stopListening: { await voice.stop() },
             speak: { text, done in
                 // With Hera's voice off in Settings, the reply is shown and she listens straight away.
-                guard UserDefaults.standard.object(forKey: HeraVoice.speakRepliesKey) as? Bool ?? true else {
+                guard Self.speaksReplies else {
                     done()
                     return
                 }
                 model.speech.speak(text, then: done)
             },
+            beginReply: { done in model.speech.beginReply(silently: !Self.speaksReplies, then: done) },
+            continueReply: { sentence in model.speech.enqueue(sentence) },
+            endReply: { model.speech.endReply() },
             stopSpeaking: { model.speech.stop() },
-            send: { said, allowWebSearch in await model.talk(said, allowWebSearch: allowWebSearch) }
+            send: { said, allowWebSearch, onText in await model.talk(said, allowWebSearch: allowWebSearch, onText: onText) }
         ))
         talk = session
         return session

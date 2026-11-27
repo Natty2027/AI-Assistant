@@ -48,9 +48,12 @@ struct CyberCompanionApp: App {
                     switch phase {
                     case .active:
                         Task {
-                            await model.refreshWidget()
+                            // Side by side. At launch this joins the refresh refreshAll starts
+                            // rather than running a second one (see refreshWidget).
+                            async let widget: Void = model.refreshWidget()
                             // A scheduled post may have gone out while Hera was closed.
-                            await model.refreshScheduledPosts()
+                            async let posts: Void = model.refreshScheduledPosts()
+                            _ = await (widget, posts)
                         }
                         // A text shared to Hera from Messages while she was closed.
                         model.collectSharedText()

@@ -17,7 +17,7 @@ import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
 import { ActionError, ActionStore, sqlProposalSink } from "./agent/approvals.ts";
 import { isOAuthProvider } from "./agent/oauth.ts";
 import { challengeResponse } from "./agent/ebay.ts";
-import { RunJobs, sqlRunSink, type RunFailure } from "./agent/runs.ts";
+import { RunJobs, sqlRunSink, type ReportText, type RunFailure } from "./agent/runs.ts";
 import { Billing, BillingError } from "./billing.ts";
 
 const writeLimiter = createLimiter({ windowMs: 60_000, max: 20 });
@@ -167,6 +167,12 @@ export function checkMode(raw: unknown): AgentMode {
 export function waitSeconds(raw: string | null): number {
   const n = Number(raw);
   return raw && Number.isFinite(n) ? Math.min(25, Math.max(0, Math.floor(n))) : 0;
+}
+
+/** &after= on a run check: how many characters of the reply the app already has; null if absent. */
+export function afterLength(raw: string | null): number | null {
+  const n = Number(raw);
+  return raw && Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 /* ------------------------------ routes ------------------------------ */
@@ -368,7 +374,7 @@ export function buildRouter(): Router {
    * Checks a request to Hera and returns the work that answers it. Shared by /agent/run (waits for
    * the answer) and /agent/runs (answers later), so both apply the same rules and limits.
    */
-  async function prepareRun(userId: string, body: Record<string, any>): Promise<() => Promise<unknown>> {
+  async function prepareRun(userId: string, body: Record<string, any>): Promise<(report?: ReportText) => Promise<unknown>> {
     const request = typeof body.request === "string" ? body.request.trim() : "";
     if (!request || request.length > 4000) throw new HttpError(400, "Describe what you'd like, in up to 4000 characters.");
     const mode = checkMode(body.mode);
@@ -379,7 +385,7 @@ export function buildRouter(): Router {
     if (!agentRunLimiter.hit(userId)) throw new HttpError(429, "That's the limit of assistant runs for this hour. Try again later.");
     // This month's requests: counted now, refused when used up (only once BILLING is on).
     await billed(() => billing.useOne(userId));
-    return async () => {
+    return async (report) => {
       const out = await guarded(() => agent().run(userId, request, {
         mode, allowWebSearch: body.allow_web_search === true,
         // A photo goes on posts, posters and listings, in Posts, a launch or a conversation.
@@ -392,6 +398,8 @@ export function buildRouter(): Router {
         receivedText: body.received_text,
         // The person's clock, for "Friday at 9" and scheduled posts.
         localTime: body.local_time,
+        // Talk, from an app that asked for it: the reply so far, for the run's checks (see after).
+        onText: body.stream === true ? report : undefined,
       }));
       return { status: out.status, text: out.text, proposals: out.proposals, drafts: out.drafts, scheduleChanges: out.scheduleChanges, emailDrafts: out.emailDrafts, textDrafts: out.textDrafts, posterDrafts: out.posterDrafts, tainted: out.tainted, conversationId: out.conversationId };
     };
@@ -399,7 +407,7 @@ export function buildRouter(): Router {
 
   r.post("/agent/run", async (ctx) => {
     const userId = requireAuth(ctx);
-    return await (await prepareRun(userId, ctx.body))();
+    return await (await prepareRun(userId, { ...ctx.body, stream: false }))();
   });
 
   /** Starts a request in the background and returns its id; the app checks /agent/runs/:id. */
@@ -412,16 +420,22 @@ export function buildRouter(): Router {
   });
 
   /** With ?wait=<seconds> (up to 25), answers as soon as the run finishes instead of right away,
-   *  so the app hears the moment the answer is ready without checking every few seconds. */
+   *  so the app hears the moment the answer is ready without checking every few seconds.
+   *  With &after=<characters> as well (Talk), also as soon as the reply written so far is longer
+   *  than that, and a running run then says what it is (partial_text). Without after, as before. */
   r.get("/agent/runs/:id", async (ctx) => {
     const userId = requireAuth(ctx);
     assertUuid(ctx.params.id);
     const wait = waitSeconds(ctx.url.searchParams.get("wait"));
-    if (wait > 0) await runJobs.wait(userId, ctx.params.id, wait * 1000);
+    const after = afterLength(ctx.url.searchParams.get("after"));
+    if (wait > 0) await runJobs.wait(userId, ctx.params.id, wait * 1000, after ?? undefined);
     const state = await runJobs.find(userId, ctx.params.id);
     if (!state) throw new HttpError(404, "Hera lost track of that request, probably because the server restarted. Please send it again.", true, "run_lost");
     if (state.status === "failed") throw new HttpError(state.failure.status, state.failure.message, true, state.failure.code);
-    return state.status === "running" ? { status: "running" } : { status: "finished", result: state.result };
+    if (state.status === "finished") return { status: "finished", result: state.result };
+    // Only a run going on this server has its reply so far; one elsewhere (a deploy) just says running.
+    const partial = after === null ? null : runJobs.partial(userId, ctx.params.id);
+    return partial === null ? { status: "running" } : { status: "running", partial_text: partial };
   });
 
   /* ---- Hera Pro: the plan, this month's requests, and redeeming an App Store purchase ---- */

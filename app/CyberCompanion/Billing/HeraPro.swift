@@ -31,13 +31,14 @@ final class HeraPro {
         Task { await sync(client: client()) }
     }
 
-    /// Sends every current subscription to the server, then refreshes the plan.
+    /// Sends every current subscription to the server. Each one sent comes back with the plan as
+    /// it now stands; the plan itself is loaded at launch with everything else (AppModel.refreshAll),
+    /// so it isn't asked for a second time here.
     func sync(client: APIClient?) async {
         guard let client else { return }
         for await entitlement in Transaction.currentEntitlements {
             await handle(entitlement, client: client, refresh: false)
         }
-        await refresh(client: client)
     }
 
     func apply(_ latest: PlanStatus) { status = latest }

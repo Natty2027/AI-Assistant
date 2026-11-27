@@ -35,7 +35,28 @@ struct TodayWidgetData: Codable, Equatable, Sendable {
 extension AppModel {
     /// Refreshes the widget's copy of today. Never asks for calendar access: if it hasn't been
     /// given yet, the widget just shows the approvals count and how to turn the calendar on.
+    ///
+    /// Launch, coming back to the app and a refresh of the approvals can all ask at once. They
+    /// share one refresh: a request made while one is going waits for it, and one more runs after
+    /// it so the newest numbers (the approvals count, say) still land.
     func refreshWidget() async {
+        if let running = widgetRefresh {
+            widgetRefreshAgain = true
+            await running.value
+            return
+        }
+        let task = Task {
+            repeat {
+                widgetRefreshAgain = false
+                await refreshWidgetOnce()
+            } while widgetRefreshAgain
+            widgetRefresh = nil
+        }
+        widgetRefresh = task
+        await task.value
+    }
+
+    private func refreshWidgetOnce() async {
         let allowed = EKEventStore.authorizationStatus(for: .event) == .fullAccess
         let agenda = allowed ? (try? await schedule.today()) : nil
         TodayWidgetData(updated: .now, calendarAllowed: allowed,

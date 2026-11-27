@@ -19,7 +19,10 @@ export type RunState =
   | { status: "finished"; result: unknown }
   | { status: "failed"; failure: RunFailure };
 
-interface Job { userId: string; state: RunState; endedAt: number | null; waiters: Set<() => void> }
+interface Job { userId: string; state: RunState; endedAt: number | null; waiters: Set<() => void>; partial: string }
+
+/** What work is given, to report the reply so far as it's written (Talk streams it). */
+export type ReportText = (partial: string) => void;
 
 /** Where finished runs are kept, so their answers survive a restart. */
 export interface RunSink {
@@ -58,10 +61,11 @@ export class RunJobs {
     return [...this.jobs.values()].some((j) => j.userId === userId && j.state.status === "running");
   }
 
-  /** Starts `work` and returns the run's id at once. Callers check isRunning first. */
-  start(userId: string, work: () => Promise<unknown>): string {
+  /** Starts `work` and returns the run's id at once. Callers check isRunning first. `work` may
+   *  report the reply so far (see partial), so the app can show and speak it as it's written. */
+  start(userId: string, work: (report: ReportText) => Promise<unknown>): string {
     const id = randomUUID();
-    const job: Job = { userId, state: { status: "running" }, endedAt: null, waiters: new Set() };
+    const job: Job = { userId, state: { status: "running" }, endedAt: null, waiters: new Set(), partial: "" };
     this.jobs.set(id, job);
     // Saved as running too: during a deploy the new server answers the app's check-ins while this
     // one finishes the run, and it reads this to say "still working" rather than "lost".
@@ -73,7 +77,12 @@ export class RunJobs {
       job.waiters.clear();
       this.sink?.save(id, userId, state).catch((e) => console.error("[runs] couldn't save a result", e instanceof Error ? e.message : e));
     };
-    work().then(
+    const report: ReportText = (partial) => {
+      if (job.state.status !== "running" || partial === job.partial) return;
+      job.partial = partial;
+      for (const wake of job.waiters) wake();
+    };
+    work(report).then(
       (result) => end({ status: "finished", result }),
       (e) => end({ status: "failed", failure: this.describe(e) }),
     );
@@ -88,18 +97,34 @@ export class RunJobs {
   }
 
   /**
-   * Resolves as soon as the run is no longer running, or after `ms`, whichever comes first. At
+   * Resolves as soon as the run is no longer running, or after `ms`, whichever comes first. With
+   * `after` (how much of the reply the app already has), also as soon as there's more. At
    * once if it isn't this person's, isn't running, or belongs to another server process: the
    * caller then answers from find as usual.
    */
-  wait(userId: string, id: string, ms: number): Promise<void> {
+  wait(userId: string, id: string, ms: number, after?: number): Promise<void> {
     const job = this.jobs.get(id);
     if (!job || job.userId !== userId || job.state.status !== "running" || ms <= 0) return Promise.resolve();
+    // With `after`, the reply written so far counts too: wake once it's longer than the app has.
+    // It can also get shorter (a step that failed and was tried again): that's news as well.
+    if (after !== undefined && job.partial.length !== after) return Promise.resolve();
     return new Promise((resolve) => {
-      const wake = () => { clearTimeout(timer); job.waiters.delete(wake); resolve(); };
-      const timer = setTimeout(wake, ms);
+      const done = () => { clearTimeout(timer); job.waiters.delete(wake); resolve(); };
+      const wake = () => {
+        // New words only matter to a check that asked for them (after); the end matters to all.
+        if (job.state.status === "running" && (after === undefined || job.partial.length === after)) return;
+        done();
+      };
+      const timer = setTimeout(done, ms);
       job.waiters.add(wake);
     });
+  }
+
+  /** The reply written so far, while a run that reports it is going on this server; null if
+   *  it isn't this person's, has ended, or runs elsewhere. */
+  partial(userId: string, id: string): string | null {
+    const job = this.jobs.get(id);
+    return job && job.userId === userId && job.state.status === "running" ? job.partial : null;
   }
 
   /** Like get, but also finds answers saved before a restart. */

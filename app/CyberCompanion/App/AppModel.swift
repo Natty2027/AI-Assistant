@@ -56,6 +56,9 @@ final class AppModel {
     var remindedEmail: EmailDraft?
     /// Lasting facts Hera remembers, shown in Settings.
     var memories: [Memory] = []
+    /// The widget refresh in progress, and whether another was asked for meanwhile (refreshWidget).
+    @ObservationIgnored var widgetRefresh: Task<Void, Never>?
+    @ObservationIgnored var widgetRefreshAgain = false
 
     /// True when the next message continues the current task in this mode.
     func isContinuing(_ mode: CreateMode) -> Bool { conversation?.mode == mode && lastRun != nil }
@@ -218,15 +221,20 @@ final class AppModel {
 
     /* ---------------- Talk ---------------- */
 
-    /// A new spoken conversation: it doesn't continue the last one.
+    /// A new spoken conversation: it doesn't continue the last one. While Hera greets or the
+    /// person starts speaking, her voice loads and the connection to the server opens, so the
+    /// first answer isn't kept waiting for either.
     func startTalk() {
         talkConversationID = nil
+        if UserDefaults.standard.object(forKey: HeraVoice.speakRepliesKey) as? Bool ?? true { speech.prepare() }
+        if let client { Task { await client.warmUp() } }
     }
 
     /// One spoken turn in Talk: what the person said, and Hera's answer, in the same conversation
     /// as the turns before. Never throws: a problem comes back as words for Hera to say. It
-    /// doesn't touch the composer's result (`lastRun`), so the two never mix.
-    func talk(_ said: String, allowWebSearch: Bool) async -> TalkReply {
+    /// doesn't touch the composer's result (`lastRun`), so the two never mix. `onText` hears the
+    /// answer so far as Hera writes it (from servers that send it), so she can start speaking.
+    func talk(_ said: String, allowWebSearch: Bool, onText: (@MainActor (String) -> Void)? = nil) async -> TalkReply {
         guard let client else { return .stop("I can't reach Hera until you sign in. Open Settings to sign in, then talk to me again.") }
         if aiConsent == false { return .stop("First, tap Allow AI on this screen, then talk to me again.") }
         guard connectivity.isOnline else { return .problem("I can't reach Hera right now. Check your internet connection, then try again.") }
@@ -237,14 +245,20 @@ final class AppModel {
             if TalkFlow.mentionsSchedule(said) { snapshot = try? await schedule.snapshot() }
             else { snapshot = await schedule.snapshotIfAllowed() }
             let shared = receivedText
+            var streamed: (@Sendable (String) async -> Void)?
+            if let onText { streamed = { @Sendable text in await onText(text) } }
             let run = try await client.runAssistant(request: said, mode: .talk, allowWebSearch: allowWebSearch,
-                                                    schedule: snapshot, conversationID: talkConversationID, receivedText: shared)
+                                                    schedule: snapshot, conversationID: talkConversationID, receivedText: shared,
+                                                    onText: streamed)
             if shared != nil { receivedText = nil }
             talkConversationID = run.conversationId
             Task { await pro.refresh(client: client) }
+            // In the background, so Hera answers (and listens again) without waiting for this.
             if !run.proposals.isEmpty {
-                if let latest = try? await client.proposals() { proposals = latest }
-                await syncLiveActivities()
+                Task {
+                    if let latest = try? await client.proposals() { proposals = latest }
+                    await syncLiveActivities()
+                }
             }
             return .answer(run)
         } catch is CancellationError {
@@ -362,8 +376,10 @@ final class AppModel {
         // The widget's calendar part doesn't need the server, so it's refreshed even when signed out.
         guard let client else { await refreshWidget(); return }
         await perform { proposals = try await client.proposals() }
-        await syncLiveActivities()
-        await refreshWidget()
+        // Independent of each other: the Lock Screen and the widget update side by side.
+        async let activities: Void = syncLiveActivities()
+        async let widget: Void = refreshWidget()
+        _ = await (activities, widget)
     }
 
     /// Brings the Lock Screen's scheduled posts in line with the proposals. iPhone and iPad only.

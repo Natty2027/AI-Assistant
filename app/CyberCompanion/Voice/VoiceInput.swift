@@ -82,22 +82,24 @@ final class VoiceInput {
     }
 
     /// Hands-free listening for the spoken conversation: starts the mic, then stops on its own
-    /// once the person has said something and gone quiet for about a second and a half (or after
-    /// 8 seconds if they never start). Tapping the orb ends it early. Returns what was heard.
+    /// once the person has said something and gone quiet (see EndOfSpeech for how long), or after
+    /// 8 seconds if they never start. Tapping the orb ends it early. Returns what was heard.
     func listenUntilSilence() async -> String {
         await start()
         guard isListening else { return "" }
         let began = ContinuousClock.now
         var lastSound = began
-        var lastTranscript = transcript
+        var lastWords = EndOfSpeech.words(transcript)
         while isListening {
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(100))
             let now = ContinuousClock.now
-            // New words or a voice-level signal both count as still talking.
-            if level > 0.3 || transcript != lastTranscript { lastSound = now }
-            lastTranscript = transcript
-            let heardWords = !transcript.trimmingCharacters(in: .whitespaces).isEmpty
-            if heardWords && now - lastSound > .milliseconds(1500) { break }
+            // New words or a voice-level signal both count as still talking. The recognizer
+            // settling words it already had (punctuation, capitals) doesn't.
+            let words = EndOfSpeech.words(transcript)
+            if level > 0.3 || words != lastWords { lastSound = now }
+            lastWords = words
+            let heardWords = !words.isEmpty
+            if heardWords && now - lastSound > EndOfSpeech.quietNeeded(finalized: finalizedText, volatile: volatileText) { break }
             if !heardWords && now - began > .seconds(8) { break }
         }
         await stop()
@@ -251,6 +253,38 @@ final class VoiceInput {
         analyzer = nil
         resultsTask?.cancel()
         resultsTask = nil
+    }
+}
+
+/// How long a pause means the person has finished speaking. Short once the recognizer has
+/// settled every word and the sentence sounds finished; longer while words are still being
+/// worked out or the last word leaves the thought hanging ("and", "um", a trailing comma), so a
+/// pause to think isn't taken as the end.
+enum EndOfSpeech {
+    static let settled: Duration = .milliseconds(800)
+    static let unsettled: Duration = .milliseconds(1400)
+
+    /// Words after which people usually carry on.
+    private static let carryOn: Set<String> = [
+        "and", "but", "or", "so", "um", "uh", "er", "erm", "hmm", "because", "cause",
+        "the", "a", "an", "to", "with", "if",
+    ]
+
+    static func quietNeeded(finalized: String, volatile: String) -> Duration {
+        // Words still being recognized: more may be on the way.
+        guard volatile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return unsettled }
+        let said = finalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = said.last else { return unsettled }
+        if last == "," || last == "-" || last == "\u{2014}" || last == "\u{2026}" { return unsettled }
+        if let lastWord = words(said).last, carryOn.contains(lastWord) { return unsettled }
+        return settled
+    }
+
+    /// Lower-case words without punctuation, to tell new words from the same ones settled.
+    static func words(_ text: String) -> [String] {
+        text.lowercased()
+            .split { !($0.isLetter || $0.isNumber || $0 == "'") }
+            .map(String.init)
     }
 }
 

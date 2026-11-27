@@ -387,7 +387,7 @@ export class AgentService {
    * (an answer to her question, or a follow-up like "make it shorter"); otherwise it starts a
    * new one. Returns the id to send with the next reply, or null if the task can't continue.
    */
-  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown; receivedText?: unknown; localTime?: unknown }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
+  async run(userId: string, request: string, opts: { mode: AgentMode; allowWebSearch?: boolean; photoId?: unknown; schedule?: unknown; conversationId?: unknown; receivedText?: unknown; localTime?: unknown; onText?: (soFar: string) => void }): Promise<AgentResult & { proposals: ProposalView[]; conversationId: string | null }> {
     if (!this.d.client) throw new ActionError("ai_unavailable", "The assistant needs the AI key, which isn't set on this server.");
     let schedule: ScheduleSnapshot | undefined;
     // Schedule needs the calendar; a launch or a conversation uses it when the person allowed access
@@ -415,6 +415,8 @@ export class AgentService {
       receivedText: typeof opts.receivedText === "string" && opts.receivedText.trim() ? opts.receivedText.trim().slice(0, 4000) : null,
       localTime: readLocalTime(opts.localTime),
       remember: async (fact) => (await this.memory.remember(userId, fact)).message,
+      // Only Talk speaks its reply as it's written; every other mode answers all at once.
+      onText: opts.mode === "talk" ? opts.onText : undefined,
     }, request, resume);
     // A conversation that expired or was never this person's starts fresh under a new id.
     const conversationId = await this.memory.saveConversation(userId, resume ? priorId : null, opts.mode, out.state);

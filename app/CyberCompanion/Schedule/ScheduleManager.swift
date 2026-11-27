@@ -14,7 +14,9 @@ final class ScheduleManager {
     /// How far ahead Hera can see. Long enough for "next week" and "before the end of the month".
     nonisolated static let daysAhead = 31
 
-    private let store = EKEventStore()
+    /// Made the first time it's needed, not at launch: Apple notes a store takes a while to set
+    /// up, and the app is created before its first screen is drawn.
+    private lazy var store = EKEventStore()
 
     struct ScheduleError: LocalizedError {
         let message: String
@@ -54,18 +56,20 @@ final class ScheduleManager {
         let names = Self.displayNames(for: eventCalendars)
         let defaultCalendar = store.defaultCalendarForNewEvents
 
-        let events = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: nil))
-            .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
-            .prefix(400)
-            .compactMap { e -> ScheduleSnapshot.Event? in
-                // EventKit declares these as possibly missing; skip any event that lacks them
-                // rather than crash on it.
-                guard let id = Self.occurrenceID(e), let startDate = e.startDate, let endDate = e.endDate,
-                      let eventCalendar = e.calendar else { return nil }
-                return .init(id: id, title: String((e.title ?? "").prefix(300)), start: Self.format(startDate), end: Self.format(endDate),
-                             allDay: e.isAllDay, calendar: String((names[eventCalendar.calendarIdentifier] ?? eventCalendar.title).prefix(200)),
-                             location: e.location.map { String($0.prefix(300)) })
-            }
+        let events = await searchEvents(from: start, to: end) { found in
+            found
+                .sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
+                .prefix(400)
+                .compactMap { e -> ScheduleSnapshot.Event? in
+                    // EventKit declares these as possibly missing; skip any event that lacks them
+                    // rather than crash on it.
+                    guard let id = Self.occurrenceID(e), let startDate = e.startDate, let endDate = e.endDate,
+                          let eventCalendar = e.calendar else { return nil }
+                    return .init(id: id, title: String((e.title ?? "").prefix(300)), start: Self.format(startDate), end: Self.format(endDate),
+                                 allDay: e.isAllDay, calendar: String((names[eventCalendar.calendarIdentifier] ?? eventCalendar.title).prefix(200)),
+                                 location: e.location.map { String($0.prefix(300)) })
+                }
+        }
 
         var reminders: [ScheduleSnapshot.Reminder] = []
         if remindersAllowed {
@@ -103,12 +107,14 @@ final class ScheduleManager {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: now)
         let end = calendar.date(byAdding: .day, value: 1, to: start) ?? now
-        let events = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: nil))
-            .compactMap { e -> DayAgenda.Event? in
-                guard let s = e.startDate, let f = e.endDate else { return nil }
-                return .init(title: e.title ?? "Untitled", start: s, end: f, allDay: e.isAllDay)
-            }
-            .sorted { $0.start < $1.start }
+        let events = await searchEvents(from: start, to: end) { found in
+            found
+                .compactMap { e -> DayAgenda.Event? in
+                    guard let s = e.startDate, let f = e.endDate else { return nil }
+                    return .init(title: e.title ?? "Untitled", start: s, end: f, allDay: e.isAllDay)
+                }
+                .sorted { $0.start < $1.start }
+        }
         var reminders: [DayAgenda.Reminder] = []
         if remindersAllowed {
             let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: end, calendars: nil)
@@ -127,16 +133,32 @@ final class ScheduleManager {
 
     /// Timed events starting in the next `days` days, for event reminders. Never asks for access:
     /// this runs in the background too, where a permission prompt can't appear.
-    func upcoming(days: Int, now: Date = .now) -> [UpcomingEvent] {
+    func upcoming(days: Int, now: Date = .now) async -> [UpcomingEvent] {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess,
               let end = Calendar.current.date(byAdding: .day, value: days, to: now) else { return [] }
-        return store.events(matching: store.predicateForEvents(withStart: now, end: end, calendars: nil))
-            .compactMap { e -> UpcomingEvent? in
-                guard !e.isAllDay, let id = Self.occurrenceID(e), let start = e.startDate else { return nil }
-                return UpcomingEvent(id: id, title: e.title ?? "", start: start, location: e.location)
-            }
-            .sorted { $0.start < $1.start }
+        return await searchEvents(from: now, to: end) { found in
+            found
+                .compactMap { e -> UpcomingEvent? in
+                    guard !e.isAllDay, let id = Self.occurrenceID(e), let start = e.startDate else { return nil }
+                    return UpcomingEvent(id: id, title: e.title ?? "", start: start, location: e.location)
+                }
+                .sorted { $0.start < $1.start }
+        }
     }
+
+    /// Searches the calendar off the main thread, as Apple's EventKit header asks: the search is
+    /// synchronous and a month of events across several accounts can take a noticeable moment.
+    /// Only plain values come back; the EKEvent objects stay on the thread that read them.
+    private func searchEvents<T: Sendable>(from start: Date, to end: Date, _ read: @escaping @Sendable ([EKEvent]) -> T) async -> T {
+        let store = SharedStore(store: store)
+        return await Task.detached(priority: .userInitiated) {
+            read(store.store.events(matching: store.store.predicateForEvents(withStart: start, end: end, calendars: nil)))
+        }.value
+    }
+
+    /// The store, handed to the search. EKEventStore is documented as safe to search from another
+    /// thread; it isn't marked Sendable, so this says so for it.
+    private struct SharedStore: @unchecked Sendable { let store: EKEventStore }
 
     /// Calendar names as Hera sees them. Two accounts can both have a calendar called "Calendar",
     /// so repeated names get their account added: "Calendar (Gmail)".
@@ -149,7 +171,7 @@ final class ScheduleManager {
 
     /// A repeating event shares one identifier across all its occurrences, so each occurrence is
     /// named by the event and the date it falls on. Changes then touch only that occurrence.
-    private static func occurrenceID(_ event: EKEvent) -> String? {
+    nonisolated private static func occurrenceID(_ event: EKEvent) -> String? {
         guard let id = event.eventIdentifier, let date: Date = event.occurrenceDate ?? event.startDate else { return nil }
         return "\(id)|\(Int(date.timeIntervalSince1970))"
     }

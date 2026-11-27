@@ -108,6 +108,41 @@ struct NetworkingTests {
         }
     }
 
+    /// Talk asks for the answer as it's written: each check says how much the app has, every new
+    /// piece is passed on and asked after again at once, and the body asks the server to stream.
+    @Test func talkHearsTheAnswerAsItsWritten() async throws {
+        var checks = 0
+        StubProtocol.handler = { request in
+            if request.httpMethod == "POST" { return (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-000000000009"}"#) }
+            checks += 1
+            switch checks {
+            case 1: return (200, #"{"status":"running","partial_text":"Hi! It’s"}"#)
+            case 2: return (200, #"{"status":"running","partial_text":"Hi! It’s sunny."}"#)
+            default: return (200, #"{"status":"finished","result":{"status":"done","text":"Hi! It’s sunny.","tainted":false,"drafts":[],"proposals":[]}}"#)
+            }
+        }
+        let heard = HeardText()
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        let run = try await client.runAssistant(request: "Weather?", mode: .talk, allowWebSearch: false, onText: { await heard.add($0) })
+        #expect(run.text == "Hi! It\u{2019}s sunny.")
+        #expect(await heard.all == ["Hi! It\u{2019}s", "Hi! It\u{2019}s sunny."])
+        let body = try #require(StubProtocol.bodies.first.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        #expect(body["stream"] as? Bool == true)
+        // Counted in UTF-16, as the server counts: the curly apostrophe is one.
+        #expect(StubProtocol.requests.dropFirst().map { $0.url?.query() } == ["wait=20&after=0", "wait=20&after=8", "wait=20&after=15"])
+    }
+
+    @Test func otherRequestsDontAskForTheAnswerAsItsWritten() async throws {
+        StubProtocol.handler = { request in
+            request.httpMethod == "POST" ? (200, #"{"run_id":"6f1c2d3e-0000-4000-8000-00000000000a"}"#)
+                : (200, #"{"status":"finished","result":{"status":"done","text":"Done.","tainted":false,"drafts":[],"proposals":[]}}"#)
+        }
+        let client = APIClient(baseURL: URL(string: "https://api.test")!, tokenProvider: { "t" }, session: StubProtocol.session, sleep: { _ in })
+        _ = try await client.runAssistant(request: "Posts", mode: .posts, allowWebSearch: false)
+        let body = try #require(StubProtocol.bodies.first.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        #expect(body["stream"] == nil)
+    }
+
     /// Each check asks the server to hold on until the run is done, so a finished run is
     /// answered on the first check, with no waiting in between.
     @Test func aRunThatFinishesWhileWaitingIsAnsweredWithoutSleeping() async throws {
@@ -252,4 +287,10 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         }
         return data
     }
+}
+
+/// Collects what a streaming check passed on.
+private actor HeardText {
+    private(set) var all: [String] = []
+    func add(_ text: String) { all.append(text) }
 }

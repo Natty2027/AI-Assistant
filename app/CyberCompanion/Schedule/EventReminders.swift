@@ -157,7 +157,7 @@ final class EventReminders {
         }
         status = .on
 
-        let plans = EventReminderPlanner.plan(schedule.upcoming(days: Self.daysAhead), leadMinutes: Self.leadMinutes,
+        let plans = EventReminderPlanner.plan(await schedule.upcoming(days: Self.daysAhead), leadMinutes: Self.leadMinutes,
                                               limit: Self.maxReminders)
         let speaks = Self.speaks && HeraVoice.isAvailable
         let wanted = Set(plans.map(\.id))
