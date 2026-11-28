@@ -186,3 +186,20 @@ test("a start sent again with the same client key gets the run already going, no
   assert.equal(jobs.findByClientKey("u1", "key-2"), null);
   assert.equal(jobs.findByClientKey("someone-else", "key-1"), null, "only the person's own runs");
 });
+
+test("if streaming itself fails, the same step is asked for without streaming and the turn is still answered", async () => {
+  const creates: any[] = [];
+  const client = { beta: { messages: {
+    create: async (params: any) => { creates.push(params); return msg([say("I'm doing well, thanks for asking!")], "end_turn"); },
+    stream: () => ({
+      on() { return this; },
+      async finalMessage() { throw Object.assign(new Error("400 invalid_request_error"), { status: 400 }); },
+    }),
+  } } };
+  const seen: string[] = [];
+  const out = await runAgent(deps(client, (s) => seen.push(s)), "Hey Hera, how are you?");
+  assert.equal(out.status, "done");
+  assert.equal(out.text, "I'm doing well, thanks for asking!");
+  assert.equal(creates.length, 1, "asked once the ordinary way");
+  assert.equal(seen.at(-1), "I'm doing well, thanks for asking!");
+});

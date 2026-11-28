@@ -546,10 +546,23 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
       messages: withCacheMarker(messages),
     };
     // A transient failure on one turn is retried rather than throwing away the turns before it.
-    const res = await withAiRetry((signal) => streaming
-      ? streamStep(deps, params, { signal, timeout: STEP_TIMEOUT_MS.sdk }, (step) => deps.onText!(joined(saidBefore, step.trim())))
-      : deps.client.beta.messages.create(params, { signal, timeout: STEP_TIMEOUT_MS.sdk }),
-    { sleep: deps.sleep, attemptTimeoutMs: STEP_TIMEOUT_MS.attempt });
+    const create = () => withAiRetry((signal) => deps.client.beta.messages.create(params, { signal, timeout: STEP_TIMEOUT_MS.sdk }),
+      { sleep: deps.sleep, attemptTimeoutMs: STEP_TIMEOUT_MS.attempt });
+    let res: Anthropic.Beta.Messages.BetaMessage;
+    if (streaming) {
+      try {
+        res = await withAiRetry((signal) => streamStep(deps, params, { signal, timeout: STEP_TIMEOUT_MS.sdk }, (step) => deps.onText!(joined(saidBefore, step.trim()))),
+          { sleep: deps.sleep, attemptTimeoutMs: STEP_TIMEOUT_MS.attempt });
+      } catch (e) {
+        // Streaming is only a way to speak sooner: if it fails, the same step is asked for the
+        // ordinary way, so the turn is answered (just a little later) instead of failing.
+        console.error("[talk] streaming failed, asking without streaming:", describeAiError(e));
+        deps.onText!(saidBefore);
+        res = await create();
+      }
+    } else {
+      res = await create();
+    }
     tokens += (res.usage?.input_tokens ?? 0) + (res.usage?.output_tokens ?? 0);
     const text = res.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
     if (streaming) deps.onText!(joined(saidBefore, text));
@@ -601,6 +614,16 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     if (tokens > limits.tokens) return result("stopped", "This task used its token budget. Here is where it got to.", turn);
   }
   return result("stopped", "This task took too many steps and was stopped.", limits.turns);
+}
+
+/** An AI failure in one line for the server log: its class, HTTP status, API error type and
+ *  message (the API's messages describe the request's settings, never what the person wrote). */
+export function describeAiError(e: unknown): string {
+  if (!(e instanceof Error)) return "unknown error";
+  const err = e as Error & { status?: number; error?: { error?: { type?: string; message?: string } }; requestID?: string };
+  const api = err.error?.error;
+  return [err.name, err.status, api?.type, (api?.message ?? err.message).slice(0, 300), err.requestID && `request ${err.requestID}`]
+    .filter(Boolean).join(" | ");
 }
 
 /**

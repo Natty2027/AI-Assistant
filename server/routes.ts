@@ -13,7 +13,7 @@ import { createLimiter } from "./rateLimit.ts";
 import { assertUuid, ProviderError } from "./shared.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentService } from "./agent/service.ts";
-import { AGENT_MODES, type AgentMode } from "./agent/loop.ts";
+import { AGENT_MODES, describeAiError, type AgentMode } from "./agent/loop.ts";
 import { ActionError, ActionStore, sqlProposalSink } from "./agent/approvals.ts";
 import { isOAuthProvider } from "./agent/oauth.ts";
 import { challengeResponse } from "./agent/ebay.ts";
@@ -75,7 +75,7 @@ const guarded = <T>(fn: () => Promise<T> | T): Promise<T> => agentReady.then(fn)
 /** What the app is told when a background run fails: the same answers as a direct request. */
 function runFailure(e: unknown): RunFailure {
   if (e instanceof HttpError && e.expose) return { status: e.status, message: e.message, code: e.code };
-  console.error("[run failed]", e instanceof Error ? `${e.name}: ${e.message.slice(0, 300)}` : "unknown error");
+  console.error("[run failed]", describeAiError(e), e instanceof Error && e.stack ? e.stack.split("\n").slice(1, 4).join(" <- ") : "");
   return { status: 500, message: "Something went wrong on our side. Please try again.", code: "run_failed" };
 }
 const billing = new Billing(sqlRun, config.billing);
