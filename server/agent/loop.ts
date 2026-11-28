@@ -109,7 +109,7 @@ export type AgentMode = (typeof AGENT_MODES)[number];
 /** Listing items for sale on eBay. Offered only when the server is set up for eBay. */
 const SELLING_TOOLS = ["ebay_categories", "ebay_item_specifics", "propose_listing"] as const;
 
-const MODE_TOOLS: Record<AgentMode, ReadonlySet<string>> = {
+export const MODE_TOOLS: Record<AgentMode, ReadonlySet<string>> = {
   // "Studio" in the app: posts, posters and flyers, and eBay listings.
   posts: new Set(["draft_post", "write_post", "propose_post", "design_poster", "ask_user", "remember", "draft_email", "draft_text", ...SELLING_TOOLS]),
   // The person's calendar and reminders, as a snapshot from their device. Changes are only proposed.
@@ -224,7 +224,7 @@ const obj = (properties: Record<string, unknown>) => ({
   type: "object" as const, properties, required: Object.keys(properties), additionalProperties: false,
 });
 
-const TOOLS = [
+export const TOOLS = [
   { name: "draft_post", description: "Save a draft social post for one of the person's connected accounts. Returns a draft id and any problems found.", strict: true,
     input_schema: obj({
       connection_id: { type: "string", description: "Id of one of the person's connected social accounts" },
@@ -508,6 +508,7 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
   const tools: Anthropic.Beta.Messages.BetaToolUnion[] = TOOLS.filter((t) => MODE_TOOLS[deps.mode].has(t.name)
     && (deps.marketplace || !(SELLING_TOOLS as readonly string[]).includes(t.name)));
   if (deps.allowWebSearch) tools.push({ type: "web_search_20260209", name: "web_search", max_uses: 5 });
+  strictWithinLimit(tools);
   // Every turn resends the same tools and instructions. A cache marker on the last tool lets
   // Anthropic reuse them (tools come first, then the system prompt) instead of reading them again.
   const cachedTools = tools.map((t, i) => (i === tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t)) as Anthropic.Beta.Messages.BetaToolUnion[];
@@ -614,6 +615,41 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     if (tokens > limits.tokens) return result("stopped", "This task used its token budget. Here is where it got to.", turn);
   }
   return result("stopped", "This task took too many steps and was stopped.", limits.turns);
+}
+
+/** The API compiles strict tools' schemas together and refuses a request whose strict tools have
+ *  more than 16 parameters that can take more than one type (nullable or anyOf). Talk and a
+ *  launch offer every tool, which is more than that. */
+export const STRICT_UNION_LIMIT = 16;
+
+/** How many parameters in a schema can take more than one type. Counts generously (every nested
+ *  anyOf branch too), so staying under it here stays under the API's own count. */
+export function unionParameters(schema: unknown): number {
+  let n = 0;
+  const walk = (s: any) => {
+    if (!s || typeof s !== "object") return;
+    if (Array.isArray(s.type) || s.anyOf || s.oneOf) n++;
+    for (const v of Object.values(s.properties ?? {})) walk(v);
+    if (s.items) walk(s.items);
+    for (const v of [...(s.anyOf ?? []), ...(s.oneOf ?? [])]) walk(v);
+  };
+  walk(schema);
+  return n;
+}
+
+/** Keeps tools strict, in the order offered, while their union parameters fit the API's limit;
+ *  the rest are offered without strict. Their input is still checked before anything runs
+ *  (runTool validates every call against the tool's schema), so nothing unchecked gets through. */
+function strictWithinLimit(tools: Anthropic.Beta.Messages.BetaToolUnion[]): void {
+  let used = 0;
+  for (const [i, t] of tools.entries()) {
+    const tool = t as { strict?: boolean; input_schema?: unknown };
+    if (!tool.strict) continue;
+    const cost = unionParameters(tool.input_schema);
+    if (used + cost <= STRICT_UNION_LIMIT) { used += cost; continue; }
+    const { strict: _strict, ...rest } = tool;
+    tools[i] = rest as Anthropic.Beta.Messages.BetaToolUnion;
+  }
 }
 
 /** An AI failure in one line for the server log: its class, HTTP status, API error type and

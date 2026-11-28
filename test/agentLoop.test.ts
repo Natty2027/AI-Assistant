@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runAgent, AGENT_MODEL } from "../server/agent/loop.ts";
+import { runAgent, AGENT_MODEL, STRICT_UNION_LIMIT, unionParameters } from "../server/agent/loop.ts";
 import { ActionStore } from "../server/agent/approvals.ts";
 import { makeCtx } from "./helpers/agentCtx.ts";
 
@@ -43,7 +43,11 @@ function assertNoActingTools(req: any) {
   // draft_email and draft_text only write words the person sends from their own email or Messages
   // app (like write_post for sharing). Anything that could send them, or ads or purchases, stays out.
   assert.ok(!names.some((x: string) => /email|sms|text|ads|domain/.test(x) && x !== "draft_email" && x !== "draft_text"), "the agent cannot send email or texts, or propose ads or purchases");
-  assert.ok(req.tools.every((t: any) => t.strict === true), "every tool is strict");
+  // Strict where the API allows: past its limit on union-typed parameters (Talk and a launch
+  // offer every tool) the rest go without strict, and their input is validated before running.
+  const all = req.tools.reduce((n: number, t: any) => n + unionParameters(t.input_schema), 0);
+  if (all <= STRICT_UNION_LIMIT) assert.ok(req.tools.every((t: any) => t.strict === true), "every tool is strict");
+  else assert.ok(req.tools.filter((t: any) => t.strict).reduce((n: number, t: any) => n + unionParameters(t.input_schema), 0) <= STRICT_UNION_LIMIT, "strict tools fit the API's limit");
 }
 
 test("a posts run writes and proposes posts and ends with a proposal the user must approve: nothing is posted", async () => {
