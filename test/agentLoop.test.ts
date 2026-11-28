@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runAgent, AGENT_MODEL, STRICT_UNION_LIMIT, unionParameters } from "../server/agent/loop.ts";
+import { runAgent, AGENT_MODEL, TALK_MODEL, STRICT_UNION_LIMIT, unionParameters } from "../server/agent/loop.ts";
 import { ActionStore } from "../server/agent/approvals.ts";
 import { makeCtx } from "./helpers/agentCtx.ts";
 
@@ -274,7 +274,7 @@ test("write_post only accepts known platforms", async () => {
   assert.match(lastResults(calls[1])[0].content, /INVALID_INPUT/);
 });
 
-test("every mode uses the fast model at medium effort, and Talk at low effort for quick spoken replies", async () => {
+test("every mode uses the fast model at medium effort, and Talk the fastest model without a thinking step", async () => {
   const { MODEL_FOR } = await import("../server/agent/loop.ts");
   const seen: Record<string, any> = {};
   for (const mode of ["launch", "posts", "schedule", "talk"] as const) {
@@ -288,11 +288,17 @@ test("every mode uses the fast model at medium effort, and Talk at low effort fo
   for (const mode of ["launch", "posts", "schedule"] as const) {
     assert.equal(seen[mode].model, AGENT_MODEL, mode);
     assert.equal(seen[mode].output_config.effort, "medium", mode);
-    assert.deepEqual(MODEL_FOR[mode], { model: AGENT_MODEL, effort: "medium" });
+    assert.deepEqual(MODEL_FOR[mode], { model: AGENT_MODEL, effort: "medium", think: true });
+    assert.deepEqual(seen[mode].thinking, { type: "adaptive" }, mode);
+    assert.equal(seen[mode].fallbacks, "default", mode);
   }
-  assert.equal(seen.talk.model, AGENT_MODEL);
+  assert.equal(seen.talk.model, TALK_MODEL);
+  assert.equal(TALK_MODEL, "claude-haiku-5-5");
   assert.equal(seen.talk.output_config.effort, "low");
-  assert.deepEqual(MODEL_FOR.talk, { model: AGENT_MODEL, effort: "low" });
+  assert.deepEqual(seen.talk.thinking, { type: "disabled" }, "no thinking step before a spoken reply");
+  // Haiku has no server-side fallback: sending one would be refused.
+  assert.equal(seen.talk.fallbacks, undefined);
+  assert.equal(seen.talk.betas, undefined);
   assert.ok(seen.talk.max_tokens < seen.posts.max_tokens, "a spoken reply gets a smaller output budget");
 });
 
@@ -321,7 +327,8 @@ test("talk with web search allowed can look things up, and says so in its instru
   const { deps } = await setup({ mode: "talk", allowWebSearch: true });
   const { client, calls } = scripted([() => msg([say("It's sunny today.")], "end_turn")]);
   await runAgent(deps(client), "What's the weather like?");
-  assert.ok(calls[0].tools.some((t: any) => t.type === "web_search_20260209"));
+  // Haiku uses the basic web search tool.
+  assert.ok(calls[0].tools.some((t: any) => t.type === "web_search_20250305"));
   assert.match(calls[0].system, /look it up with web search/);
 });
 

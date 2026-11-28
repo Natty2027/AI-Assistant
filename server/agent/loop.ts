@@ -37,14 +37,20 @@ type ToolUse = Anthropic.Beta.Messages.BetaToolUseBlock;
 /** The model every request uses. Everything Hera writes now is short (posts, posters, listings,
  *  emails, texts, calendar changes), so the fast model answers sooner and is plenty capable. */
 export const AGENT_MODEL = "claude-sonnet-5-5";
+/** Talk: a spoken conversation, where how soon Hera starts answering matters most. */
+export const TALK_MODEL = "claude-haiku-5-5";
+/** Haiku has no server-side fallback for refusals, and uses the basic web search tool. */
+const isHaiku = (model: string) => model.startsWith("claude-haiku");
 /** Which model and effort each kind of request uses, kept per mode so one can be tuned without
  *  touching the loop. A conversation keeps its mode, so it never switches model. Talk is spoken
  *  back and forth, so it answers at low effort: a reply that's quick matters more there. */
-export const MODEL_FOR: Record<AgentMode, { model: string; effort: "high" | "medium" | "low" }> = {
-  posts: { model: AGENT_MODEL, effort: "medium" },
-  schedule: { model: AGENT_MODEL, effort: "medium" },
-  launch: { model: AGENT_MODEL, effort: "medium" },
-  talk: { model: AGENT_MODEL, effort: "low" },
+export const MODEL_FOR: Record<AgentMode, { model: string; effort: "high" | "medium" | "low"; think: boolean }> = {
+  posts: { model: AGENT_MODEL, effort: "medium", think: true },
+  schedule: { model: AGENT_MODEL, effort: "medium", think: true },
+  launch: { model: AGENT_MODEL, effort: "medium", think: true },
+  // Spoken replies need to start in a second or two: the fastest model, without a thinking step
+  // first. Its replies are a few sentences and its drafts are short, which it handles well.
+  talk: { model: TALK_MODEL, effort: "low", think: false },
 };
 /** Steps and tokens per request. A launch does the work of several requests in one, so it gets
  *  more; one spoken turn in Talk needs few. */
@@ -507,7 +513,11 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
   const personWords = [...(resume?.personWords ?? (resume ? plainUserText(resume.messages) : [])), request];
   const tools: Anthropic.Beta.Messages.BetaToolUnion[] = TOOLS.filter((t) => MODE_TOOLS[deps.mode].has(t.name)
     && (deps.marketplace || !(SELLING_TOOLS as readonly string[]).includes(t.name)));
-  if (deps.allowWebSearch) tools.push({ type: "web_search_20260209", name: "web_search", max_uses: 5 });
+  if (deps.allowWebSearch) {
+    tools.push(isHaiku(MODEL_FOR[deps.mode].model)
+      ? { type: "web_search_20250305", name: "web_search", max_uses: 5 }
+      : { type: "web_search_20260209", name: "web_search", max_uses: 5 });
+  }
   strictWithinLimit(tools);
   // Every turn resends the same tools and instructions. A cache marker on the last tool lets
   // Anthropic reuse them (tools come first, then the system prompt) instead of reading them again.
@@ -536,11 +546,11 @@ export async function runAgent(deps: AgentDeps, request: string, resume?: Conver
     const params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming = {
       model: MODEL_FOR[deps.mode].model,
       max_tokens: OUTPUT_TOKENS[deps.mode] ?? OUTPUT_TOKENS.default,
-      thinking: { type: "adaptive" },
+      thinking: MODEL_FOR[deps.mode].think ? { type: "adaptive" } : { type: "disabled" },
       output_config: { effort: MODEL_FOR[deps.mode].effort },
-      // Route around a refusal with Anthropic's default fallback, rather than failing outright.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      // Route around a refusal with Anthropic's default fallback, rather than failing outright
+      // (not offered for Haiku).
+      ...(isHaiku(MODEL_FOR[deps.mode].model) ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
       system: systemPrompt(deps.context(), deps.mode, Boolean(deps.photoId), deps.schedule, deps.memories, deps.localTime, Boolean(deps.allowWebSearch)),
       tools: cachedTools,
       // The next turn then reads everything up to here from the cache, and pays only for what's new.
