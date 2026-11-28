@@ -18,7 +18,7 @@ struct ReviewView: View {
                     let history = model.proposals.filter { !$0.isPending && !$0.isScheduled }
                     if pending.isEmpty && history.isEmpty {
                         ContentUnavailableView("Nothing to review", systemImage: "checkmark.seal",
-                                               description: Text("When Hera has a post or listing ready to publish, it appears here for you to approve."))
+                                               description: Text("When Hera has a post, listing or email ready to go, it appears here for you to approve."))
                             .glowCard()
                     }
                     if !pending.isEmpty {
@@ -133,16 +133,23 @@ struct ProposalDetailView: View {
         #endif
         .overlay { if isWorking { ProgressView().controlSize(.large) } }
         .sensoryFeedback(.success, trigger: proposal.status) { _, status in status == "executed" }
-        .confirmationDialog(proposal.isListing ? "List this on eBay now?" : proposal.postAt.map { "Post this \(HeraTime.spoken($0))?" } ?? "Publish this now?",
-                            isPresented: $showPublishConfirmation, titleVisibility: .visible) {
-            Button(proposal.isListing ? "List it" : proposal.postAt != nil ? "Schedule" : "Publish") { Task { await publish() } }
+        .confirmationDialog(confirmationTitle, isPresented: $showPublishConfirmation, titleVisibility: .visible) {
+            Button(proposal.isEmail ? "Send" : proposal.isListing ? "List it" : proposal.postAt != nil ? "Schedule" : "Publish") { Task { await publish() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(proposal.isListing
+            Text(proposal.isEmail
+                 ? "It's sent from your Outlook account to everyone on the To and Cc lines, exactly as you see it. A sent email can't be taken back."
+                 : proposal.isListing
                  ? "It goes live on eBay at this price, and anyone can buy it. eBay's selling fees apply."
                  : proposal.postAt != nil ? "It goes out then, exactly as you see it. You can cancel it in Review until then."
                  : "Once published, anyone can see it.")
         }
+    }
+
+    private var confirmationTitle: String {
+        if proposal.isEmail { return "Send this email now?" }
+        if proposal.isListing { return "List this on eBay now?" }
+        return proposal.postAt.map { "Post this \(HeraTime.spoken($0))?" } ?? "Publish this now?"
     }
 
     private var header: some View {
@@ -157,9 +164,11 @@ struct ProposalDetailView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel(proposal.isListing ? "Exactly what will be listed" : "Exactly what will be posted")
+            SectionLabel(proposal.isEmail ? "Exactly what will be sent" : proposal.isListing ? "Exactly what will be listed" : "Exactly what will be posted")
             VStack(alignment: .leading, spacing: 10) {
-                if proposal.isListing {
+                if proposal.isEmail {
+                    email
+                } else if proposal.isListing {
                     listing
                 } else {
                     Text(proposal.postText ?? "")
@@ -206,6 +215,29 @@ struct ProposalDetailView: View {
         }
     }
 
+    /// An email as its recipients will get it: who, the subject, the text and any invite.
+    @ViewBuilder
+    private var email: some View {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+            detailRow("To", proposal.emailTo.joined(separator: ", "))
+            if !proposal.emailCc.isEmpty { detailRow("Cc", proposal.emailCc.joined(separator: ", ")) }
+            detailRow("Subject", proposal.emailSubject.flatMap { $0.isEmpty ? nil : $0 } ?? "(no subject)")
+        }
+        .font(.callout)
+        .textSelection(.enabled)
+        Divider()
+        Text(proposal.emailBody ?? "")
+            .font(.body)
+            .textSelection(.enabled)
+        if let invite = proposal.emailInviteName {
+            Label("Attached: \(invite) (calendar invite)", systemImage: "calendar.badge.plus")
+                .font(.callout)
+        }
+        Text("Sent from your Outlook account. A copy goes to your Sent Items.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
     /// An eBay listing as buyers will see it: title, price, condition, details and description.
     @ViewBuilder
     private var listing: some View {
@@ -250,7 +282,7 @@ struct ProposalDetailView: View {
                     }
                 }
                 if proposal.tainted {
-                    Toggle("I've checked this. It used content from the web, and it says only what I intend.", isOn: $acknowledgedTaint)
+                    Toggle("I've checked this. It used outside content (a web page, an email or a text someone sent), and it says only what I intend.", isOn: $acknowledgedTaint)
                         .font(.callout)
                 }
                 if !proposal.canBeCarriedOut {
@@ -261,8 +293,8 @@ struct ProposalDetailView: View {
                 Button {
                     showPublishConfirmation = true
                 } label: {
-                    Label(proposal.isListing ? "Approve and list on eBay" : proposal.postAt != nil ? "Approve and schedule" : "Approve and publish",
-                          systemImage: proposal.postAt != nil ? "calendar.badge.clock" : "checkmark.seal.fill")
+                    Label(proposal.isEmail ? "Approve and send" : proposal.isListing ? "Approve and list on eBay" : proposal.postAt != nil ? "Approve and schedule" : "Approve and publish",
+                          systemImage: proposal.isEmail ? "paperplane.fill" : proposal.postAt != nil ? "calendar.badge.clock" : "checkmark.seal.fill")
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity)
                 }
@@ -363,5 +395,5 @@ struct ProposalDetailView: View {
 
 private extension Proposal {
     /// The symbol for this kind of proposal, in lists and at the top of its page.
-    var icon: String { isListing ? "tag.fill" : "text.bubble.fill" }
+    var icon: String { isEmail ? "envelope.fill" : isListing ? "tag.fill" : "text.bubble.fill" }
 }

@@ -6,6 +6,10 @@
 	<array>
 		<string>com.natty2027.hera.reminders</string>
 	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>ms-outlook</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

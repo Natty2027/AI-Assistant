@@ -13,7 +13,7 @@ See XCODE-TESTING.md to run it and PLATFORMS.md for what runs where.
 ```
 app/                        SwiftUI app (iOS 26 / macOS 26): on-device voice input and Hera's voice
 server/                     Node server the app talks to (Railway): auth, consent, account deletion
-server/agent/               the assistant, its rules, Bluesky, X, Meta and eBay publishing
+server/agent/               the assistant, its rules, Bluesky, X, Meta and eBay publishing, Outlook
 db/schema.sql               Postgres schema (Supabase), row-level security, encryption
 db/migrations/              changes for databases created from an older schema.sql
 scripts/mock-app-server.mjs a stand-in server for working on the app without a database or AI key
@@ -34,7 +34,8 @@ npm start                 # needs the variables in .env.example
 
 For a new database, run `db/schema.sql` once in the Supabase SQL editor. For an older one, also
 run the files in `db/migrations/` in order (each is safe to run twice). Posting to X, Facebook
-and Instagram needs developer apps: see `docs/SOCIAL-SETUP.md`.
+and Instagram needs developer apps: see `docs/SOCIAL-SETUP.md`. Sending email from Outlook and
+reading the inbox needs a Microsoft Entra app: see `docs/OUTLOOK.md`.
 
 ## The rule everything rests on
 

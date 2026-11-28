@@ -1,5 +1,5 @@
 /**
- * Sign-in with a platform (X, Meta) using the OAuth authorization-code flow.
+ * Sign-in with a platform (X, Meta, eBay, Microsoft for Outlook) using the OAuth authorization-code flow.
  *
  *   1. The app asks the server to start: the server makes a random `state` and a PKCE verifier,
  *      remembers them for this person, and returns the platform's sign-in address.
@@ -20,7 +20,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 
-export const OAUTH_PROVIDERS = ["x", "meta", "ebay"] as const;
+export const OAUTH_PROVIDERS = ["x", "meta", "ebay", "outlook"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 export function isOAuthProvider(p: unknown): p is OAuthProvider {

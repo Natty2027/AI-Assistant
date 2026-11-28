@@ -474,6 +474,33 @@ final class AppModel {
         }
     }
 
+    /// The person's connected Outlook account, when this server can use Outlook.
+    var outlookConnection: Connection? {
+        signInAvailability.isAvailable(.outlook) ? connections.first(where: \.isOutlook) : nil
+    }
+
+    /// "Let Hera read my Outlook inbox". Returns whether the server saved it.
+    @discardableResult
+    func setInboxReading(_ connection: Connection, on: Bool) async -> Bool {
+        guard let client else { return false }
+        return await perform {
+            _ = try await client.setInboxReading(connection, on: on)
+            try await loadConnections(client)
+        }
+    }
+
+    /// "Send from Outlook" on an email: makes it a proposal, for the person to approve in the same
+    /// screen as everything else. Returns nil, with errorMessage set, if the server refused.
+    func proposeOutlookEmail(_ draft: EmailDraft) async -> Proposal? {
+        guard let client else { return nil }
+        var proposal: Proposal?
+        await perform {
+            proposal = try await client.proposeOutlookEmail(draft, includeInvite: draft.invite != nil)
+            proposals = try await client.proposals()
+        }
+        return proposal
+    }
+
     func disconnect(_ connection: Connection) async {
         guard let client else { return }
         await perform {

@@ -17,6 +17,9 @@ struct SettingsView: View {
     @AppStorage(EventReminders.leadKey) private var reminderLead = 15
     @AppStorage(EventReminders.spokenKey) private var spokenReminders = true
     @AppStorage(ScheduledPostPlan.enabledKey) private var scheduledPostsOnLockScreen = true
+    @AppStorage(EmailApp.preferenceKey) private var emailApp = EmailApp.mail.rawValue
+    /// "Open emails in" is offered only when the Outlook app is on this device.
+    @State private var outlookInstalled = false
 
     var body: some View {
         NavigationStack {
@@ -27,6 +30,7 @@ struct SettingsView: View {
                 brandSection
                 if model.isConfigured { memorySection }
                 remindersSection
+                if outlookInstalled { emailSection }
                 #if os(iOS)
                 lockScreenSection
                 #endif
@@ -47,6 +51,7 @@ struct SettingsView: View {
                 accessToken = model.accessToken
                 supabaseURL = UserDefaults.standard.string(forKey: "supabaseURL") ?? ""
                 supabaseAnonKey = UserDefaults.standard.string(forKey: "supabaseAnonKey") ?? ""
+                outlookInstalled = OutlookApp.isInstalled
             }
             .sheet(isPresented: $showDelete) { DeleteAccountSheet() }
         }
@@ -205,11 +210,29 @@ struct SettingsView: View {
         } header: {
             SectionLabel("Event reminders")
         } footer: {
-            Text("Before each event on your calendar, Hera sends an alert and says what it is and when it starts. Her voice is recorded on this device ahead of time, so you hear it even when Hera is closed, unless your phone is on silent.")
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Before each event on your calendar, Hera sends an alert and says what it is and when it starts. Her voice is recorded on this device ahead of time, so you hear it even when Hera is closed, unless your phone is on silent.")
+                Text(OutlookCalendarHint.steps)
+            }
         }
         .onChange(of: eventReminders) { Task { await model.refreshReminders() } }
         .onChange(of: reminderLead) { Task { await model.refreshReminders() } }
         .onChange(of: spokenReminders) { Task { await model.refreshReminders() } }
+    }
+
+    /// Which app "Open in…" on an email Hera wrote uses first.
+    private var emailSection: some View {
+        Section {
+            Picker("Open emails in", selection: $emailApp) {
+                ForEach(EmailApp.allCases) { app in
+                    Text(app.name).tag(app.rawValue)
+                }
+            }
+        } header: {
+            SectionLabel("Email")
+        } footer: {
+            Text("Emails Hera writes open in this app, filled in, for you to send. A calendar invite can't go along this way; Share invite on the email, or Send from Outlook once Outlook is connected in Accounts, includes it.")
+        }
     }
 
     #if os(iOS)

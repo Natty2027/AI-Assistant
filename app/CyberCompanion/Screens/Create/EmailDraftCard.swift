@@ -4,14 +4,23 @@ import MessageUI
 #endif
 
 /// An email Hera wrote. The person can edit it here, then send it from their own email app:
-/// "Open in Mail" opens their default email app (Apple Mail, Gmail, Outlook…) with everything
-/// filled in. On iPhone and iPad with Apple Mail set up, "Write here" opens Apple's compose sheet
-/// inside Hera. Either way the person presses Send; Hera never sends anything.
+/// "Open in Mail" opens their default email app (Apple Mail, Gmail…) with everything filled in, and
+/// "Open in Outlook" the Outlook app when it's installed (Settings picks which one comes first). On
+/// iPhone and iPad with Apple Mail set up, "Write here" opens Apple's compose sheet inside Hera.
+/// With Outlook connected in Accounts, "Send from Outlook" sends it from there, but only after the
+/// person approves exactly this email on the approval screen. Hera never sends anything herself.
 struct EmailDraftCard: View {
+    @Environment(AppModel.self) private var model
     @State private var draft: EmailDraft
     @State private var toText: String
     @State private var showComposer = false
     @State private var copied = false
+    /// "Send from Outlook": the proposal being approved, and whether it went.
+    @State private var outlookProposal: Proposal?
+    @State private var preparingOutlook = false
+    @State private var outlookProblem: String?
+    @State private var outlookInstalled = false
+    @AppStorage(EmailApp.preferenceKey) private var preferredApp = EmailApp.mail.rawValue
     /// Set once the reminder to send it is on.
     @State private var remindedAt: Date?
     @State private var reminderProblem: String?
@@ -51,9 +60,9 @@ struct EmailDraftCard: View {
             OnDeviceTools(text: $draft.body)
             if let invite = draft.invite { inviteRow(invite) }
             if let sendAt = draft.sendAt.flatMap(HeraTime.parse) { reminderRow(sendAt) }
+            if sendsFromOutlook { outlookRow }
             HStack(spacing: 10) {
-                Button("Open in Mail", systemImage: "arrow.up.forward.app") { openInMailApp() }
-                    .buttonStyle(.glassProminent)
+                openButton
                 #if os(iOS)
                 if MFMailComposeViewController.canSendMail() {
                     Button("Write here", systemImage: "square.and.pencil") { showComposer = true }
@@ -66,21 +75,116 @@ struct EmailDraftCard: View {
             .controlSize(.small)
             .lineLimit(1)
             if draft.invite != nil {
-                Text("Open in Mail can't carry the invite. Use \(canWriteHere ? "Write here or " : "")Share invite to include it.")
+                Text(inviteNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text("Nothing is sent until you press Send in your email app.")
+            Text(sendsFromOutlook ? "Nothing is sent until you approve it, or press Send in your email app."
+                                  : "Nothing is sent until you press Send in your email app.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .font(.callout)
         .glowCard()
+        .onAppear { outlookInstalled = OutlookApp.isInstalled }
         #if os(iOS)
         .sheet(isPresented: $showComposer) {
             MailComposeSheet(draft: current).ignoresSafeArea()
         }
         #endif
+        .sheet(item: $outlookProposal) { proposal in
+            NavigationStack {
+                ProposalDetailView(proposal: proposal)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { outlookProposal = nil }
+                        }
+                    }
+            }
+        }
+    }
+
+    /// Sending from Outlook is offered once the person connected it and the server can use it.
+    private var sendsFromOutlook: Bool { model.outlookConnection != nil }
+
+    /// The proposal made from this email that went out, if one did.
+    private var sentFromOutlook: Proposal? {
+        model.proposals.first { $0.isEmail && $0.status == "executed" && sentProposalIDs.contains($0.id) }
+    }
+    @State private var sentProposalIDs: Set<String> = []
+
+    /// "Send from Outlook": shows exactly what will be sent, for the person to approve.
+    @ViewBuilder
+    private var outlookRow: some View {
+        if let sent = sentFromOutlook {
+            Label(sent.result?.detail ?? "Sent from Outlook.", systemImage: "checkmark.circle.fill")
+                .labelStyle(.alignedIcon)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.green)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    Task { await sendFromOutlook() }
+                } label: {
+                    Label(preparingOutlook ? "Getting it ready…" : "Send from Outlook", systemImage: "paperplane.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.regular)
+                .disabled(preparingOutlook || current.to.isEmpty)
+                if current.to.isEmpty {
+                    Text("Add who it's to first.").font(.caption).foregroundStyle(.secondary)
+                }
+                if let outlookProblem {
+                    Text(outlookProblem).font(.caption).foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
+    /// The app chosen in Settings first; with Outlook installed, a long press offers the other one.
+    @ViewBuilder
+    private var openButton: some View {
+        let first = outlookInstalled ? (EmailApp(rawValue: preferredApp) ?? .mail) : .mail
+        let label = Label("Open in \(first.name)", systemImage: "arrow.up.forward.app")
+        if outlookInstalled {
+            Menu {
+                ForEach(EmailApp.allCases) { app in
+                    Button("Open in \(app.name)", systemImage: "arrow.up.forward.app") { open(in: app) }
+                }
+            } label: {
+                label
+            } primaryAction: {
+                open(in: first)
+            }
+            .modifier(OpenButtonStyle(prominent: !sendsFromOutlook))
+        } else {
+            Button { open(in: .mail) } label: { label }
+                .modifier(OpenButtonStyle(prominent: !sendsFromOutlook))
+        }
+    }
+
+    /// What can carry the invite, said plainly next to the buttons that can't.
+    private var inviteNote: String {
+        let opener = outlookInstalled ? "Opening in Mail or Outlook" : "Open in Mail"
+        var ways: [String] = []
+        if sendsFromOutlook { ways.append("Send from Outlook") }
+        if canWriteHere { ways.append("Write here") }
+        ways.append("Share invite")
+        let list = ways.count > 1 ? ways.dropLast().joined(separator: ", ") + " or " + ways.last! : ways[0]
+        return "\(opener) can't carry the calendar invite. Use \(list) to include it."
+    }
+
+    private func sendFromOutlook() async {
+        preparingOutlook = true
+        defer { preparingOutlook = false }
+        if let proposal = await model.proposeOutlookEmail(current) {
+            outlookProblem = nil
+            sentProposalIDs.insert(proposal.id)
+            outlookProposal = proposal
+        } else {
+            outlookProblem = model.errorMessage ?? "Couldn't get it ready to send. Please try again."
+        }
     }
 
     private var canWriteHere: Bool {
@@ -159,8 +263,8 @@ struct EmailDraftCard: View {
         return d
     }
 
-    private func openInMailApp() {
-        if let url = MailLink.url(for: current) { openURL(url) }
+    private func open(in app: EmailApp) {
+        if let url = app.url(for: current) { openURL(url) }
     }
 
     private func copy() {
@@ -172,6 +276,14 @@ struct EmailDraftCard: View {
         NSPasteboard.general.setString(text, forType: .string)
         #endif
         copied = true
+    }
+}
+
+/// Open is the main button unless Send from Outlook is there to be it.
+private struct OpenButtonStyle: ViewModifier {
+    let prominent: Bool
+    func body(content: Content) -> some View {
+        if prominent { content.buttonStyle(.glassProminent) } else { content.buttonStyle(.glass) }
     }
 }
 

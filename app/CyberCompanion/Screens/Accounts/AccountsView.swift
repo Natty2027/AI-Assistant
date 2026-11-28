@@ -2,7 +2,7 @@ import AuthenticationServices
 import SwiftUI
 
 /// Where Hera can publish for you. One row per service: connected, or a Connect button.
-/// Bluesky opens a short guided sheet; X and Facebook & Instagram open the platform's
+/// Bluesky opens a short guided sheet; X, Facebook & Instagram, eBay and Outlook open the platform's
 /// own sign-in page in a secure browser sheet, so the app never sees those passwords. Either way
 /// the server stores what it needs encrypted; the app never keeps it.
 struct AccountsView: View {
@@ -53,6 +53,40 @@ struct AccountsView: View {
                     Text("Hera writes the listing; nothing goes on eBay until you approve it in Review. eBay's usual selling fees apply.")
                 }
 
+                // Shown once the server can use Outlook (or something is already connected).
+                if model.signInAvailability.isAvailable(.outlook) || !connections("outlook").isEmpty {
+                    Section {
+                        serviceRow(title: "Outlook", subtitle: "Send emails Hera writes from your Outlook account", systemImage: "envelope.fill",
+                                   connections: connections("outlook"), available: model.signInAvailability.isAvailable(.outlook),
+                                   busy: signingIn == .outlook) { signIn(.outlook) }
+                        ForEach(connections("outlook")) { connection in
+                            inboxToggle(connection)
+                        }
+                    } header: {
+                        SectionLabel("Email")
+                    } footer: {
+                        Text("Nothing is sent until you approve that exact email. With reading on, Hera reads your latest emails only when you ask about them, and treats them as information, never instructions. Disconnecting deletes the saved login.")
+                    }
+                }
+
+                Section {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Outlook and work calendars")
+                            Text(OutlookCalendarHint.steps)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        IconTile(systemImage: "calendar", size: 34)
+                    }
+                    .labelStyle(AlignedIconLabelStyle(iconWidth: 34, spacing: 12))
+                } header: {
+                    SectionLabel("Calendar")
+                } footer: {
+                    Text("Hera uses the calendars on this \(ThisDevice.name), so there's nothing to connect here.")
+                }
+
                 Section {
                     HStack(spacing: 12) {
                         IconTile(systemImage: Platform.linkedin.systemImage, size: 34)
@@ -94,6 +128,19 @@ struct AccountsView: View {
                 }
             } message: {
                 Text("The saved login is deleted. Anything already published stays up.")
+            }
+        }
+    }
+
+    /// "Let Hera read my Outlook inbox": off until the person turns it on.
+    private func inboxToggle(_ connection: Connection) -> some View {
+        Toggle(isOn: Binding(get: { connection.readInbox ?? false },
+                             set: { on in Task { await model.setInboxReading(connection, on: on) } })) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Let Hera read my Outlook inbox")
+                Text("So you can ask \"Anything from Sam?\" Sending works without it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -158,6 +205,9 @@ struct AccountsView: View {
                 case .ebay:
                     outcome = SignInOutcome(title: "eBay is connected",
                                             message: "Hera can now write listings for you. You approve each one before it goes on eBay.")
+                case .outlook:
+                    outcome = SignInOutcome(title: "Outlook is connected",
+                                            message: "Emails Hera writes can now be sent from your Outlook account, each one only after you approve it. To let Hera read your inbox when you ask, turn on Let Hera read my Outlook inbox.")
                 default:
                     outcome = SignInOutcome(title: provider == .x ? "X is connected" : "Facebook and Instagram are connected",
                                             message: "Hera can now write posts for it. You approve each one before it goes out.")

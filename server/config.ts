@@ -14,7 +14,7 @@ function opt(name: string): string | undefined {
   return v && v.length ? v : undefined;
 }
 
-/** An OAuth client (X, Meta): both halves or nothing, so a half-configured provider stays off. */
+/** An OAuth client (X, Meta, eBay, Microsoft): both halves or nothing, so a half-configured provider stays off. */
 export interface OAuthClient { clientId: string; clientSecret: string }
 function client(idName: string, secretName: string): OAuthClient | undefined {
   const clientId = opt(idName), clientSecret = opt(secretName);
@@ -97,6 +97,11 @@ export const config = {
   /** Business-type Meta apps sign in with "Facebook Login for Business", which takes the id of a
    *  login configuration (made in the Meta dashboard) instead of a list of permissions. */
   metaConfigId: opt("META_CONFIG_ID"),
+
+  /** Microsoft Entra app (Outlook: sending approved emails and, if the person turns it on,
+   *  reading their inbox): the application (client) id and a client secret. The sign-in return
+   *  address is <publicUrl>/oauth/callback/outlook. See docs/OUTLOOK.md. */
+  microsoft: client("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"),
 
   /** eBay developer app (selling): the keyset's App ID and Cert ID. */
   ebay: client("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"),

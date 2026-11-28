@@ -20,7 +20,7 @@ import { z } from "zod";
 export type Tier = "draft" | "publish" | "spend";
 
 export const ACTION_KINDS = [
-  "social.post", "marketplace.listing", "email.campaign", "sms.campaign", "ads.campaign", "domain.purchase",
+  "social.post", "marketplace.listing", "email.send", "email.campaign", "sms.campaign", "ads.campaign", "domain.purchase",
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -36,6 +36,8 @@ export interface ActionSpec {
 export const ACTIONS: Record<ActionKind, ActionSpec> = {
   "social.post":     { tier: "publish", label: "Publish a social post",    connection: "social",    dailyLimit: 5 },
   "marketplace.listing": { tier: "publish", label: "List an item for sale", connection: "marketplace", dailyLimit: 10 },
+  // One personal email from the person's own Outlook account, to people they chose.
+  "email.send":      { tier: "publish", label: "Send an email",            connection: "email",     dailyLimit: 20 },
   "email.campaign":  { tier: "publish", label: "Send an email campaign",   connection: "email",     dailyLimit: 1 },
   "sms.campaign":    { tier: "publish", label: "Send a text campaign",     connection: "sms",       dailyLimit: 1 },
   "ads.campaign":    { tier: "spend",   label: "Start a paid ad campaign", connection: "ads",       dailyLimit: 2 },
@@ -64,6 +66,11 @@ const id = z.string().min(1).max(100);
 const https = z.string().max(2048).refine((u) => {
   try { return new URL(u).protocol === "https:"; } catch { return false; }
 }, "must be an https:// address");
+
+/** A personal email goes to a few people the person chose, never a mailing list. */
+export const MAX_EMAIL_RECIPIENTS = 10;
+/** An email address as a person would type one: something@domain.tld, nothing else around it. */
+export const EMAIL_ADDRESS = /^[^\s@<>(),;:"\[\]]+@[^\s@<>(),;:"\[\]]+\.[a-z]{2,}$/i;
 
 export const PLATFORMS = ["x", "instagram", "linkedin", "facebook", "bluesky"] as const;
 export type Platform = (typeof PLATFORMS)[number];
@@ -122,6 +129,17 @@ export const PAYLOADS = {
     mediaRefs: z.array(id).max(12),
     postalCode: z.string().regex(/^\d{5}$/),
     policies: z.object({ fulfillment: id, payment: id, returns: id }).strict(),
+  }).strict(),
+  // A personal email exactly as it will be sent from the person's Outlook account. Recipients are
+  // the ones on the approval screen; there is no Bcc, so everyone who gets it is shown there.
+  "email.send": z.object({
+    connectionId: id,
+    to: z.array(z.string().max(254)).max(MAX_EMAIL_RECIPIENTS),
+    cc: z.array(z.string().max(254)).max(MAX_EMAIL_RECIPIENTS),
+    subject: z.string().max(200),
+    body: z.string().min(1).max(20_000),
+    /** A calendar invite Hera made (ics.ts), attached as a file. */
+    invite: z.object({ fileName: z.string().regex(/^[\w .-]{1,80}\.ics$/), ics: z.string().min(1).max(20_000) }).strict().nullable(),
   }).strict(),
   "email.campaign": z.object({
     connectionId: id, listId: id,
@@ -294,6 +312,11 @@ export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, no
       break;
     }
 
+    case "email.send": {
+      out.push(...emailChecks(p as Payload<"email.send">));
+      break;
+    }
+
     case "email.campaign": {
       const list = ctx.lists.find((l) => l.id === p.listId && l.kind === "email");
       if (!list) { out.push({ id: "unknown_list", level: "block", message: "That is not one of your email lists." }); break; }
@@ -344,6 +367,28 @@ export function evaluate(kind: ActionKind, rawPayload: unknown, ctx: Context, no
       break;
     }
   }
+  return out;
+}
+
+/* ------------------------------ personal email ------------------------------ */
+
+/** The rules for one personal email sent from the person's own account. */
+export function emailChecks(p: Payload<"email.send">): Check[] {
+  const out: Check[] = [];
+  const all = [...p.to, ...p.cc];
+  if (!p.to.length) out.push({ id: "no_recipient", level: "block", message: "Add who it's to. Hera only sends to people you put on the To line." });
+  const bad = all.filter((a) => !EMAIL_ADDRESS.test(a));
+  if (bad.length) out.push({ id: "bad_address", level: "block", message: `Not a valid email address: ${bad.join(", ")}.` });
+  if (all.length > MAX_EMAIL_RECIPIENTS) {
+    out.push({ id: "too_many_recipients", level: "block", message: `At most ${MAX_EMAIL_RECIPIENTS} people: Hera sends personal emails, not mailings.` });
+  }
+  if (new Set(all.map((a) => a.toLowerCase())).size !== all.length) {
+    out.push({ id: "duplicate_recipient", level: "block", message: "Someone is on the To or Cc line twice." });
+  }
+  if (p.invite && !/^BEGIN:VCALENDAR\r?\n[\s\S]*END:VCALENDAR\r?\n?$/.test(p.invite.ics)) {
+    out.push({ id: "bad_invite", level: "block", message: "The calendar invite isn't a valid calendar file." });
+  }
+  if (!p.subject.trim()) out.push({ id: "no_subject", level: "warn", message: "This email has no subject." });
   return out;
 }
 

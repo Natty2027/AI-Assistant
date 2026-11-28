@@ -99,12 +99,15 @@ create table action_connections (
   id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references auth.users(id) on delete cascade,
   kind          text not null check (kind in ('hosting','social','marketplace','email','sms','ads','registrar')),
-  provider      text not null check (provider in ('netlify','bluesky','x','facebook','instagram','ebay')),
+  provider      text not null check (provider in ('netlify','bluesky','x','facebook','instagram','ebay','outlook')),
   label         text not null,
   token_ct      bytea not null,
   data_key_id   text not null,
   -- e.g. the Netlify site this connection publishes to, so the address stays the same
   target_ref    text,
+  -- Outlook: the person let Hera read their inbox. Off until they turn it on; sending an email
+  -- they approved doesn't need it.
+  read_inbox    boolean not null default false,
   created_at    timestamptz not null default now(),
   revoked_at    timestamptz
 );

@@ -256,9 +256,9 @@ test("a Page with no Instagram business account linked connects Facebook only, a
 
 test("sign-in isn't offered until the server has its public address and the developer app", () => {
   const bare = new AgentService({ run, fetch: fakeX().f, sitesDir: dir, mediaDir: dir, client: null, oauth: { x: X_CLIENT } });
-  assert.deepEqual(bare.oauthAvailable(), { x: false, meta: false, ebay: false });
+  assert.deepEqual(bare.oauthAvailable(), { x: false, meta: false, ebay: false, outlook: false });
   assert.throws(() => bare.beginOAuth(U, "x"), { code: "provider_unavailable" });
-  assert.deepEqual(service(fakeX().f).oauthAvailable(), { x: true, meta: true, ebay: false });
+  assert.deepEqual(service(fakeX().f).oauthAvailable(), { x: true, meta: true, ebay: false, outlook: false });
 });
 
 /* ---------------- posting ---------------- */

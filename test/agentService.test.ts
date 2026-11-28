@@ -157,9 +157,9 @@ test("an old website hosting connection is neither listed nor offered to Hera", 
   await run(`delete from action_connections where id = $1`, [rows[0].id]);
 });
 
-test("only posts and listings can be carried out", async () => {
+test("only posts, listings and personal emails from Outlook can be carried out", async () => {
   const { EXECUTABLE } = await import("../server/agent/service.ts");
-  assert.deepEqual([...EXECUTABLE].sort(), ["marketplace.listing", "social.post"]);
+  assert.deepEqual([...EXECUTABLE].sort(), ["email.send", "marketplace.listing", "social.post"]);
 });
 
 test("without an AI key the assistant says so; everything else still works", async () => {

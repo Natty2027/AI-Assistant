@@ -12,18 +12,23 @@ import { makeCtx } from "./helpers/agentCtx.ts";
 
 const done = { id: "m", type: "message", role: "assistant", model: AGENT_MODEL, content: [{ type: "text", text: "Hi!" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } } as any;
 
+/** Outlook as the loop sees it when the server is set up for it. */
+const outlook = { connected: true, canRead: true, latest: async () => [], message: async () => { throw new Error("unused"); } };
+
 for (const mode of AGENT_MODES) {
-  for (const marketplace of [false, true]) {
-    test(`${mode}${marketplace ? " with eBay" : ""}: strict tools stay within the API's union limit and every tool is still offered`, async () => {
+  for (const [marketplace, withOutlook] of [[false, false], [true, false], [false, true], [true, true]]) {
+    test(`${mode}${marketplace ? " with eBay" : ""}${withOutlook ? " with Outlook" : ""}: strict tools stay within the API's union limit and every tool is still offered`, async () => {
       const sent: any[] = [];
       const client = { beta: { messages: { create: async (params: any) => { sent.push(params); return done; } } } };
-      await runAgent({ mode, client, store: new ActionStore(), userId: "u1", context: () => makeCtx(), sleep: async () => {}, marketplace, allowWebSearch: true } as any, "Hello");
+      await runAgent({ mode, client, store: new ActionStore(), userId: "u1", context: () => makeCtx(), sleep: async () => {}, marketplace,
+        outlook: withOutlook ? outlook : undefined, allowWebSearch: true } as any, "Hello");
       const tools: any[] = sent[0].tools;
       const strictUnions = tools.filter((t) => t.strict).reduce((n, t) => n + unionParameters(t.input_schema), 0);
       assert.ok(strictUnions <= STRICT_UNION_LIMIT, `${strictUnions} union parameters in strict tools`);
       const offered = new Set(tools.map((t) => t.name));
       for (const name of MODE_TOOLS[mode]) {
         if (!marketplace && ["ebay_categories", "ebay_item_specifics", "propose_listing"].includes(name)) continue;
+        if (!withOutlook && name === "outlook_inbox") continue;
         assert.ok(offered.has(name), `${name} is offered`);
       }
     });

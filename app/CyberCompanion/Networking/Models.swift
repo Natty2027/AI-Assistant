@@ -156,6 +156,8 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
     var scheduledFor: String?
 
     var isPost: Bool { kind == "social.post" }
+    /// An email to send from the person's Outlook account.
+    var isEmail: Bool { kind == "email.send" }
     /// An item to list for sale on eBay.
     var isListing: Bool { kind == "marketplace.listing" }
     var isPending: Bool { status == "pending" }
@@ -165,6 +167,22 @@ struct Proposal: Codable, Hashable, Identifiable, Sendable {
     var postAt: Date? { (scheduledFor ?? payload["postAt"]?.stringValue).flatMap(HeraTime.parse) }
     var postText: String? { payload["text"]?.stringValue }
     var postLink: String? { payload["link"]?.stringValue }
+
+    /* An email, exactly as it will be sent (server/agent/policy.ts, email.send). */
+    var emailTo: [String] { strings(payload["to"]) }
+    var emailCc: [String] { strings(payload["cc"]) }
+    var emailSubject: String? { payload["subject"]?.stringValue }
+    var emailBody: String? { payload["body"]?.stringValue }
+    /// The attached calendar invite's file name, if there is one.
+    var emailInviteName: String? {
+        if case .object(let invite) = payload["invite"] { return invite["fileName"]?.stringValue }
+        return nil
+    }
+
+    private func strings(_ value: JSONValue?) -> [String] {
+        if case .array(let items) = value { return items.compactMap(\.stringValue) }
+        return []
+    }
 
     /* An eBay listing, as it will go live (server/agent/policy.ts, marketplace.listing). */
     var listingTitle: String? { payload["title"]?.stringValue }
@@ -306,6 +324,10 @@ struct Connection: Codable, Hashable, Identifiable, Sendable {
     let provider: String
     let platform: String?
     let label: String
+    /// Outlook only: the person let Hera read their inbox. Absent from older servers.
+    var readInbox: Bool?
+
+    var isOutlook: Bool { provider == "outlook" }
 }
 
 /* ---------------- envelopes ---------------- */
@@ -324,6 +346,8 @@ enum SignInProvider: String, Codable, Identifiable, Sendable {
     case meta
     /// Selling: listing items on the person's eBay account.
     case ebay
+    /// Sending approved emails from the person's Outlook account, and reading the inbox if allowed.
+    case outlook
     var id: Self { self }
 }
 
@@ -332,19 +356,34 @@ struct SignInAvailability: Codable, Hashable, Sendable {
     let meta: Bool
     /// Absent from servers from before eBay selling.
     var ebay: Bool?
+    /// Absent from servers from before Outlook.
+    var outlook: Bool?
 
-    static let none = SignInAvailability(x: false, meta: false, ebay: false)
+    static let none = SignInAvailability(x: false, meta: false, ebay: false, outlook: false)
 
     func isAvailable(_ provider: SignInProvider) -> Bool {
         switch provider {
         case .x: x
         case .meta: meta
         case .ebay: ebay ?? false
+        case .outlook: outlook ?? false
         }
     }
 }
 
-struct SignInStartResponse: Decodable, Sendable { let authUrl: String }
+/// The server answers `auth_url` (server/routes.ts); `authUrl` is accepted too.
+struct SignInStartResponse: Decodable, Sendable {
+    let authUrl: String
+
+    private enum CodingKeys: String, CodingKey { case snake = "auth_url", camel = "authUrl" }
+
+    init(authUrl: String) { self.authUrl = authUrl }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        authUrl = try c.decodeIfPresent(String.self, forKey: .snake) ?? c.decode(String.self, forKey: .camel)
+    }
+}
 struct PhotoUploadResponse: Decodable, Sendable { let id: String }
 struct ConnectionResponse: Decodable, Sendable { let connection: Connection }
 struct ProposalsResponse: Decodable, Sendable { let proposals: [Proposal] }
@@ -390,6 +429,9 @@ struct EmailDraft: Codable, Hashable, Identifiable, Sendable {
     /// When the person wants to send it; their phone reminds them then.
     var sendAt: String?
     var invite: Invite?
+    /// Written after Hera read outside content (the web, an email, a text someone sent). For show
+    /// only: the server keeps its own record when it's sent from Outlook. Absent from older servers.
+    var tainted: Bool?
 }
 
 /// Dates as the server writes them: ISO 8601, with or without fractional seconds.

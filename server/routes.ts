@@ -54,7 +54,7 @@ function makeService(store: ActionStore): AgentService {
     sitesDir: config.sitesDir,
     mediaDir: config.mediaDir,
     oauth: { publicUrl: config.publicUrl, x: config.x, meta: config.meta, metaConfigId: config.metaConfigId,
-      ebay: config.ebay, ebayRuName: config.ebayRuName, ebaySandbox: config.ebaySandbox },
+      ebay: config.ebay, ebayRuName: config.ebayRuName, ebaySandbox: config.ebaySandbox, microsoft: config.microsoft },
     // maxRetries 0: the agent loop retries through withAiRetry, so the SDK must not retry too.
     client: config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 0 }) : null,
   });
@@ -63,7 +63,8 @@ function makeService(store: ActionStore): AgentService {
 /** Turns the agent's typed failures into HTTP answers a person can read. */
 function agentFailure(e: unknown): never {
   if (e instanceof ActionError) {
-    const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, bad_media: 400, bad_schedule: 400, ai_unavailable: 503, provider_unavailable: 502 };
+    const status: Record<string, number> = { not_found: 404, unknown_action: 400, bad_token: 400, bad_media: 400, bad_schedule: 400, ai_unavailable: 503, provider_unavailable: 502,
+      bad_setting: 400, bad_address: 400, bad_email: 400, no_recipient: 400, too_many_recipients: 400, not_allowed: 403 };
     throw new HttpError(status[e.code] ?? 409, e.message, true, e.code);
   }
   if (e instanceof ProviderError) throw new HttpError(502, "The service could not complete that. Try again shortly.", true, "provider_unavailable");
@@ -214,6 +215,7 @@ export function buildRouter(): Router {
       meta: Boolean(config.publicUrl && config.meta),
       ebay: Boolean(config.publicUrl && config.ebay && config.ebayRuName),
       ebayDeletionNotices: Boolean(config.publicUrl && config.ebayVerificationToken),
+      outlook: Boolean(config.publicUrl && config.microsoft),
     },
   }));
 
@@ -363,6 +365,22 @@ export function buildRouter(): Router {
     if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
     await ensureSettings(userId);
     return { ok: true, connection: await guarded(() => agent().connectBluesky(userId, ctx.body.identifier, ctx.body.app_password)) };
+  });
+
+  /** A connection's settings. Today only Outlook's "Let Hera read my Outlook inbox" (read_inbox). */
+  r.post("/agent/connections/:id/settings", async (ctx) => {
+    const userId = requireAuth(ctx);
+    assertUuid(ctx.params.id);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    return { ok: true, connection: await guarded(() => agent().setInboxReading(userId, ctx.params.id, ctx.body.read_inbox)) };
+  });
+
+  /** "Send from Outlook" on an email Hera wrote: makes it a proposal, which the person then
+   *  approves and executes like any other. Nothing is sent here. */
+  r.post("/agent/emails/outlook", async (ctx) => {
+    const userId = requireAuth(ctx);
+    if (!writeLimiter.hit(userId)) throw new HttpError(429, "Slow down for a moment, then try again.");
+    return { ok: true, proposal: await guarded(() => agent().proposeEmail(userId, ctx.body)) };
   });
 
   r.delete("/agent/connections/:id", async (ctx) => {

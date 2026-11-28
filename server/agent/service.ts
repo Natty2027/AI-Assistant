@@ -1,7 +1,7 @@
 /**
  * Ties the assistant to a real person: their publishing connections, their photos, their
  * proposals, and the executors that can carry an approved action out today (posting to Bluesky,
- * X, a Facebook Page or Instagram; listing an item on eBay).
+ * X, a Facebook Page or Instagram; listing an item on eBay; sending an email from Outlook).
  *
  * The database access and network are passed in, so the same code runs against Postgres and the
  * real platforms in production and against PGlite and fakes in tests.
@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { ActionError, ActionStore, type ExecutionResult, type Proposal } from "./approvals.ts";
-import { ACTIONS, isPlatform, type ActionKind, type Context, type Platform } from "./policy.ts";
+import { ACTIONS, EMAIL_ADDRESS, isPlatform, MAX_EMAIL_RECIPIENTS, type ActionKind, type Context, type Platform } from "./policy.ts";
 import { runAgent, type AgentDeps, type AgentMode, type AgentResult } from "./loop.ts";
 import { ScheduleSnapshot } from "./schedule.ts";
 import { MemoryStore } from "./memory.ts";
@@ -18,6 +18,7 @@ import { parseCredential, publishPost, verifyCredential, type BlueskyCredential 
 import * as x from "./x.ts";
 import * as meta from "./meta.ts";
 import * as ebay from "./ebay.ts";
+import * as outlook from "./outlook.ts";
 import { MediaError, MediaStore } from "./media.ts";
 import { appReturnUrl, OAuthStates, PendingConnections, redirectUri, type OAuthProvider } from "./oauth.ts";
 import type { OAuthClient } from "../config.ts";
@@ -27,7 +28,7 @@ import { decryptToken, encryptToken, newDataKeyId } from "../crypto/envelope.ts"
 /** What can actually be carried out today. Approving anything else is refused up front, so
  *  nobody approves something that has nowhere to go. A post or a listing can only target a
  *  connected account, and every account that can be connected can carry it out. */
-export const EXECUTABLE: ReadonlySet<ActionKind> = new Set<ActionKind>(["social.post", "marketplace.listing"]);
+export const EXECUTABLE: ReadonlySet<ActionKind> = new Set<ActionKind>(["social.post", "marketplace.listing", "email.send"]);
 
 /** Which platform each social provider posts to. */
 const SOCIAL_PROVIDERS: Record<string, Platform> = { bluesky: "bluesky", x: "x", facebook: "facebook", instagram: "instagram" };
@@ -50,10 +51,22 @@ export interface ServiceDeps {
    *  platform's developer app are configured. */
   oauth?: { publicUrl?: string; x?: OAuthClient; meta?: OAuthClient; metaConfigId?: string;
     /** Selling on eBay: the developer keyset, its RuName, and whether to use eBay's test site. */
-    ebay?: OAuthClient; ebayRuName?: string; ebaySandbox?: boolean };
+    ebay?: OAuthClient; ebayRuName?: string; ebaySandbox?: boolean;
+    /** Outlook: the Microsoft Entra app (sending approved emails, reading the inbox if allowed). */
+    microsoft?: OAuthClient };
 }
 
-export interface ConnectionView { id: string; kind: string; provider: string; platform: Platform | null; label: string }
+export interface ConnectionView {
+  id: string; kind: string; provider: string; platform: Platform | null; label: string;
+  /** Outlook only: the person let Hera read their inbox. Off until they turn it on. */
+  readInbox: boolean;
+}
+
+/** An email Hera wrote, remembered for a day so sending it from Outlook carries what the server
+ *  knows about it: whether outside content shaped it, and the invite it made. The app's copy of
+ *  either is never trusted for that. */
+interface WrittenEmail { userId: string; tainted: boolean; invite: { title: string; ics: string } | null; expires: number }
+const WRITTEN_EMAIL_TTL_MS = 24 * 3_600_000;
 
 export interface ProposalView {
   id: string; kind: ActionKind; label: string; summary: string;
@@ -88,7 +101,10 @@ export class AgentService {
   readonly media: MediaStore;
   readonly memory: MemoryStore;
   private readonly oauthStates = new OAuthStates();
-  private readonly pendingConnections = new PendingConnections<{ x: x.XCredential } | { meta: meta.MetaPage[] } | { ebay: ebay.EbayCredential }>();
+  private readonly pendingConnections = new PendingConnections<{ x: x.XCredential } | { meta: meta.MetaPage[] } | { ebay: ebay.EbayCredential } | { outlook: outlook.OutlookCredential }>();
+  private readonly writtenEmails = new Map<string, WrittenEmail>();
+  /** Whether the database has migration 010's read_inbox column; until it does, nothing reads it. */
+  private hasReadInbox: boolean | null = null;
   private ebayAppTokens: ebay.AppTokens | null = null;
 
   constructor(private readonly d: ServiceDeps) {
@@ -111,6 +127,7 @@ export class AgentService {
     this.oauthStates.forget(userId);
     this.pendingConnections.forget(userId);
     this.memory.forgetAll(userId);
+    for (const [id, e] of this.writtenEmails) if (e.userId === userId) this.writtenEmails.delete(id);
     // A website Hera built before website building was removed may still be on disk: it's theirs too.
     await rm(path.join(this.d.sitesDir, this.siteIdFor(userId)), { recursive: true, force: true });
     await this.media.removeAll(this.siteIdFor(userId));
@@ -137,12 +154,26 @@ export class AgentService {
   /** Website hosting (Netlify) connections from before website building was removed are left
    *  out: nothing can use them. They're deleted with the account like every other row. */
   async connections(userId: string): Promise<ConnectionView[]> {
+    const read = (await this.readInboxColumn()) ? "read_inbox" : "false as read_inbox";
     const { rows } = await this.d.run(
-      `select id, kind, provider, label from action_connections
+      `select id, kind, provider, label, ${read} from action_connections
         where user_id = $1 and revoked_at is null and kind <> 'hosting' order by created_at`, [userId]);
     return rows.map((r) => ({
       id: r.id, kind: r.kind, provider: r.provider, platform: SOCIAL_PROVIDERS[r.provider] ?? null, label: r.label,
+      readInbox: r.read_inbox === true,
     }));
+  }
+
+  /** A database from before migration 010 has no read_inbox column: every other account still
+   *  lists and works, and Outlook can't be connected until it's run. Checked once. */
+  private async readInboxColumn(): Promise<boolean> {
+    if (this.hasReadInbox === null) {
+      const { rows } = await this.d.run(
+        `select 1 from information_schema.columns where table_name = 'action_connections' and column_name = 'read_inbox'`, []);
+      this.hasReadInbox = rows.length > 0;
+      if (!this.hasReadInbox) console.error("[outlook] action_connections has no read_inbox column: run db/migrations/010_outlook.sql");
+    }
+    return this.hasReadInbox;
   }
 
   /** Checks the app password with Bluesky before storing it, so a typo fails now, not at post time. */
@@ -162,7 +193,7 @@ export class AgentService {
       `insert into action_connections (user_id, kind, provider, label, token_ct, data_key_id, target_ref)
        values ($1, 'social', 'bluesky', $2, $3, $4, $5) returning id`,
       [userId, verified.label, encryptToken(JSON.stringify(cred), keyId), keyId, verified.handle]);
-    return { id: rows[0].id, kind: "social", provider: "bluesky", platform: "bluesky", label: verified.label };
+    return { id: rows[0].id, kind: "social", provider: "bluesky", platform: "bluesky", label: verified.label, readInbox: false };
   }
 
   /* ---------------- sign-in with X and Meta ---------------- */
@@ -170,20 +201,28 @@ export class AgentService {
   /** Which sign-ins this server can offer, for the app. */
   oauthAvailable(): Record<OAuthProvider, boolean> {
     const o = this.d.oauth;
-    return { x: Boolean(o?.publicUrl && o.x), meta: Boolean(o?.publicUrl && o.meta), ebay: Boolean(o?.publicUrl && o.ebay && o.ebayRuName) };
+    return { x: Boolean(o?.publicUrl && o.x), meta: Boolean(o?.publicUrl && o.meta), ebay: Boolean(o?.publicUrl && o.ebay && o.ebayRuName),
+      outlook: Boolean(o?.publicUrl && o.microsoft) };
+  }
+
+  /** The developer app that signs in to `provider`; Outlook signs in with Microsoft. */
+  private clientFor(provider: OAuthProvider): OAuthClient | undefined {
+    const o = this.d.oauth;
+    return provider === "outlook" ? o?.microsoft : o?.[provider];
   }
 
   /** The platform's sign-in page for this person; the app opens it in a secure browser sheet. */
   beginOAuth(userId: string, provider: OAuthProvider): string {
     const o = this.d.oauth;
-    const client = o?.[provider];
+    const client = this.clientFor(provider);
     if (!o?.publicUrl || !client || (provider === "ebay" && !o.ebayRuName)) {
-      const name = provider === "x" ? "X" : provider === "ebay" ? "eBay" : "Facebook and Instagram";
+      const name = { x: "X", ebay: "eBay", meta: "Facebook and Instagram", outlook: "Outlook" }[provider];
       throw new ActionError("provider_unavailable", `Connecting ${name} isn't set up on this server yet.`);
     }
     const { state, challenge } = this.oauthStates.begin(userId, provider);
     if (provider === "ebay") return ebay.authorizeUrl(client, o.ebayRuName!, state, this.ebayHosts);
     const back = redirectUri(o.publicUrl, provider);
+    if (provider === "outlook") return outlook.authorizeUrl(client, back, state, challenge);
     return provider === "x" ? x.authorizeUrl(client, back, state, challenge) : meta.authorizeUrl(client, back, state, o.metaConfigId);
   }
 
@@ -200,13 +239,17 @@ export class AgentService {
     if (query.get("error")) return fail("Connecting was cancelled.");
     const code = query.get("code");
     const o = this.d.oauth;
-    const client = o?.[provider];
+    const client = this.clientFor(provider);
     if (!code || !o?.publicUrl || !client) return fail("Something went wrong signing in. Please try again.");
     const back = redirectUri(o.publicUrl, provider);
     try {
       if (provider === "ebay") {
         const cred = await ebay.exchangeCode(client, code, o.ebayRuName ?? "", this.d.fetch, this.ebayHosts);
         return appReturnUrl(provider, { ok: true, pending: this.pendingConnections.hold(pending.userId, provider, { ebay: cred }) });
+      }
+      if (provider === "outlook") {
+        const cred = await outlook.exchangeCode(client, code, pending.verifier, back, this.d.fetch);
+        return appReturnUrl(provider, { ok: true, pending: this.pendingConnections.hold(pending.userId, provider, { outlook: cred }) });
       }
       if (provider === "x") {
         const cred = await x.exchangeCode(client, code, pending.verifier, back, this.d.fetch);
@@ -240,22 +283,33 @@ export class AgentService {
       await this.saveEbay(userId, held.value.ebay);
       return { note: null };
     }
+    if ("outlook" in held.value) {
+      await this.saveOutlook(userId, held.value.outlook);
+      return { note: null };
+    }
     await this.saveMeta(userId, held.value.meta);
     // Business accounts only: Instagram connects through a Page it's linked to, never on its own.
     return { note: held.value.meta.some((p) => p.instagram) ? null
       : "Your Facebook Page is connected, but no Instagram Business or Creator account is linked to it, so Instagram isn't. Switch Instagram to a professional account, link it to this Page, then connect again." };
   }
 
-  /** One refresh at a time per X connection: X replaces the refresh token on every use, so two
-   *  posts refreshing at once would leave one holding a dead token. Reads the latest saved
-   *  credential inside the lock, and saves the new one before anything else. */
-  private readonly xRefreshes = new Map<string, Promise<unknown>>();
-  private async freshXCredential(connectionId: string, client: OAuthClient): Promise<x.XCredential> {
-    const previous = this.xRefreshes.get(connectionId) ?? Promise.resolve();
+  /** One refresh at a time per connection: X (and sometimes Microsoft) replaces the refresh token
+   *  on every use, so two requests refreshing at once would leave one holding a dead token. Reads
+   *  the latest saved credential inside the lock, and saves the new one before anything else. */
+  private readonly refreshes = new Map<string, Promise<unknown>>();
+  private freshXCredential(connectionId: string, client: OAuthClient): Promise<x.XCredential> {
+    return this.lockedRefresh<x.XCredential>(connectionId, (before) => x.freshCredential(client, before, this.d.fetch));
+  }
+  private freshOutlookCredential(connectionId: string, client: OAuthClient): Promise<outlook.OutlookCredential> {
+    return this.lockedRefresh<outlook.OutlookCredential>(connectionId, (before) => outlook.freshCredential(client, before, this.d.fetch));
+  }
+  private async lockedRefresh<C>(connectionId: string, refresh: (before: C) => Promise<C>): Promise<C> {
+    const previous = this.refreshes.get(connectionId) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
       const { rows } = await this.d.run(`select token_ct, data_key_id from action_connections where id = $1`, [connectionId]);
-      const before = JSON.parse(decryptToken(Buffer.from(rows[0].token_ct), rows[0].data_key_id)) as x.XCredential;
-      const cred = await x.freshCredential(client, before, this.d.fetch);
+      if (!rows[0]) throw new ActionError("not_found", "That account is no longer connected.");
+      const before = JSON.parse(decryptToken(Buffer.from(rows[0].token_ct), rows[0].data_key_id)) as C;
+      const cred = await refresh(before);
       if (cred !== before) {
         const keyId = newDataKeyId();
         await this.d.run(`update action_connections set token_ct = $2, data_key_id = $3 where id = $1`,
@@ -263,11 +317,11 @@ export class AgentService {
       }
       return cred;
     });
-    this.xRefreshes.set(connectionId, next);
+    this.refreshes.set(connectionId, next);
     try {
       return await next;
     } finally {
-      if (this.xRefreshes.get(connectionId) === next) this.xRefreshes.delete(connectionId);
+      if (this.refreshes.get(connectionId) === next) this.refreshes.delete(connectionId);
     }
   }
 
@@ -293,6 +347,128 @@ export class AgentService {
       `insert into action_connections (user_id, kind, provider, label, token_ct, data_key_id, target_ref)
        values ($1, 'marketplace', 'ebay', $2, $3, $4, $5)`,
       [userId, `eBay (${cred.username})`, encryptToken(JSON.stringify(cred), keyId), keyId, cred.userId]);
+  }
+
+  /** One row per Microsoft account; signing in to the same account again replaces it, keeping
+   *  whether the person let Hera read the inbox. */
+  private async saveOutlook(userId: string, cred: outlook.OutlookCredential): Promise<void> {
+    if (!(await this.readInboxColumn())) {
+      throw new ActionError("provider_unavailable", "Outlook can't be connected until the server's database is updated. Please try again later.");
+    }
+    const { rows } = await this.d.run(
+      `delete from action_connections where user_id = $1 and provider = 'outlook' and target_ref = $2 returning read_inbox`, [userId, cred.accountId]);
+    const keyId = newDataKeyId();
+    await this.d.run(
+      `insert into action_connections (user_id, kind, provider, label, token_ct, data_key_id, target_ref, read_inbox)
+       values ($1, 'email', 'outlook', $2, $3, $4, $5, $6)`,
+      [userId, `Outlook (${cred.email})`, encryptToken(JSON.stringify(cred), keyId), keyId, cred.accountId, rows.some((r) => r.read_inbox === true)]);
+  }
+
+  /* ---------------- Outlook: reading (if allowed) and sending (once approved) ---------------- */
+
+  /** "Let Hera read my Outlook inbox": off until the person turns it on, per account. */
+  async setInboxReading(userId: string, id: string, on: unknown): Promise<ConnectionView> {
+    if (typeof on !== "boolean") throw new ActionError("bad_setting", "read_inbox must be true or false.");
+    if (!(await this.readInboxColumn())) throw new ActionError("provider_unavailable", "This setting isn't available on this server yet.");
+    const { rows } = await this.d.run(
+      `update action_connections set read_inbox = $3 where id = $1 and user_id = $2 and provider = 'outlook' and revoked_at is null returning id`,
+      [id, userId, on]);
+    if (!rows[0]) throw new ActionError("not_found", "That isn't one of your connected Outlook accounts.");
+    return (await this.connections(userId)).find((c) => c.id === id)!;
+  }
+
+  /** The person's Outlook account (the first connected), as the assistant sees it. Absent when
+   *  this server isn't set up for Outlook. Reading checks the person's setting again every time. */
+  async outlookFor(userId: string): Promise<AgentDeps["outlook"]> {
+    const client = this.d.oauth?.microsoft;
+    if (!client || !this.d.oauth?.publicUrl) return undefined;
+    const account = (await this.connections(userId)).find((c) => c.provider === "outlook");
+    const reading = async <T>(work: (cred: outlook.OutlookCredential) => Promise<T>): Promise<T> => {
+      if (!account) throw new ActionError("not_connected", "The person hasn't connected Outlook. They can connect it in Accounts.");
+      const { rows } = await this.d.run(
+        `select id, read_inbox from action_connections where id = $1 and user_id = $2 and provider = 'outlook' and revoked_at is null`, [account.id, userId]);
+      if (!rows[0]?.read_inbox) throw new ActionError("not_allowed", "Reading the inbox is off. The person can turn on \"Let Hera read my Outlook inbox\" in Accounts.");
+      return this.withOutlook(rows[0].id, client, work);
+    };
+    return {
+      connected: Boolean(account),
+      canRead: Boolean(account?.readInbox),
+      latest: () => reading((cred) => outlook.latestMessages(cred, this.d.fetch)),
+      message: (id) => reading((cred) => outlook.readMessage(cred, id, this.d.fetch)),
+    };
+  }
+
+  /** Runs `work` with a fresh credential. A connection Microsoft no longer accepts is marked for
+   *  reconnecting, and the error says so. */
+  private async withOutlook<T>(connectionId: string, client: OAuthClient, work: (cred: outlook.OutlookCredential) => Promise<T>): Promise<T> {
+    try {
+      return await work(await this.freshOutlookCredential(connectionId, client));
+    } catch (e) {
+      if (e instanceof ProviderError && e.kind === "unauthorized") {
+        await this.d.run(`update action_connections set revoked_at = now() where id = $1`, [connectionId]);
+        throw new ProviderError("unauthorized", "Outlook no longer accepts this connection. Reconnect Outlook in Accounts", e.status);
+      }
+      throw e;
+    }
+  }
+
+  /** Emails written in a run, remembered for sending from Outlook (see WrittenEmail). */
+  private rememberEmails(userId: string, drafts: AgentResult["emailDrafts"]): void {
+    const now = Date.now();
+    for (const [id, e] of this.writtenEmails) if (e.expires < now) this.writtenEmails.delete(id);
+    for (const d of drafts) {
+      this.writtenEmails.set(d.id, { userId, tainted: d.tainted === true, expires: now + WRITTEN_EMAIL_TTL_MS,
+        invite: d.invite ? { title: d.invite.title, ics: d.invite.ics } : null });
+    }
+  }
+
+  /**
+   * "Send from Outlook" on an email Hera wrote: the email as the person edited it becomes a
+   * proposal, which they then approve (exact content, by its hash) and send. Whether outside
+   * content shaped it, and the invite, come from the server's own record of the draft; an email
+   * it has no record of (written over a day ago, or before a restart) is treated as shaped by
+   * outside content and goes without the invite.
+   */
+  async proposeEmail(userId: string, body: Record<string, unknown>): Promise<ProposalView> {
+    if (!this.d.oauth?.microsoft) throw new ActionError("provider_unavailable", "Sending from Outlook isn't set up on this server yet.");
+    const accounts = (await this.connections(userId)).filter((c) => c.provider === "outlook");
+    const account = typeof body.connection_id === "string" ? accounts.find((c) => c.id === body.connection_id) : accounts[0];
+    if (!account) throw new ActionError("not_connected", "Connect Outlook in Accounts to send emails from it.");
+    const list = (v: unknown) => (Array.isArray(v) ? v : []).filter((a): a is string => typeof a === "string").map((a) => a.trim()).filter(Boolean);
+    const to = list(body.to), cc = list(body.cc);
+    if (!to.length) throw new ActionError("no_recipient", "Add who it's to first.");
+    if (to.length + cc.length > MAX_EMAIL_RECIPIENTS) throw new ActionError("too_many_recipients", `At most ${MAX_EMAIL_RECIPIENTS} people: Hera sends personal emails, not mailings.`);
+    const bad = [...to, ...cc].filter((a) => a.length > 254 || !EMAIL_ADDRESS.test(a));
+    if (bad.length) throw new ActionError("bad_address", `Not a valid email address: ${bad.join(", ")}.`);
+    const subject = typeof body.subject === "string" ? body.subject.trim() : "";
+    const text = typeof body.body === "string" ? body.body : "";
+    if (subject.length > 200) throw new ActionError("bad_email", "The subject is too long (200 characters at most).");
+    if (!text.trim() || text.length > 20_000) throw new ActionError("bad_email", "Write the email first (up to 20,000 characters).");
+    const draftId = typeof body.draft_id === "string" ? body.draft_id : "";
+    const written = this.writtenEmails.get(draftId);
+    const known = written && written.userId === userId && written.expires > Date.now() ? written : null;
+    const invite = known?.invite && body.include_invite !== false ? { fileName: "invite.ics", ics: known.invite.ics } : null;
+    const payload = { connectionId: account.id, to: [...new Set(to)], cc: [...new Set(cc)].filter((a) => !to.includes(a)), subject, body: text, invite };
+    const summary = `Email to ${payload.to.join(", ")}${subject ? `: ${subject}` : ""}`;
+    const p = this.store.propose({ userId, kind: "email.send", payload, summary, tainted: known ? known.tainted : true, ctx: await this.context(userId) });
+    return viewOf(p);
+  }
+
+  private async carryOutEmail(userId: string, payload: Readonly<Record<string, unknown>>): Promise<ExecutionResult> {
+    const client = this.d.oauth?.microsoft;
+    if (!client) return { ok: false, detail: "Sending from Outlook isn't set up on this server." };
+    const { rows } = await this.d.run(
+      `select id, label from action_connections where id = $1 and user_id = $2 and provider = 'outlook' and revoked_at is null`,
+      [payload.connectionId, userId]);
+    if (!rows[0]) return { ok: false, detail: "That Outlook account is no longer connected." };
+    const m = payload as unknown as outlook.OutgoingEmail;
+    try {
+      await this.withOutlook(rows[0].id, client, (cred) => outlook.sendMail(cred, { to: m.to, cc: m.cc, subject: m.subject, body: m.body, invite: m.invite }, this.d.fetch));
+      return { ok: true, detail: `Sent from ${rows[0].label} to ${[...m.to, ...m.cc].join(", ")}.` };
+    } catch (e) {
+      if (e instanceof ProviderError || e instanceof ActionError) return { ok: false, detail: e.message.endsWith(".") ? e.message : `${e.message}.` };
+      throw e;
+    }
   }
 
   /* ---------------- selling on eBay ---------------- */
@@ -412,6 +588,7 @@ export class AgentService {
       mode: opts.mode, client: this.d.client, store: this.store, userId, context: () => ctx,
       allowWebSearch: opts.allowWebSearch, sleep: this.d.sleep, photoId, schedule, memories,
       marketplace: this.d.oauth?.ebay ? this.marketplaceFor(userId) : undefined,
+      outlook: await this.outlookFor(userId),
       receivedText: typeof opts.receivedText === "string" && opts.receivedText.trim() ? opts.receivedText.trim().slice(0, 4000) : null,
       localTime: readLocalTime(opts.localTime),
       remember: async (fact) => (await this.memory.remember(userId, fact)).message,
@@ -420,6 +597,7 @@ export class AgentService {
     }, request, resume);
     // A conversation that expired or was never this person's starts fresh under a new id.
     const conversationId = await this.memory.saveConversation(userId, resume ? priorId : null, opts.mode, out.state);
+    this.rememberEmails(userId, out.emailDrafts);
     return { ...out, proposals: out.proposalIds.map((id) => viewOf(this.store.get(id, userId))), conversationId };
   }
 
@@ -480,6 +658,7 @@ export class AgentService {
   private async carryOut(userId: string, kind: ActionKind, payload: Readonly<Record<string, unknown>>): Promise<ExecutionResult> {
     if (kind === "social.post") return this.carryOutPost(userId, payload);
     if (kind === "marketplace.listing") return this.carryOutListing(userId, payload);
+    if (kind === "email.send") return this.carryOutEmail(userId, payload);
     return { ok: false, detail: "No connection can carry this out yet." };
   }
 

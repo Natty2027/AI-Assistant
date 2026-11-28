@@ -252,6 +252,25 @@ struct APIClient: Sendable {
         return out.connection
     }
 
+    /// "Let Hera read my Outlook inbox", for one Outlook account.
+    func setInboxReading(_ connection: Connection, on: Bool) async throws -> Connection {
+        struct Body: Encodable { let readInbox: Bool }
+        let out: ConnectionResponse = try await send("POST", "agent/connections/\(connection.id)/settings", body: Body(readInbox: on))
+        return out.connection
+    }
+
+    /// "Send from Outlook": the email as the person edited it becomes a proposal on the server,
+    /// to approve and send like any other. Nothing is sent by this call.
+    func proposeOutlookEmail(_ draft: EmailDraft, includeInvite: Bool) async throws -> Proposal {
+        struct Body: Encodable {
+            let draftId: String; let to: [String]; let cc: [String]; let subject: String; let body: String; let includeInvite: Bool
+        }
+        let out: ProposalResponse = try await send("POST", "agent/emails/outlook",
+                                                   body: Body(draftId: draft.id, to: draft.to, cc: draft.cc, subject: draft.subject,
+                                                              body: draft.body, includeInvite: includeInvite))
+        return out.proposal
+    }
+
     func disconnect(_ connection: Connection) async throws {
         let _: OKResponse = try await send("DELETE", "agent/connections/\(connection.id)")
     }
